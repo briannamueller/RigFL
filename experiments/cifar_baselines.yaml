@@ -1,0 +1,21 @@
+# Expand and submit with:
+#   python -m rigfl.experiment.launch --config experiments/cifar_baselines.yaml --queue gpu
+# Version this experiment definition with the code used to run it.
+
+name: cifar_baselines
+algorithms: baselines         # Local plus the published algorithms in the core installation
+
+base:                         # fixed settings for every task
+  experiment:
+    dataset: cifar10
+    rounds: 100
+    shared_dim: 512
+    eval_gap: 5
+  algorithm:
+    local_epochs: 3
+    lr: 0.03
+
+sweep:                        # every key here is a cartesian axis
+  seed: [0, 1, 2]
+  # Algorithm-specific axes are allowed too, and apply only where valid, e.g.:
+  # algorithm.lamda: [0.1, 1.0, 10.0]

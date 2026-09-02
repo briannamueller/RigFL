@@ -1,0 +1,94 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]"
+
+      - name: Run tests
+        run: pytest -q
+
+      - name: Run the smoke example
+        run: PYTHONPATH=. python examples/smoke.py
+
+  package:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Build and validate distributions
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build twine
+          python -m build
+          python -m twine check dist/*
+
+      - name: Install and import the wheel
+        run: |
+          python -m venv /tmp/rigfl-wheel-smoke
+          /tmp/rigfl-wheel-smoke/bin/python -m pip install --upgrade pip
+          /tmp/rigfl-wheel-smoke/bin/python -m pip install dist/*.whl
+          cd /tmp
+          /tmp/rigfl-wheel-smoke/bin/python -c "import rigfl; from rigfl.experiment.registry import REGISTRY"
+
+  # Exercise the optional BioSilo integration when the sibling-repository token
+  # is available. GraphRoute is installed from PyPI as a RigFL dependency.
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check for sibling access
+        id: gate
+        run: |
+          if [ -n "${{ secrets.SIBLING_REPOS_TOKEN }}" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::SIBLING_REPOS_TOKEN not set -- skipping the BioSilo integration test."
+          fi
+
+      - uses: actions/checkout@v5
+        if: steps.gate.outputs.ok == 'true'
+        with:
+          repository: briannamueller/BioSilo
+          token: ${{ secrets.SIBLING_REPOS_TOKEN }}
+          path: _siblings/BioSilo
+
+      - uses: actions/setup-python@v6
+        if: steps.gate.outputs.ok == 'true'
+        with:
+          python-version: "3.10"
+
+      - name: Install RigFL and BioSilo
+        if: steps.gate.outputs.ok == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]" -e _siblings/BioSilo
+
+      - name: Run the FedDES integration tests
+        if: steps.gate.outputs.ok == 'true'
+        run: pytest tests/test_biosilo.py -q -rs --no-header | tee out.txt && ! grep -q "skipped" out.txt

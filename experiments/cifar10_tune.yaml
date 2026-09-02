@@ -1,0 +1,51 @@
+# Multi-algorithm hyperparameter search. Expand and submit with:
+#   python -m rigfl.experiment.launch --config experiments/cifar10_tune.yaml --queue gpu
+# Algorithm-specific axes apply only to algorithms that define that field.
+
+name: cifar10_tune
+algorithms: [fedproto, fedgh, fml, fedkd, fedtgp, feddes]
+
+base:                         # fixed settings for every task
+  experiment:
+    dataset: cifar10
+    rounds: 100
+    shared_dim: 512
+    eval_gap: 5
+    model_architecture_family: image_heterogeneous_3
+    # wandb: true             # uncomment to log curves to Weights & Biases
+    # wandb_project: cifar-tune
+
+sweep:                        # every key is a cartesian axis; algorithm.X auto-scopes
+  seed:  [0, 1, 2]
+  # Algorithm parameters
+  algorithm.lamda:     [0.1, 1.0, 10.0]    # fedproto, fedtgp
+  algorithm.alpha:     [0.3, 0.5, 0.7]     # fml (private-model CE vs distillation)
+  algorithm.beta:      [0.3, 0.5, 0.7]     # fml (meme CE vs distillation)
+  algorithm.t_start:   [0.9, 0.95]         # fedkd (SVD energy-keep schedule)
+  algorithm.t_end:     [0.97, 0.99]        # fedkd
+  algorithm.server_lr: [0.001, 0.01]       # fedgh, fedtgp
+  algorithm.server_epochs: [1, 100]        # fedtgp (paper trains S=100 server epochs/round)
+  # FedDES parameters; its base pool is reused across graph/GNN settings.
+  algorithm.gnn_arch:   [gat, graph_gps, mlp]
+  algorithm.graph_k:    [3, 5, 10]
+  algorithm.hidden_dim: [64, 128]
+
+# Each complete assignment of the parameters an algorithm defines is a candidate.
+# Seeds are replicates of each complete hyperparameter configuration.
+#   python -m rigfl.experiment.collect --results-dir results/cifar10_tune \
+#       --selection-metric accuracy --selection-view both --rank \
+#       --select-out results/cifar10_tune_selected
+tuning:
+  strategy: grid
+  replicate_axis: seed
+  parameters:
+    - algorithm.lamda
+    - algorithm.alpha
+    - algorithm.beta
+    - algorithm.t_start
+    - algorithm.t_end
+    - algorithm.server_lr
+    - algorithm.server_epochs
+    - algorithm.gnn_arch
+    - algorithm.graph_k
+    - algorithm.hidden_dim

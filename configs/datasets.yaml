@@ -1,0 +1,16 @@
+datasets:
+  cifar10:
+    backend: flower
+    source_dataset: uoft-cs/cifar10
+    preprocessing:
+      type: image
+      mean: [0.4914, 0.4822, 0.4465]
+      std: [0.2470, 0.2435, 0.2616]
+    partition:
+      scheme: dirichlet
+      num_clients: 3
+      alpha: 0.5
+      partition_seed: 0
+      train_per_client: 200
+      test_per_client: 100
+      val_frac: 0.2

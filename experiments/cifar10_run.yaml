@@ -1,0 +1,13 @@
+experiment:
+  dataset: cifar10
+  model_architectures: [fedavg_cnn]
+  rounds: 2
+  seed: 0
+  shared_dim: 128
+  eval_gap: 1
+  device: cpu
+  out_dir: results/cifar10_run
+
+algorithm:
+  local_epochs: 1
+  lr: 0.01

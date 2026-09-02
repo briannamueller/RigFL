@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Environments
+.venv/
+venv/
+.env
+
+# Notebooks
+.ipynb_checkpoints/
+
+# Experiment outputs & tracking (never commit)
+wandb/
+runs/
+outputs/
+results/
+logs/
+ckpts/
+checkpoints/
+pool_cache/
+.pytest_cache/
+
+# Data & model artifacts (datasets stay on the HPC; never local)
+/data/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.npz
+*.npy
+*.csv
+*.h5
+*.hdf5
+
+# OS
+.DS_Store

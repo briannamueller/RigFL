@@ -1,0 +1,6 @@
+include DEVIATIONS.md
+recursive-include configs *.yaml
+recursive-include examples *.py
+recursive-include experiments *.yaml
+recursive-include scripts *.sh
+include rigfl/data/README.md

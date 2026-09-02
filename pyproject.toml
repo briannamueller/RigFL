@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rigfl"
+version = "0.1.0"
+description = "A modular research framework for rigorous federated learning experimentation"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+license = "MIT"
+authors = [{ name = "Brianna Mueller" }]
+dependencies = [
+    "numpy<2",               # torch 2.0.x is built against numpy 1.x
+    "torch",                 # on the HPC, install the CUDA build that matches the cluster first
+    "flwr-datasets[vision]>=0.6,<0.7",
+    "pydantic>=2",           # typed, validated config (experiment + per-algorithm)
+    "pyyaml",                # sweep configs (rigfl.experiment.launch --config)
+    # Caps below keep prebuilt wheels available on Python 3.10: newer releases of
+    # these dropped 3.10 wheels and fall back to source builds needing Rust/compilers.
+    "datasets<2.19",
+    "pyarrow<15",
+    "pillow<11",
+    "pandas<2.3",
+    "graphroute>=0.1.0,<0.2",
+]
+
+[project.urls]
+Repository = "https://github.com/briannamueller/RigFL"
+Issues = "https://github.com/briannamueller/RigFL/issues"
+
+[project.optional-dependencies]
+wandb = ["wandb"]                # optional experiment tracking (rigfl.experiment.run --wandb)
+test = ["pytest"]
+
+[tool.setuptools.packages.find]
+include = ["rigfl*"]
