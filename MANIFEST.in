@@ -3,4 +3,5 @@ recursive-include configs *.yaml
 recursive-include examples *.py
 recursive-include experiments *.yaml
 recursive-include scripts *.sh
+recursive-include tests *.py
 include rigfl/data/README.md

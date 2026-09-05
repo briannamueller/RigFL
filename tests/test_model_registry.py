@@ -20,6 +20,7 @@ from rigfl.models.registry import (
     instantiate_backbones,
     resolve_model_architectures,
 )
+from tests.helpers import resolved_experiment
 
 
 def test_model_architectures_are_configured_independently_of_dataset_name():
@@ -48,11 +49,11 @@ def test_model_architecture_family_and_list_are_mutually_exclusive():
 
 def test_family_and_explicit_architectures_have_one_resolved_identity():
     family = resolve_experiment_architectures(
-        ExperimentConfig(model_architecture_family="image_heterogeneous_3"),
+        resolved_experiment(model_architecture_family="image_heterogeneous_3"),
         input_kind="image",
     )
     explicit = resolve_experiment_architectures(
-        ExperimentConfig(model_architectures=[
+        resolved_experiment(model_architectures=[
             "fedavg_cnn", "cifar_resnet18", "cifar_mobilenet_v2"
         ]),
         input_kind="image",
@@ -68,12 +69,18 @@ def test_family_and_explicit_architectures_have_one_resolved_identity():
 
 
 def test_default_model_architectures_are_recorded_explicitly(monkeypatch):
+    from rigfl.data.config import FlowerDatasetSettings
+
+    settings = FlowerDatasetSettings(
+        source_dataset="example/source",
+        partition={
+            "scheme": "dirichlet", "num_clients": 2, "alpha": 0.1,
+            "val_frac": 0.2, "train_per_client": 10, "test_per_client": 5,
+        },
+    )
     artifact = SimpleNamespace(
         partition_id="generated-partition",
-        settings=SimpleNamespace(partition=SimpleNamespace(
-            alpha=0.1, val_frac=0.2,
-            train_per_client=10, test_per_client=5,
-        )),
+        settings=settings,
         manifest={
             "task": "classification",
             "num_clients": 2,
@@ -84,12 +91,16 @@ def test_default_model_architectures_are_recorded_explicitly(monkeypatch):
     monkeypatch.setattr(
         "rigfl.experiment.run.load_partition", lambda *args, **kwargs: artifact
     )
-
-    resolved, loaded = resolve_experiment_data(
-        ExperimentConfig(dataset="generated", scheme="generated")
+    monkeypatch.setattr(
+        "rigfl.experiment.run.dataset_settings",
+        lambda *args, **kwargs: artifact.settings,
     )
 
-    assert loaded is artifact
+    resolved, loaded = resolve_experiment_data(
+        ExperimentConfig(dataset="generated")
+    )
+
+    assert loaded.artifact is artifact
     assert resolved.model_architecture_family is None
     assert resolved.model_architectures == [
         "fedavg_cnn", "cifar_resnet18", "cifar_mobilenet_v2"
@@ -115,21 +126,31 @@ def test_unknown_architecture_fails_during_algorithm_validation():
 
 
 def test_dataset_supplies_architecture_compatibility_context():
-    exp = ExperimentConfig(
-        scheme="natural", dataset="eICU", partition="p",
+    exp = resolved_experiment(
+        data_backend="biosilo", partition_scheme=None, input_kind="temporal",
+        input_spec={"input_kind": "temporal", "n_ts": 3, "n_static": 2,
+                    "seq_len": 8},
         model_architectures=["fedavg_cnn"],
     )
     with pytest.raises(ValueError, match="do not accept temporal inputs"):
         resolve_algorithm_config("feddes", exp, config_class("feddes")())
 
 
-def test_incompatible_architecture_fails_before_submission():
+def test_incompatible_architecture_fails_before_submission(tmp_path):
+    dataset_config = tmp_path / "datasets.yaml"
+    dataset_config.write_text(
+        "datasets:\n"
+        "  eicu:\n"
+        "    backend: biosilo\n"
+        "    source_dataset: eicu\n"
+        "    partition: p\n"
+    )
     with pytest.raises(SystemExit, match="do not accept temporal inputs"):
         build_grid({
             "algorithms": ["feddes"],
             "base": {
                 "experiment": {
-                    "scheme": "natural", "dataset": "eICU", "partition": "p",
+                    "dataset": "eicu", "dataset_config": str(dataset_config),
                     "model_architectures": ["fedavg_cnn"],
                 },
             },
@@ -151,7 +172,7 @@ def test_feddes_has_no_separate_model_selection():
 
 
 def test_feddes_relevant_settings_still_change_its_fingerprint():
-    exp = ExperimentConfig()
+    exp = resolved_experiment()
     default = resolve_algorithm_config("feddes", exp, config_class("feddes")())
     changed_epochs = resolve_algorithm_config(
         "feddes", exp, config_class("feddes")(base_epochs=101)
@@ -196,8 +217,10 @@ def test_feddes_builds_its_pool_from_the_experiment_architectures(monkeypatch):
     monkeypatch.setitem(
         MODEL_ARCHITECTURE_REGISTRY, "custom", ("image", TinyBackbone)
     )
-    exp = ExperimentConfig(
-        num_classes=3, shared_dim=5, model_architectures=["custom"])
+    exp = resolved_experiment(
+        num_classes=3, shared_dim=5, model_architectures=["custom"],
+        input_spec={"input_kind": "image", "shape": [4]},
+    )
     algorithm = build_algorithm(
         "feddes", exp, config_class("feddes")(cache_dir=""),
         model_input_spec={"input_kind": "image", "shape": (4,)})

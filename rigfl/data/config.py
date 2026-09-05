@@ -230,8 +230,28 @@ class FlowerDatasetSettings(BaseModel):
     partition: PartitionSettings = Field(default_factory=DirichletSettings)
 
 
-# The discriminated backend union can grow when another data provider is ready.
-DatasetSettings = FlowerDatasetSettings
+class BioSiloDatasetSettings(BaseModel):
+    """One existing BioSilo partition consumed without copying its data."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    backend: Literal["biosilo"] = "biosilo"
+    source_dataset: str
+    partition: str
+    data_root: str | None = None
+    validation_fraction: float = Field(0.2, gt=0, lt=1)
+
+    @model_validator(mode="after")
+    def _partition_is_named(self):
+        if not self.partition.strip():
+            raise ValueError("a BioSilo dataset entry requires a partition id")
+        return self
+
+
+DatasetSettings = Annotated[
+    FlowerDatasetSettings | BioSiloDatasetSettings,
+    Field(discriminator="backend"),
+]
 
 
 class DatasetRegistry(BaseModel):

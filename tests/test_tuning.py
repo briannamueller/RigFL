@@ -27,6 +27,7 @@ from rigfl.experiment.tuning import (TuningError, candidate_index, candidate_of,
                                      place_records, rank, write_manifest,
                                      write_selection)
 from rigfl.models.registry import MODEL_ARCHITECTURE_FAMILIES
+from tests.helpers import resolved_experiment
 
 VIEWS = ["global", "per-client"]
 
@@ -39,8 +40,7 @@ def _spec(**over) -> dict:
         "algorithms": ["feddes"],
         # One round, so the fabricated one-round histories below are what a run
         # of this configuration actually produces -- the validator checks that.
-        "base": {"experiment": {"rounds": 1, "eval_gap": 1,
-                                  "num_clients": 2}},
+        "base": {"experiment": {"rounds": 1, "eval_gap": 1}},
         "sweep": {"seed": [0, 1, 2],
                   "algorithm.base_lr": [0.01, 0.1],
                   "algorithm.graph_k": [3, 5]},
@@ -174,7 +174,7 @@ def test_architecture_family_candidates_match_recorded_lists(monkeypatch):
         ["fedavg_cnn", "cifar_resnet18"])
     spec = {
         "algorithms": ["local"],
-        "base": {"experiment": {"rounds": 1, "num_clients": 2}},
+        "base": {"experiment": {"rounds": 1}},
         "sweep": {
             "seed": [0, 1],
             "model_architecture_family": [
@@ -218,7 +218,7 @@ def test_architecture_family_and_explicit_lists_make_same_candidates(monkeypatch
     monkeypatch.setitem(MODEL_ARCHITECTURE_FAMILIES, "image_pair", pair)
     common = {
         "algorithms": ["local"],
-        "base": {"experiment": {"rounds": 1, "num_clients": 2}},
+        "base": {"experiment": {"rounds": 1}},
     }
     family_grid, family_manifest = expand({
         **common,
@@ -257,7 +257,7 @@ def test_untuned_architecture_axis_remains_a_separate_condition(monkeypatch):
         ["fedavg_cnn", "cifar_resnet18"])
     _, manifest = expand({
         "algorithms": ["feddes"],
-        "base": {"experiment": {"rounds": 1, "num_clients": 2}},
+        "base": {"experiment": {"rounds": 1}},
         "sweep": {
             "seed": [0, 1],
             "model_architecture_family": [
@@ -336,28 +336,33 @@ def test_values_are_not_selected_independently_per_parameter():
 
 # ── 7-10: tuning groups ──────────────────────────────────────────────────────
 
-def test_non_tuned_alpha_creates_separate_tuning_groups():
-    spec = _spec(sweep={"seed": [0, 1, 2], "alpha": [0.1, 0.5],
+def test_non_tuned_experiment_setting_creates_separate_tuning_groups():
+    spec = _spec(sweep={"seed": [0, 1, 2], "shared_dim": [64, 128],
                         "algorithm.base_lr": [0.01, 0.1], "algorithm.graph_k": [3, 5]})
     grid, manifest = expand(spec)
-    assert manifest["condition_axes"] == ["exp.alpha"]
-    assert len(manifest["candidates"]) == 4          # alpha is not part of a candidate
+    assert manifest["condition_axes"] == ["exp.shared_dim"]
+    assert len(manifest["candidates"]) == 4
 
-    # alpha=0.1 favours candidate 0; alpha=0.5 favours candidate 3
+    # Each fixed experiment condition may select a different candidate.
     metadata = {t["task_id"]: t for t in manifest["tasks"]}
     recs = []
     for task_id, t in enumerate(grid, 1):
         cid = metadata[task_id]["candidate_id"]
-        best = 0 if t["experiment"]["alpha"] == 0.1 else 3
+        best = 0 if t["experiment"]["shared_dim"] == 64 else 3
         recs.append({"algorithm": t["algorithm"],
                      "config": {"experiment": dict(t["experiment"]),
                                 "algorithm": dict(t["algorithm_config"])},
                      "result": _flat(0.9 if cid == best else 0.5, 0.5)})
     art = _rank(recs, manifest)
     assert len(art["groups"]) == 2
-    assert [g["label"] for g in art["groups"]] == ["feddes [alpha=0.1]",
-                                                   "feddes [alpha=0.5]"]
-    assert [_selected(art, i) for i in (0, 1)] == [0, 3]
+    assert {g["label"] for g in art["groups"]} == {
+        "feddes [shared_dim=64]", "feddes [shared_dim=128]"}
+    selected = {group["label"]: group["rankings"]["global"]["selected_candidate"]
+                for group in art["groups"]}
+    assert selected == {
+        "feddes [shared_dim=64]": 0,
+        "feddes [shared_dim=128]": 3,
+    }
 
 
 def test_whatever_is_declared_the_replicate_axis_does_not_split_groups():
@@ -381,20 +386,20 @@ def test_whatever_is_declared_the_replicate_axis_does_not_split_groups():
         assert c["views"]["global"]["observed_seeds"] == [16, 32]
 
 
-def test_declaring_alpha_as_tuned_makes_it_part_of_the_candidate():
-    spec = _spec(sweep={"seed": [0, 1, 2], "alpha": [0.1, 0.5],
+def test_declaring_an_experiment_setting_as_tuned_makes_it_a_candidate():
+    spec = _spec(sweep={"seed": [0, 1, 2], "shared_dim": [64, 128],
                         "algorithm.base_lr": [0.01, 0.1], "algorithm.graph_k": [3, 5]},
                  tuning={"strategy": "grid",
-                         "parameters": ["exp.alpha", "algorithm.base_lr", "algorithm.graph_k"],
+                         "parameters": ["exp.shared_dim", "algorithm.base_lr", "algorithm.graph_k"],
                          "replicate_axis": "seed"})
     grid, manifest = expand(spec)
-    assert len(manifest["candidates"]) == 8          # 2 alphas x 2 lr x 2 graph_k
+    assert len(manifest["candidates"]) == 8       # 2 widths x 2 lr x 2 graph_k
     assert manifest["condition_axes"] == []
-    assert all("exp.alpha" in c["parameters"] for c in manifest["candidates"])
+    assert all("exp.shared_dim" in c["parameters"] for c in manifest["candidates"])
 
     recs = _records(grid, manifest, lambda cid: _flat(0.5 + 0.01 * cid, 0.5))
     art = _rank(recs, manifest)
-    assert len(art["groups"]) == 1                   # one group, alpha is searched
+    assert len(art["groups"]) == 1             # one group: shared_dim is searched
     assert len(art["groups"][0]["candidates"]) == 8
 
 
@@ -673,10 +678,10 @@ def test_replicate_axis_cannot_also_be_a_tuning_parameter():
 def test_duplicate_tuning_parameters_are_rejected():
     with pytest.raises(SystemExit, match="Duplicate tuning parameter"):
         expand(_spec(tuning={"strategy": "grid",
-                             "parameters": ["algorithm.base_lr", "exp.alpha", "alpha"],
+                             "parameters": ["algorithm.base_lr", "exp.shared_dim", "shared_dim"],
                              "replicate_axis": "seed",
                              },
-                     sweep={"seed": [0], "alpha": [0.1, 0.5],
+                     sweep={"seed": [0], "shared_dim": [64, 128],
                             "algorithm.base_lr": [0.01, 0.1]}))
 
 
@@ -721,7 +726,7 @@ def test_the_selected_configuration_is_complete_and_directly_runnable(tmp_path):
     for task_id, t in enumerate(grid, 1):  # resolved configs, as run_task writes them
         meta = metadata[task_id]
         cid, replicate = meta["candidate_id"], meta["replicate"]
-        exp = ExperimentConfig(**t["experiment"])
+        exp = resolved_experiment(**t["experiment"])
         cfg = config_class(t["algorithm"])(**t["algorithm_config"])
         recs.append({"algorithm": t["algorithm"],
                      "config": {"experiment": exp.model_dump(),
@@ -754,6 +759,10 @@ def test_the_selected_configuration_is_complete_and_directly_runnable(tmp_path):
     # seeds stay parameterised rather than baked in as one arbitrary replicate
     assert spec["sweep"]["seed"] == manifest["replicate_values"]
     assert "seed" not in spec["base"]["experiment"]
+    assert not ({
+        "data_backend", "partition_id", "partition_scheme", "num_clients",
+        "num_classes", "validation_fraction", "input_kind", "input_spec",
+    } & set(spec["base"]["experiment"]))
 
     prov = payload["provenance"]
     assert prov["candidate_id"] == _selected(art)
@@ -767,14 +776,14 @@ def test_the_selected_configuration_is_complete_and_directly_runnable(tmp_path):
 
 def test_multiple_output_groups_cannot_silently_overwrite_one_another(tmp_path):
     spec = _spec(algorithms=["feddes", "fedproto"],
-                 sweep={"seed": [0], "alpha": [0.1, 0.5],
+                 sweep={"seed": [0], "shared_dim": [64, 128],
                         "algorithm.base_lr": [0.01, 0.1],
                         "algorithm.graph_k": [3, 5]})
     grid, manifest = expand(spec)
     recs = _records(grid, manifest, lambda cid: _flat(0.5 + 0.01 * cid, 0.5))
     art = _rank(recs, manifest, views=VIEWS)
 
-    assert len(art["groups"]) == 4                       # 2 algorithms x 2 alphas
+    assert len(art["groups"]) == 4                 # 2 algorithms x 2 dimensions
     written = write_selection(art, recs, manifest, tmp_path)
     cfgs = [p for p in written if p.suffix == ".yaml"]
     assert len(cfgs) == 4 * 2                            # one per (group, view)
@@ -831,7 +840,7 @@ def test_a_result_matching_no_candidate_is_reported_not_invented():
 
 
 def test_string_and_numeric_spellings_of_a_value_match(tmp_path):
-    """``--sweep alpha=0.1,0.5`` puts strings on the axis; results hold floats."""
+    """CLI-style sweep values are strings while result values are numeric."""
     grid, manifest = expand(_spec(sweep={"seed": "0-2", "algorithm.base_lr": "0.01,0.1",
                                          "algorithm.graph_k": "3,5"}))
     assert manifest["replicate_values"] == [0, 1, 2]
@@ -882,7 +891,7 @@ def _sweep_dir(tmp_path, spec, *, with_manifest=True, val=None):
         write_manifest(manifest, d)
     metadata = ({t["task_id"]: t for t in manifest["tasks"]} if manifest else {})
     for task_id, t in enumerate(grid, 1):
-        exp = ExperimentConfig(**t["experiment"])
+        exp = resolved_experiment(**t["experiment"])
         cfg = config_class(t["algorithm"])(**t["algorithm_config"])
         cid = metadata.get(task_id, {}).get("candidate_id", 0)
         fp = run_fingerprint(exp, cfg.model_dump())
@@ -961,7 +970,7 @@ def test_old_schema_results_are_refused_by_the_collector(tmp_path, monkeypatch):
 def test_the_manifest_is_not_read_as_a_result_file(tmp_path, monkeypatch, capsys):
     from rigfl.experiment.collect import load_results
     d, _ = _sweep_dir(tmp_path, _spec())
-    by_algorithm = load_results(d, None, None)
+    by_algorithm = load_results(d, None)
     assert sum(len(v) for v in by_algorithm.values()) == 12       # 4 candidates x 3 seeds
     assert "skipped" not in capsys.readouterr().out
 
@@ -987,7 +996,10 @@ def test_run_task_does_not_embed_tuning_identity_in_the_result(tmp_path, monkeyp
 
     monkeypatch.setattr(launch, "run_one", _stub_run_one)
     monkeypatch.setattr(launch, "resolve_device", lambda d: "cpu")
-    monkeypatch.setattr(launch, "resolve_experiment_data", lambda exp: (exp, None))
+    monkeypatch.setattr(
+        launch, "resolve_experiment_data",
+        lambda exp: (resolved_experiment(**exp.model_dump()), None),
+    )
     launch.run_task(str(grid_path), 5, tmp_path)
 
     written = [p for p in tmp_path.glob("*.json")]
@@ -1005,7 +1017,10 @@ def test_run_task_writes_no_tuning_identity(tmp_path, monkeypatch):
     grid_path.write_text("".join(json.dumps(t) + "\n" for t in grid))
     monkeypatch.setattr(launch, "run_one", _stub_run_one)
     monkeypatch.setattr(launch, "resolve_device", lambda d: "cpu")
-    monkeypatch.setattr(launch, "resolve_experiment_data", lambda exp: (exp, None))
+    monkeypatch.setattr(
+        launch, "resolve_experiment_data",
+        lambda exp: (resolved_experiment(**exp.model_dump()), None),
+    )
     launch.run_task(str(grid_path), 1, tmp_path)
     rec = json.loads(next(iter(tmp_path.glob("*.json"))).read_text())
     assert "tuning" not in rec

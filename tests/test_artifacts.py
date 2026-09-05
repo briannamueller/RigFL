@@ -15,8 +15,9 @@ from rigfl.experiment.artifacts import (
     validate_run_record,
     write_run_record,
 )
-from rigfl.experiment.config import ExperimentConfig, run_fingerprint
+from rigfl.experiment.config import run_fingerprint
 from rigfl.algorithms.local import LocalConfig
+from tests.helpers import resolved_experiment
 
 
 def _result(rounds: int = 2, clients: int = 2) -> dict:
@@ -61,8 +62,10 @@ def _result(rounds: int = 2, clients: int = 2) -> dict:
     }
 
 
-def _record(*, alpha: float = 0.1):
-    exp = ExperimentConfig(rounds=2, eval_gap=1, num_clients=2, alpha=alpha)
+def _record(*, partition_id: str = "partition-a"):
+    exp = resolved_experiment(
+        rounds=2, eval_gap=1, num_clients=2, partition_id=partition_id
+    )
     cfg = LocalConfig()
     fp = run_fingerprint(exp, cfg.model_dump())
     return exp, cfg, fp, make_run_record(
@@ -121,14 +124,16 @@ def test_force_allows_replacing_but_not_silently_accepting_a_bad_result(tmp_path
 
 def test_saved_configuration_must_match_its_fingerprint():
     _, _, _, record = _record()
-    record["config"]["experiment"]["alpha"] = 0.9
+    record["config"]["experiment"]["partition_id"] = "partition-other"
     with pytest.raises(ResultValidationError, match="fingerprint"):
         validate_run_record(record)
 
 
 def test_requested_configuration_must_match_the_saved_configuration():
-    _, _, fp, record = _record(alpha=0.2)
-    other_exp = ExperimentConfig(rounds=2, eval_gap=1, num_clients=2, alpha=0.8)
+    _, _, fp, record = _record(partition_id="partition-a")
+    other_exp = resolved_experiment(
+        rounds=2, eval_gap=1, num_clients=2, partition_id="partition-b"
+    )
     other_fp = run_fingerprint(other_exp, LocalConfig().model_dump())
     assert fp != other_fp
     with pytest.raises(ResultValidationError, match="requested experiment"):
@@ -145,7 +150,7 @@ def test_history_vectors_must_align_with_evaluation_rounds():
 
 
 def test_one_shot_result_validates_local_selection_provenance():
-    exp = ExperimentConfig(rounds=2, eval_gap=1, num_clients=2)
+    exp = resolved_experiment(rounds=2, eval_gap=1, num_clients=2)
     cfg = LocalConfig()
     fp = run_fingerprint(exp, cfg.model_dump())
     result = _result(rounds=1)

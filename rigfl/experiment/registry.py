@@ -16,7 +16,7 @@ import torch.nn as nn
 from rigfl.core import ClientModel, LearnedProjection, iterative, p2p_one_shot
 from rigfl.core.adapters import AdaptivePool
 from rigfl.core.config import AlgorithmConfig
-from rigfl.experiment.config import ExperimentConfig
+from rigfl.experiment.config import ExperimentConfig, ResolvedExperimentConfig
 from rigfl.models.cifar import SmallCNN
 from rigfl.models.registry import resolve_model_architectures
 from rigfl.algorithms.fedavg import FedAvg, FedAvgConfig
@@ -78,7 +78,12 @@ def algorithm_spec(name: str) -> AlgorithmSpec:
 def resolve_algorithm_config(name: str, exp: ExperimentConfig,
                              cfg: AlgorithmConfig) -> AlgorithmConfig:
     """Validate algorithm/experiment compatibility and resolve shorthand."""
-    input_kind = "temporal" if exp.scheme == "natural" else "image"
+    if isinstance(exp, ResolvedExperimentConfig):
+        input_kind = exp.input_kind
+    else:
+        from rigfl.data.config import BioSiloDatasetSettings, dataset_settings
+        settings = dataset_settings(exp.dataset, exp.dataset_config)
+        input_kind = "temporal" if isinstance(settings, BioSiloDatasetSettings) else "image"
     names = resolve_model_architectures(
         architecture_family=exp.model_architecture_family,
         architectures=exp.model_architectures,
@@ -139,7 +144,7 @@ def _aux_model(backbone, shared_dim: int, num_classes: int):
     return make
 
 
-def build_algorithm(name: str, exp: ExperimentConfig, cfg: AlgorithmConfig,
+def build_algorithm(name: str, exp: ResolvedExperimentConfig, cfg: AlgorithmConfig,
                     aux_backbone=None, base_pool=None, model_input_spec=None,
                     model_template=None):
     """Construct a registered algorithm through its standard factory hook.

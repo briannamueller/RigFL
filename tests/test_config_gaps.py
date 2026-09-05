@@ -18,9 +18,8 @@ from rigfl.experiment.run import build_configs, load_run_config
 
 def _args(**over):
     base = dict(config=None, set=[], quiet=False, wandb=False, wandb_project=None,
-                alpha=None, num_clients=None, rounds=None, seed=None, shared_dim=None,
-                num_classes=None, train_per_client=None, test_per_client=None,
-                eval_gap=None, device=None, out_dir=None, lr=None, local_epochs=None)
+                rounds=None, seed=None, shared_dim=None, eval_gap=None, device=None,
+                out_dir=None, lr=None, local_epochs=None)
     base.update(over)
     return SimpleNamespace(**base)
 
@@ -35,12 +34,12 @@ def _yaml(tmp_path, text):
 
 def test_a_yaml_that_is_not_a_mapping_is_refused(tmp_path):
     with pytest.raises(SystemExit, match="must be a mapping"):
-        load_run_config(_yaml(tmp_path, "- alpha\n- 0.5\n"))
+        load_run_config(_yaml(tmp_path, "- batch\n- 64\n"))
 
 
 def test_a_misspelt_section_is_refused(tmp_path):
     with pytest.raises(SystemExit) as e:
-        load_run_config(_yaml(tmp_path, "experimnt:\n  alpha: 0.5\n"))
+        load_run_config(_yaml(tmp_path, "experimnt:\n  batch: 64\n"))
     assert "experimnt" in str(e.value)
     assert 'Did you mean "experiment"?' in str(e.value)
 
@@ -48,7 +47,7 @@ def test_a_misspelt_section_is_refused(tmp_path):
 def test_a_sweep_file_handed_to_the_single_run_path_is_refused(tmp_path):
     """base/sweep belong to rigfl.experiment.launch, and used to be ignored here."""
     with pytest.raises(SystemExit, match="unknown top-level section"):
-        load_run_config(_yaml(tmp_path, "base:\n  experiment:\n    alpha: 0.5\n"
+        load_run_config(_yaml(tmp_path, "base:\n  experiment:\n    batch: 64\n"
                                         "sweep:\n  seed: [0, 1]\n"))
 
 
@@ -59,16 +58,16 @@ def test_a_section_that_is_not_a_mapping_is_refused(tmp_path):
 
 def test_a_valid_config_still_loads(tmp_path):
     exp, algorithm = load_run_config(
-        _yaml(tmp_path, "experiment:\n  alpha: 0.5\nalgorithm:\n  lr: 0.1\n"))
-    assert exp == {"alpha": 0.5} and algorithm == {"lr": 0.1}
+        _yaml(tmp_path, "experiment:\n  batch: 64\nalgorithm:\n  lr: 0.1\n"))
+    assert exp == {"batch": 64} and algorithm == {"lr": 0.1}
 
 
 # ── --set ────────────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("bad, match", [
-    ("expp.alpha=0.5", 'Did you mean "exp"?'),
+    ("expp.batch=64", 'Did you mean "exp"?'),
     ("methd.lr=0.1", 'Use algorithm'),
-    ("alpha=0.5", "expected <section>.<field>=<value>"),
+    ("batch=64", "expected <section>.<field>=<value>"),
 ])
 def test_an_unknown_set_prefix_is_refused(bad, match):
     """Every non-``exp`` prefix used to be routed into the algorithm config."""
@@ -77,8 +76,8 @@ def test_an_unknown_set_prefix_is_refused(bad, match):
 
 
 def test_the_documented_set_prefixes_still_work():
-    exp, algorithm = build_configs(_args(set=["exp.alpha=0.5", "algorithm.lr=0.1"]))
-    assert exp.alpha == 0.5 and algorithm == {"lr": "0.1"}
+    exp, algorithm = build_configs(_args(set=["exp.batch=64", "algorithm.lr=0.1"]))
+    assert exp.batch == 64 and algorithm == {"lr": "0.1"}
 
 
 # ── --quiet ──────────────────────────────────────────────────────────────────

@@ -331,7 +331,7 @@ def run_task(grid_path: str, task_id: int, out_dir: Path,
     exp = ExperimentConfig(**task["experiment"])
     if not dry_run:
         try:
-            exp, _ = resolve_experiment_data(exp)
+            exp, data = resolve_experiment_data(exp)
         except (FileNotFoundError, KeyError, ValueError) as exc:
             raise SystemExit(f"task {task_id}: {exc}") from exc
     Cfg = config_class(name)
@@ -363,8 +363,8 @@ def run_task(grid_path: str, task_id: int, out_dir: Path,
         return
     device = resolve_device(exp.device)
     print(f"=== task {task_id}: {name} (dataset={exp.dataset}, "
-          f"partition={exp.partition}, seed={exp.seed}, {device}) ===")
-    record = run_one(name, exp, cfg, device)
+          f"partition={exp.partition_id}, seed={exp.seed}, {device}) ===")
+    record = run_one(name, exp, cfg, device, data=data)
     write_run_record(path, record, expected_algorithm=name, expected_fingerprint=fp)
     print(f"  wrote {path}  ({len(record['result']['evaluation_history']['evaluation_rounds'])} eval rounds, {record['wall_seconds']}s)")
 

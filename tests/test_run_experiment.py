@@ -5,16 +5,18 @@ from pathlib import Path
 import pytest
 
 from rigfl.experiment import run as run_module
+from tests.helpers import resolved_experiment
 
 
 def _resolved(exp):
-    return exp.model_copy(
-        update={
-            "scheme": "generated",
-            "partition": "partition_12345678",
-            "model_architecture_family": None,
-            "model_architectures": ["fedavg_cnn"],
-        }
+    values = exp.model_dump()
+    values.update(
+        partition_id="partition_12345678",
+        model_architecture_family=None,
+        model_architectures=["fedavg_cnn"],
+    )
+    return resolved_experiment(
+        **values,
     )
 
 
@@ -33,8 +35,8 @@ def test_run_experiment_loads_the_yaml_configuration(monkeypatch, tmp_path):
         run_module, "resolve_experiment_data", lambda exp: (_resolved(exp), None)
     )
 
-    def fake_run(name, exp, cfg, *, force=False):
-        captured.update(name=name, exp=exp, cfg=cfg, force=force)
+    def fake_run(name, exp, cfg, *, data, force=False):
+        captured.update(name=name, exp=exp, cfg=cfg, data=data, force=force)
         return Path(exp.out_dir) / "result.json"
 
     monkeypatch.setattr(run_module, "_run_resolved_experiment", fake_run)
@@ -54,7 +56,7 @@ def test_run_experiment_loads_the_yaml_configuration(monkeypatch, tmp_path):
 
     assert path == tmp_path / "result.json"
     assert captured["name"] == "fedavg"
-    assert captured["exp"].partition == "partition_12345678"
+    assert captured["exp"].partition_id == "partition_12345678"
     assert captured["cfg"].local_epochs == 2
     assert captured["cfg"].lr == pytest.approx(0.02)
     assert captured["force"] is True

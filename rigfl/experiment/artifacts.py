@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 RECORD_KIND = "rigfl.run_result"
-RECORD_SCHEMA_VERSION = 2
+RECORD_SCHEMA_VERSION = 3
 RESULT_SCHEMA_VERSION = 3
 STATUS_COMPLETE = "complete"
 
@@ -166,11 +166,22 @@ def validate_run_record(
     if not isinstance(config.get("algorithm"), dict):
         fail("config.algorithm is missing or is not an object")
 
-    from rigfl.experiment.config import ExperimentConfig, run_fingerprint
+    resolved_fields = {
+        "data_backend", "partition_id", "partition_scheme", "num_clients",
+        "num_classes", "validation_fraction", "input_kind", "input_spec",
+    }
+    missing = sorted(resolved_fields - set(config["experiment"]))
+    if missing:
+        fail(
+            "config.experiment lacks resolved dataset fields: "
+            + ", ".join(missing)
+        )
+
+    from rigfl.experiment.config import ResolvedExperimentConfig, run_fingerprint
     from rigfl.experiment.registry import config_class
 
     try:
-        experiment = ExperimentConfig(**config["experiment"])
+        experiment = ResolvedExperimentConfig(**config["experiment"])
         algorithm_config = config_class(algorithm)(**config["algorithm"])
     except Exception as exc:
         fail(f"saved configuration does not validate: {exc}")

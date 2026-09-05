@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+import pytest
 import torch
 import torch.nn as nn
 
@@ -160,36 +161,27 @@ def test_experiment_uses_alias_to_resolve_partition(monkeypatch, tmp_path):
         rounds=2,
         seed=11,
     )
-    resolved, artifact = resolve_experiment_data(exp)
-    assert artifact.path == generated.path
-    assert resolved.scheme == "generated"
-    assert resolved.partition == generated.partition_id
+    resolved, data = resolve_experiment_data(exp)
+    assert data.artifact.path == generated.path
+    assert resolved.data_backend == "flower"
+    assert resolved.partition_scheme == "dirichlet"
+    assert resolved.partition_id == generated.partition_id
     assert resolved.num_clients == 2
     assert resolved.num_classes == 3
-    assert resolved.val_frac == 0.25
+    assert resolved.validation_fraction == 0.25
 
     other_seed, _ = resolve_experiment_data(exp.model_copy(update={"seed": 12}))
-    assert other_seed.partition == resolved.partition
+    assert other_seed.partition_id == resolved.partition_id
     assert run_fingerprint(other_seed, LocalConfig().model_dump()) != run_fingerprint(
         resolved, LocalConfig().model_dump()
     )
 
 
-def test_partition_settings_are_not_accepted_in_experiment(monkeypatch, tmp_path):
-    config = _config(tmp_path / "datasets.yaml")
-    _generate(monkeypatch, config, tmp_path / "data")
-    exp = ExperimentConfig(
-        dataset=DATASET,
-        dataset_config=str(config),
-        data_dir=str(tmp_path / "data"),
-        alpha=0.9,
-    )
-    try:
-        resolve_experiment_data(exp)
-    except ValueError as exc:
-        assert "dataset configuration" in str(exc) and "alpha" in str(exc)
-    else:
-        raise AssertionError("experiment-level alpha should have been rejected")
+def test_partition_settings_are_not_accepted_in_experiment():
+    with pytest.raises(Exception, match="alpha"):
+        ExperimentConfig(alpha=0.9)
+    with pytest.raises(Exception, match="num_clients"):
+        ExperimentConfig(num_clients=5)
 
 
 class _Backbone(nn.Module):
@@ -230,7 +222,44 @@ def test_generated_partition_runs_through_experiment_infrastructure(monkeypatch,
         quiet=True,
     )
     record = run_one("local", exp, config_class("local")(), torch.device("cpu"))
-    assert record["config"]["experiment"]["partition"] == generated.partition_id
-    assert record["config"]["experiment"]["scheme"] == "generated"
+    assert record["config"]["experiment"]["partition_id"] == generated.partition_id
+    assert record["config"]["experiment"]["partition_scheme"] == "dirichlet"
     assert set(record["result"]["evaluation_history"]["clients"]) == {"0", "1"}
     validate_run_record(record)
+
+
+@pytest.mark.parametrize("scheme", [
+    "continuous", "dirichlet", "distribution", "exponential",
+    "grouped_natural_id", "iid", "inner_dirichlet", "linear",
+    "natural_id", "pathological", "shard", "size", "square",
+])
+def test_every_flower_partitioner_resolves_for_an_experiment(
+    scheme, monkeypatch, tmp_path
+):
+    """Generating a supported partitioner must also make it runnable."""
+    import yaml
+    from tests.test_flower_data import PARTITIONER_CASES
+
+    config = tmp_path / "datasets.yaml"
+    config.write_text(yaml.safe_dump({
+        "datasets": {
+            DATASET: {
+                "backend": "flower",
+                "source_dataset": "organization/source-data",
+                "partition": {
+                    "scheme": scheme,
+                    **PARTITIONER_CASES[scheme],
+                },
+            },
+        },
+    }))
+    _generate(monkeypatch, config, tmp_path / "data")
+    resolved, data = resolve_experiment_data(ExperimentConfig(
+        dataset=DATASET,
+        dataset_config=str(config),
+        data_dir=str(tmp_path / "data"),
+    ))
+
+    assert resolved.data_backend == "flower"
+    assert resolved.partition_scheme == scheme
+    assert resolved.partition_id == data.artifact.partition_id

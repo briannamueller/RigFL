@@ -255,9 +255,9 @@ def test_disabled_early_stopping_records_no_active_metric():
 
 def test_disabled_early_stopping_collapses_inactive_settings_in_identity():
     from rigfl.experiment.collect import condition_fields
-    from rigfl.experiment.config import (ExperimentConfig, normalize_early_stopping,
-                                         run_fingerprint)
+    from rigfl.experiment.config import normalize_early_stopping, run_fingerprint
     from rigfl.experiment.registry import config_class
+    from tests.helpers import resolved_experiment
 
     off_a = {"enabled": False, "patience": 5, "metric": None}
     off_b = {"enabled": False, "patience": 20, "metric": "accuracy"}
@@ -265,7 +265,7 @@ def test_disabled_early_stopping_collapses_inactive_settings_in_identity():
         {"enabled": False}
 
     algorithm = config_class("local")().model_dump()
-    fp = lambda es: run_fingerprint(ExperimentConfig(early_stopping=es), algorithm)
+    fp = lambda es: run_fingerprint(resolved_experiment(early_stopping=es), algorithm)
     assert fp({"enabled": False, "patience": 5}) == fp({"enabled": False, "patience": 20})
     # ...but enabled stopping is a real setting and does separate runs
     assert fp({"enabled": False}) != fp({"enabled": True, "metric": "accuracy",

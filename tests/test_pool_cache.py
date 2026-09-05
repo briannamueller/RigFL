@@ -22,6 +22,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from rigfl.core.interfaces import OneShotContext
 from rigfl.core.round import Client, p2p_one_shot
 from rigfl.algorithms.feddes import FedDES, FedDESConfig
+from tests.helpers import resolved_experiment
 
 DATA_ID = "cifar10-partition-a"
 MODEL_IDS = ["linear-a", "linear-b"]
@@ -79,18 +80,23 @@ def test_pool_fp_tracks_templates_separately_from_readable_names():
     assert first._pool_fp() != second._pool_fp()
 
 
-def test_natural_validation_fraction_reaches_the_pool_identity():
-    from rigfl.experiment.config import ExperimentConfig
+def test_biosilo_validation_fraction_reaches_the_pool_identity():
     from rigfl.experiment.registry import build_algorithm, config_class
 
     factories = [lambda: nn.Linear(4, 3) for _ in range(3)]
     cfg = config_class("feddes")(cache_dir="pool_cache")
     partition_id = "mortality_24h_n0_size_s1_abc123"
-    common = dict(dataset="eicu", scheme="natural", partition=partition_id,
-                  num_classes=3)
-    a = build_algorithm("feddes", ExperimentConfig(**common, val_frac=0.2), cfg,
+    common = dict(
+        dataset="eicu", data_backend="biosilo", partition_scheme=None,
+        partition_id=partition_id, num_classes=3, input_kind="temporal",
+        input_spec={"input_kind": "temporal", "n_ts": 3, "n_static": 2,
+                    "seq_len": 8},
+    )
+    a = build_algorithm("feddes", resolved_experiment(
+        **common, validation_fraction=0.2), cfg,
                      base_pool=factories)
-    b = build_algorithm("feddes", ExperimentConfig(**common, val_frac=0.4), cfg,
+    b = build_algorithm("feddes", resolved_experiment(
+        **common, validation_fraction=0.4), cfg,
                      base_pool=factories)
 
     assert a.data_id == b.data_id == f"eicu-{partition_id}"
@@ -98,13 +104,12 @@ def test_natural_validation_fraction_reaches_the_pool_identity():
 
 
 def test_generated_partition_identity_reaches_feddes_cache():
-    from rigfl.experiment.config import ExperimentConfig
     from rigfl.experiment.registry import build_algorithm, config_class
 
-    exp = ExperimentConfig(
+    exp = resolved_experiment(
         dataset="cifar10",
-        scheme="generated",
-        partition="partition-fingerprint",
+        partition_id="partition-fingerprint",
+        partition_scheme="dirichlet",
         num_clients=3,
         num_classes=3,
     )
@@ -210,10 +215,10 @@ def test_cache_dir_is_operational_not_scientific():
     filenames and two rows in the collected table.
     """
     from rigfl.experiment.collect import algorithm_variant
-    from rigfl.experiment.config import ExperimentConfig, result_filename, run_fingerprint
+    from rigfl.experiment.config import result_filename, run_fingerprint
     from rigfl.experiment.registry import config_class
 
-    exp = ExperimentConfig(rounds=2)
+    exp = resolved_experiment(rounds=2)
     Cfg = config_class("feddes")
     a = Cfg(cache_dir="/scratch/a").model_dump()
     b = Cfg(cache_dir="/scratch/b").model_dump()

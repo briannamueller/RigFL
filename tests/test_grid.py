@@ -42,10 +42,10 @@ def test_no_duplicate_configs():
 def test_experiment_axis_multiplies_all_algorithms():
     grid = build_grid({
         "algorithms": ["local", "feddes"],
-        "sweep": {"seed": [0, 1], "alpha": [0.1, 0.5]},    # experiment axes apply to all
+        "sweep": {"seed": [0, 1], "batch": [16, 32]},    # experiment axes apply to all
     })
     counts = _counts(grid)
-    assert counts["local"] == 4 and counts["feddes"] == 4  # 2 seeds x 2 alphas each
+    assert counts["local"] == 4 and counts["feddes"] == 4  # 2 seeds x 2 batches each
 
 
 def test_algorithm_specific_axis_lands_in_algorithm_config():

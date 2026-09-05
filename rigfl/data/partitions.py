@@ -20,6 +20,7 @@ from rigfl.data.config import (
     DEFAULT_DATA_DIR,
     DatasetSettings,
     dataset_settings,
+    FlowerDatasetSettings,
 )
 from rigfl.data.flower import generate_flower_partition
 
@@ -54,6 +55,11 @@ def expected_partition(
     data_dir: str | Path = DEFAULT_DATA_DIR,
 ) -> tuple[DatasetSettings, str, Path]:
     settings = dataset_settings(dataset, config_path)
+    if not isinstance(settings, FlowerDatasetSettings):
+        raise ValueError(
+            f"dataset {dataset!r} uses the {settings.backend!r} backend and does "
+            "not produce a RigFL-generated partition"
+        )
     partition_id = partition_fingerprint(dataset, settings)
     return settings, partition_id, partition_path(data_dir, dataset, partition_id)
 

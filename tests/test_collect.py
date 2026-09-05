@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from rigfl.experiment.collect import (_field, _records_supporting,
                                       _rows_by_algorithm, _rows_by_group)
+from tests.helpers import resolved_experiment
 
 # Selection policy is fixed here on purpose: these tests are about grouping and
 # pairing, not about which metric selects.
@@ -44,7 +45,8 @@ def _rows(by_algorithm, group_by=None):
 def _rec(algorithm, seed, result_acc, **algorithm_cfg):
     return {
         "algorithm": algorithm,
-        "config": {"algorithm": {"seed_note": seed, **algorithm_cfg}, "experiment": {"alpha": 0.1, "seed": seed}},
+        "config": {"algorithm": {"seed_note": seed, **algorithm_cfg},
+                   "experiment": {"batch": 32, "seed": seed}},
         "result": _history(result_acc),
     }
 
@@ -53,8 +55,8 @@ def test_field_reads_algorithm_and_experiment_and_name():
     rec = _rec("feddes", 0, 0.7, graph_k=5)
     assert _field(rec, "algorithm") == "feddes"
     assert _field(rec, "algorithm.graph_k") == 5
-    assert _field(rec, "exp.alpha") == 0.1
-    assert _field(rec, "alpha") == 0.1          # bare -> experiment field
+    assert _field(rec, "exp.batch") == 32
+    assert _field(rec, "batch") == 32          # bare -> experiment field
 
 
 def test_both_omits_an_unsupported_view_instead_of_duplicating_fallback():
@@ -92,7 +94,8 @@ def test_group_by_keeps_algorithms_separate():
     assert "local graph_k=None" in rows
 
 
-def _cond_rec(algorithm, seed, *, dataset="cifar10", alpha=0.1, accs=(0.8, 0.7),
+def _cond_rec(algorithm, seed, *, dataset="cifar10", partition_id="partition-a",
+              accs=(0.8, 0.7),
               algorithm_cfg=None):
     """Uses each algorithm's REAL config by default.
 
@@ -104,8 +107,12 @@ def _cond_rec(algorithm, seed, *, dataset="cifar10", alpha=0.1, accs=(0.8, 0.7),
         from rigfl.experiment.registry import config_class
         algorithm_cfg = config_class(algorithm)().model_dump()
     return {"algorithm": algorithm,
-            "config": {"experiment": {"dataset": dataset, "alpha": alpha, "seed": seed,
-                                      "num_clients": 20},
+            "config": {"experiment": {
+                "dataset": dataset, "partition_id": partition_id, "seed": seed,
+                "data_backend": "flower", "partition_scheme": "dirichlet",
+                "num_clients": 20, "num_classes": 10,
+                "validation_fraction": 0.2, "input_kind": "image",
+            },
                        "algorithm": algorithm_cfg},
             "result": _history(*accs)}
 
@@ -147,10 +154,10 @@ def test_equivalent_client_family_and_list_share_an_experiment_condition():
     from rigfl.experiment.run import resolve_experiment_architectures
 
     family = resolve_experiment_architectures(
-        ExperimentConfig(model_architecture_family="image_heterogeneous_3"),
+        resolved_experiment(model_architecture_family="image_heterogeneous_3"),
         input_kind="image")
     explicit = resolve_experiment_architectures(
-        ExperimentConfig(model_architectures=list(family.model_architectures)),
+        resolved_experiment(model_architectures=list(family.model_architectures)),
         input_kind="image")
     a = _cond_rec("local", 0)
     b = _cond_rec("feddes", 0)
@@ -207,7 +214,7 @@ def test_sweep_task_rejects_an_unknown_setting(tmp_path):
 
     def write(algorithm_config):
         grid.write_text(json.dumps({"algorithm": "feddes",
-                                    "experiment": {"dataset": "synthetic", "seed": 0},
+                                    "experiment": {"dataset": "cifar10", "seed": 0},
                                     "algorithm_config": algorithm_config}) + "\n")
 
     write({"graf_k": 7})
@@ -222,12 +229,12 @@ def test_group_by_still_separates_experiments():
     """--group-by says how to label rows, not that different datasets may be
     averaged together as extra seeds."""
     recs = {"feddes": [
-        _cond_rec("feddes", 0, alpha=0.1, algorithm_cfg={"graph_k": 5}),
-        _cond_rec("feddes", 1, alpha=0.1, algorithm_cfg={"graph_k": 5}),
-        _cond_rec("feddes", 0, alpha=0.5, algorithm_cfg={"graph_k": 5}),
+        _cond_rec("feddes", 0, partition_id="partition-a", algorithm_cfg={"graph_k": 5}),
+        _cond_rec("feddes", 1, partition_id="partition-a", algorithm_cfg={"graph_k": 5}),
+        _cond_rec("feddes", 0, partition_id="partition-b", algorithm_cfg={"graph_k": 5}),
     ]}
     rows = _rows(recs, ["algorithm.graph_k"])
-    assert len(rows) == 2, rows                       # alpha 0.1 and 0.5 stay apart
+    assert len(rows) == 2, rows                  # distinct partitions stay apart
     assert sorted(s["seeds"] for s in rows.values()) == [1, 2]
 
 
@@ -238,8 +245,12 @@ def test_experiments_differing_only_in_an_unlabelled_field_stay_apart():
 
     def rec(seed, batch):
         return {"algorithm": "feddes",
-                "config": {"experiment": {"dataset": "cifar10", "alpha": 0.1,
-                                          "num_clients": 20, "seed": seed, "batch": batch},
+                "config": {"experiment": {
+                    "dataset": "cifar10", "partition_id": "partition-a",
+                    "data_backend": "flower", "partition_scheme": "dirichlet",
+                    "num_clients": 20, "num_classes": 10,
+                    "validation_fraction": 0.2, "input_kind": "image",
+                    "seed": seed, "batch": batch},
                            "algorithm": {"graph_k": 5}},
                 "result": _history(.7, .6)}
 
@@ -309,10 +320,10 @@ def test_disabled_early_stopping_ignores_its_inactive_settings():
 
 
 def test_disabled_early_stopping_ignores_inactive_settings_for_run_identity():
-    from rigfl.experiment.config import ExperimentConfig, run_fingerprint
-    off5 = ExperimentConfig(early_stopping={"enabled": False, "patience": 5})
-    off20 = ExperimentConfig(early_stopping={"enabled": False, "patience": 20})
+    from rigfl.experiment.config import run_fingerprint
+    off5 = resolved_experiment(early_stopping={"enabled": False, "patience": 5})
+    off20 = resolved_experiment(early_stopping={"enabled": False, "patience": 20})
     assert run_fingerprint(off5, {}) == run_fingerprint(off20, {})
-    on5 = ExperimentConfig(early_stopping={"enabled": True, "metric": "accuracy", "patience": 5})
-    on20 = ExperimentConfig(early_stopping={"enabled": True, "metric": "accuracy", "patience": 20})
+    on5 = resolved_experiment(early_stopping={"enabled": True, "metric": "accuracy", "patience": 5})
+    on20 = resolved_experiment(early_stopping={"enabled": True, "metric": "accuracy", "patience": 20})
     assert run_fingerprint(on5, {}) != run_fingerprint(on20, {})

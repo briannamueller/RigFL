@@ -28,8 +28,7 @@ from rigfl.experiment.tuning import (MANIFEST_NAME, TuningError, format_ranking,
                                      rank as rank_tuning, write_selection)
 
 
-def load_results(results_dir: Path, dataset: str | None, alpha: float | None,
-                 *, ignore_invalid: bool = False,
+def load_results(results_dir: Path, dataset: str | None, *, ignore_invalid: bool = False,
                  invalid: list | None = None) -> dict[str, list[dict]]:
     """Load current-schema run records, grouped by algorithm and optionally filtered."""
     by_algorithm: dict[str, list[dict]] = defaultdict(list)
@@ -56,8 +55,6 @@ def load_results(results_dir: Path, dataset: str | None, alpha: float | None,
         exp = rec.get("config", {}).get("experiment", {})     # resolved config lives here
         if dataset and exp.get("dataset") != dataset:
             continue
-        if alpha is not None and exp.get("alpha") != alpha:
-            continue
         by_algorithm[rec["algorithm"]].append(rec)
 
     if others:
@@ -82,10 +79,9 @@ def load_results(results_dir: Path, dataset: str | None, alpha: float | None,
 
 # Algorithm settings are excluded so different algorithms can share one experimental
 # condition. Seed is excluded because rows aggregate over seeds.
-_EXPERIMENT = ("dataset", "partition", "scheme", "alpha", "num_clients",
-               "num_classes", "rounds", "shared_dim", "model_architectures",
-               "train_per_client", "test_per_client", "val_frac", "batch",
-               "eval_gap")
+_EXPERIMENT = ("dataset", "data_backend", "partition_id", "partition_scheme",
+               "num_clients", "num_classes", "validation_fraction", "input_kind",
+               "rounds", "shared_dim", "model_architectures", "batch", "eval_gap")
 
 
 def condition_fields(rec: dict) -> dict:
@@ -132,7 +128,7 @@ def describe_condition(rec: dict, fields: list[str] | None = None) -> str:
     """Label an experiment by the fields given, or by its headline ones."""
     values = condition_fields(rec)
     keys = fields if fields is not None else [
-        k for k in ("dataset", "partition", "num_clients")
+        k for k in ("dataset", "partition_id", "num_clients")
         if values.get(k) is not None]
     bits = [f"{k}={values.get(k)}" for k in keys]
     return " ".join(bits) or "(unlabelled)"
@@ -269,7 +265,7 @@ def main() -> None:
     args = p.parse_args()
 
     invalid: list[tuple[str, str]] = []
-    by_algorithm = load_results(Path(args.results_dir), args.dataset, None,
+    by_algorithm = load_results(Path(args.results_dir), args.dataset,
                                 ignore_invalid=args.ignore_invalid, invalid=invalid)
     ignored = [{"file": name, "reason": reason} for name, reason in invalid]
     if not by_algorithm:

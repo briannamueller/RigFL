@@ -24,6 +24,7 @@ from rigfl.experiment.registry import (
     config_class,
     resolve_algorithm_config,
 )
+from tests.helpers import resolved_experiment
 from rigfl.experiment.run import run_one
 from rigfl.algorithms.fedavg import (FedAvg, FedAvgConfig, ModelUpload,
                                     weighted_average_states)
@@ -182,8 +183,10 @@ def test_homogeneous_algorithms_reject_multiple_or_implicit_architectures(name):
 
 @pytest.mark.parametrize("name", ["fedavg", "fedprox"])
 def test_homogeneous_algorithms_reject_models_incompatible_with_the_input(name):
-    exp = ExperimentConfig(
-        scheme="natural", dataset="eICU", partition="p",
+    exp = resolved_experiment(
+        data_backend="biosilo", partition_scheme=None, input_kind="temporal",
+        input_spec={"input_kind": "temporal", "n_ts": 3, "n_static": 2,
+                    "seq_len": 8},
         model_architectures=["fedavg_cnn"],
     )
     with pytest.raises(ValueError, match="do not accept temporal inputs"):
@@ -222,7 +225,7 @@ def test_algorithms_are_registered_configured_and_sweepable_without_joining_base
 
 @pytest.mark.parametrize("name", ["fedavg", "fedprox"])
 def test_algorithm_settings_change_run_fingerprints(name):
-    exp = ExperimentConfig(model_architectures=["fedavg_cnn"])
+    exp = resolved_experiment(model_architectures=["fedavg_cnn"])
     Cfg = config_class(name)
     original = run_fingerprint(exp, Cfg().model_dump())
     assert original != run_fingerprint(exp, Cfg(lr=0.02).model_dump())
@@ -239,7 +242,11 @@ def _artifact(tmp_path):
             x = torch.randn(n, 4)
             y = (torch.arange(n) + cid) % 2
             torch.save((x, y), directory / f"{split}.pt")
-    settings = SimpleNamespace(model_dump=lambda mode=None: {"backend": "test"})
+    from rigfl.data.config import FlowerDatasetSettings
+    settings = FlowerDatasetSettings(
+        source_dataset="test/source",
+        partition={"scheme": "dirichlet", "num_clients": 2},
+    )
     return SimpleNamespace(
         partition_id="tiny-partition",
         path=tmp_path,
@@ -259,14 +266,22 @@ def test_algorithms_run_end_to_end_through_experiment_infrastructure(
 ):
     artifact = _artifact(tmp_path)
     exp = ExperimentConfig(
-        dataset="tiny", scheme="generated", partition=artifact.partition_id,
-        num_clients=2, num_classes=2, model_architectures=["tiny_image"],
+        dataset="tiny", model_architectures=["tiny_image"],
         rounds=1, shared_dim=3, batch=2, quiet=True,
     )
     monkeypatch.setitem(
         MODEL_ARCHITECTURE_REGISTRY, "tiny_image", ("image", TinyBackbone))
+    from rigfl.experiment.run import ResolvedData
+    resolved = resolved_experiment(
+        dataset="tiny", partition_id=artifact.partition_id,
+        num_clients=2, num_classes=2, model_architectures=["tiny_image"],
+        input_spec={"input_kind": "image", "shape": [4]},
+        rounds=1, shared_dim=3, batch=2, quiet=True,
+    )
     monkeypatch.setattr(
-        "rigfl.experiment.run.resolve_experiment_data", lambda value: (value, artifact)
+        "rigfl.experiment.run.resolve_experiment_data",
+        lambda value: (resolved, ResolvedData(
+            settings=artifact.settings, artifact=artifact)),
     )
 
     record = run_one(name, exp, config_class(name)(), DEVICE)

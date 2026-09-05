@@ -18,6 +18,7 @@ def __sel(history_or_result):
 
 
 import tempfile
+from pathlib import Path
 
 import pytest
 import torch
@@ -51,6 +52,20 @@ def _clients(root: str, n_ts: int, n_static: int):
     return build_biosilo_clients(
         "synthetic", shared_dim=SHARED_DIM, backbones=eicu_pool(n_ts, n_static),
         root=root, val_frac=0.25, batch=16)
+
+
+def _dataset_config(root: str, partition: str, validation_fraction: float) -> str:
+    path = Path(root) / "datasets.yaml"
+    path.write_text(
+        "datasets:\n"
+        "  synthetic:\n"
+        "    backend: biosilo\n"
+        "    source_dataset: synthetic\n"
+        f"    partition: {partition}\n"
+        f"    data_root: {root}\n"
+        f"    validation_fraction: {validation_fraction}\n"
+    )
+    return str(path)
 
 
 def test_multiinput_batch_is_a_multitensor():
@@ -108,19 +123,19 @@ def test_adapter_factory_uses_each_algorithms_own_alignment():
     assert isinstance(adapter_factory("local")(128, 32), LearnedProjection)
 
 
-def test_natural_scheme_runs_through_the_experiment_infra():
-    """scheme='natural' routes run_one to BioSilo and derives num_clients /
-    num_classes from the partition (the #2 partition abstraction)."""
+def test_biosilo_backend_runs_through_the_experiment_infra():
+    """A dataset entry routes BioSilo without an experiment-level scheme."""
     from rigfl.experiment.config import ExperimentConfig
     from rigfl.experiment.registry import config_class
     from rigfl.experiment.run import run_one
 
     with tempfile.TemporaryDirectory() as root:
         partition = _generate(root)
-        exp = ExperimentConfig(dataset="synthetic", scheme="natural", data_root=root,
-                               partition=partition,
-                               rounds=2, eval_gap=1, shared_dim=SHARED_DIM, batch=16,
-                               val_frac=0.25, quiet=True)
+        exp = ExperimentConfig(
+            dataset="synthetic",
+            dataset_config=_dataset_config(root, partition, 0.25),
+            rounds=2, eval_gap=1, shared_dim=SHARED_DIM, batch=16, quiet=True,
+        )
         cfg = config_class("fedproto")(lamda=0.1)
         rec = run_one("fedproto", exp, cfg, torch.device("cpu"))
         assert rec["config"]["experiment"]["num_clients"] == 5    # derived from the data
@@ -139,10 +154,11 @@ def test_fml_fedkd_build_a_temporal_aux_on_multiinput():
     with tempfile.TemporaryDirectory() as root:
         partition = _generate(root)
         for name in ("fml", "fedkd"):
-            exp = ExperimentConfig(dataset="synthetic", scheme="natural", data_root=root,
-                                   partition=partition,
-                                   rounds=2, eval_gap=1, shared_dim=SHARED_DIM, batch=16,
-                                   val_frac=0.25, quiet=True)
+            exp = ExperimentConfig(
+                dataset="synthetic",
+                dataset_config=_dataset_config(root, partition, 0.25),
+                rounds=2, eval_gap=1, shared_dim=SHARED_DIM, batch=16, quiet=True,
+            )
             rec = run_one(name, exp, config_class(name)(), torch.device("cpu"))
             assert 0.0 <= __sel(rec["result"]["evaluation_history"])["test"]["accuracy"][0] <= 1.0
 
@@ -158,10 +174,11 @@ def test_feddes_runs_on_multiinput():
 
     with tempfile.TemporaryDirectory() as root:
         partition = _generate(root)
-        exp = ExperimentConfig(dataset="synthetic", scheme="natural", data_root=root,
-                               partition=partition,
-                               rounds=2, eval_gap=1, shared_dim=SHARED_DIM, batch=16,
-                               val_frac=0.3, quiet=True)
+        exp = ExperimentConfig(
+            dataset="synthetic",
+            dataset_config=_dataset_config(root, partition, 0.3),
+            rounds=2, eval_gap=1, shared_dim=SHARED_DIM, batch=16, quiet=True,
+        )
         # calibrate=False: this test is about the eICU pool running through
         # GraphRoute, not about calibration, which GraphRoute covers itself.
         cfg = config_class("feddes")(base_epochs=2, gnn_epochs=5, gnn_patience=3,

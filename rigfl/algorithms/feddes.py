@@ -95,27 +95,12 @@ class FedDES(Algorithm):
     def from_config(cls, config, *, experiment, base_pool=None,
                     model_input_spec=None, **resources):
         from rigfl.core.adapters import LearnedProjection
-        from rigfl.experiment.config import fingerprint
         from rigfl.models.registry import (instantiate_models,
                                            resolve_model_architectures)
 
-        if experiment.scheme in {"generated", "natural"}:
-            data_id = f"{experiment.dataset}-{experiment.partition}"
-        else:
-            partition_settings = {
-                "dataset": experiment.dataset,
-                "num_clients": experiment.num_clients,
-                "alpha": experiment.alpha,
-                "seed": experiment.seed,
-                "train_per_client": experiment.train_per_client,
-                "test_per_client": experiment.test_per_client,
-                "val_frac": experiment.val_frac,
-            }
-            data_id = (
-                f"{experiment.dataset}-{fingerprint(partition_settings)}")
+        data_id = f"{experiment.dataset}-{experiment.partition_id}"
 
-        input_kind = model_input_spec["input_kind"] if model_input_spec else (
-            "temporal" if experiment.scheme == "natural" else "image")
+        input_kind = model_input_spec["input_kind"] if model_input_spec else experiment.input_kind
         model_ids = resolve_model_architectures(
             architecture_family=experiment.model_architecture_family,
             architectures=experiment.model_architectures,
@@ -123,7 +108,7 @@ class FedDES(Algorithm):
         )
         if base_pool is None:
             if model_input_spec is None:
-                if experiment.scheme == "natural":
+                if experiment.input_kind == "temporal":
                     raise ValueError(
                         "FedDES temporal models require model_input_spec with "
                         "n_ts, n_static, and seq_len."
@@ -145,7 +130,7 @@ class FedDES(Algorithm):
             data_id=data_id,
             model_ids=model_ids,
             seed=experiment.seed,
-            validation_fraction=experiment.val_frac,
+            validation_fraction=experiment.validation_fraction,
         )
 
     def prepare(self, model, train_loader, ctx: OneShotContext):

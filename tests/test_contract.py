@@ -41,9 +41,9 @@ def test_default_construction_hook_stores_the_validated_configuration():
 def test_one_registry_entry_is_enough_to_construct_an_ordinary_algorithm(
     monkeypatch,
 ):
-    from rigfl.experiment.config import ExperimentConfig
     from rigfl.experiment.registry import (AlgorithmSpec, REGISTRY,
                                            build_algorithm)
+    from tests.helpers import resolved_experiment
 
     class ExampleConfig(AlgorithmConfig):
         lr: float = 0.1
@@ -55,7 +55,7 @@ def test_one_registry_entry_is_enough_to_construct_an_ordinary_algorithm(
         REGISTRY, "example", AlgorithmSpec(ExampleAlgorithm, ExampleConfig))
     config = ExampleConfig(lr=0.2)
 
-    algorithm = build_algorithm("example", ExperimentConfig(), config)
+    algorithm = build_algorithm("example", resolved_experiment(), config)
 
     assert isinstance(algorithm, ExampleAlgorithm)
     assert algorithm.config is config

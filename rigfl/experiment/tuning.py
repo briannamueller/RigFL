@@ -18,8 +18,8 @@ from rigfl.eval.report import mean_ci, run_score
 from rigfl.eval.selection import SelectionError
 from rigfl.experiment.artifacts import (ResultValidationError, atomic_write_json,
                                         atomic_write_text, dumps, loads, read_json)
-from rigfl.experiment.config import (_ALGORITHM_ENV_IRRELEVANT, fingerprint,
-                                     hashable)
+from rigfl.experiment.config import (ExperimentConfig, _ALGORITHM_ENV_IRRELEVANT,
+                                     fingerprint, hashable)
 from rigfl.experiment.registry import config_class
 
 #: Bumped when the manifest layout changes in a way a reader must notice.
@@ -369,8 +369,8 @@ def candidate_of(record: dict, manifest: dict, index: dict[tuple, int]) -> Optio
 def effective_condition(record: dict, manifest: dict) -> dict:
     """The experimental condition a candidate is ranked *within*.
 
-    Everything that makes two runs incomparable stays: dataset, partition,
-    alpha, client count, early stopping, and any swept field the user did not
+    Everything that makes two runs incomparable stays: dataset-partition
+    identity, client count, early stopping, and any swept field the user did not
     declare as a tuning parameter. What is being searched comes out, and so does
     the replicate axis.
 
@@ -414,7 +414,7 @@ def _stats(values: list[float]) -> dict:
 
 
 #: Fields worth naming when a single group needs a label at all.
-_HEADLINE = ("dataset", "partition", "alpha", "num_clients")
+_HEADLINE = ("dataset", "partition_id", "num_clients")
 
 
 def label_keys(conditions: list[dict]) -> list[str]:
@@ -688,7 +688,14 @@ def selected_configuration(record: dict, manifest: dict) -> dict:
     lifted back out into ``sweep`` -- baking in whichever seed happened to be
     read would present a replicate as though it were part of what was tuned.
     """
-    exp = dict(record.get("config", {}).get("experiment", {}))
+    # Completed records hold resolved data facts for provenance and comparison.
+    # A selected YAML must contain only fields users are allowed to put in an
+    # ExperimentConfig; the dataset registry will resolve those facts again.
+    exp = {
+        key: value
+        for key, value in record.get("config", {}).get("experiment", {}).items()
+        if key in ExperimentConfig.model_fields
+    }
     acfg = dict(record.get("config", {}).get("algorithm", {}))
     section, name = _split(manifest["replicate_axis"])
     if section == "algorithm":

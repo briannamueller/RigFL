@@ -2,7 +2,7 @@
 
 Two facts a result should carry and did not. Whether the checkout that ran it
 matched its recorded commit -- a commit plus uncommitted edits describes the code
-only loosely. And, for a natural partition, which generated partition it was:
+only loosely. And, for a BioSilo dataset, which existing partition it loaded:
 BioSilo already assigns one an id, so the id is recorded rather than a second
 identity being derived from it.
 
@@ -21,6 +21,7 @@ from rigfl.experiment.config import ExperimentConfig, result_filename, run_finge
 from rigfl.experiment.env import _git_dirty, capture_env
 from rigfl.experiment.registry import config_class
 from rigfl.experiment.run import partition_summary
+from tests.helpers import resolved_experiment
 
 
 def _git(*args, cwd):
@@ -97,7 +98,7 @@ def test_a_clean_checkout_warns_about_nothing(monkeypatch, capsys):
 
 def test_git_state_is_not_part_of_run_identity():
     """A dirty tree must not rerun a configuration that is already done."""
-    exp = ExperimentConfig(rounds=2, num_clients=2)
+    exp = resolved_experiment(rounds=2, num_clients=2)
     algorithm = config_class("local")().model_dump()
     fingerprint = run_fingerprint(exp, algorithm)
     name = result_filename(exp, "local", fingerprint)
@@ -114,7 +115,7 @@ def test_git_state_is_not_part_of_run_identity():
 def test_the_environment_block_is_not_in_the_fingerprint():
     from rigfl.experiment.artifacts import make_run_record
 
-    exp = ExperimentConfig(rounds=2, num_clients=2)
+    exp = resolved_experiment(rounds=2, num_clients=2)
     cfg = config_class("local")()
     fingerprint = run_fingerprint(exp, cfg.model_dump())
     record = make_run_record(
@@ -149,14 +150,14 @@ def _clients(n=1):
     return out
 
 
-def test_a_natural_run_records_the_partition_id_and_provenance():
+def test_a_biosilo_run_records_the_partition_id_and_provenance():
     summary = partition_summary(_clients(2), num_classes=2, handle=_Handle())
     assert summary["biosilo"]["partition_id"] == "eicu-hosp-7f3a91"
     assert summary["biosilo"]["provenance"] == _Handle.provenance
     assert len(summary["per_client"]) == 2          # the existing content is unchanged
 
 
-def test_a_dirichlet_run_records_no_biosilo_block():
+def test_a_flower_run_records_no_biosilo_block():
     summary = partition_summary(_clients(2), num_classes=2)
     assert "biosilo" not in summary
     assert len(summary["per_client"]) == 2
@@ -174,7 +175,13 @@ def test_the_partition_id_is_recorded_not_derived():
 
 
 def test_partition_provenance_is_not_part_of_run_identity():
-    exp = ExperimentConfig(scheme="natural", partition="p1", rounds=2)
+    exp = resolved_experiment(
+        data_backend="biosilo", partition_scheme=None, partition_id="p1",
+        input_kind="temporal",
+        input_spec={"input_kind": "temporal", "n_ts": 3, "n_static": 2,
+                    "seq_len": 8},
+        rounds=2,
+    )
     algorithm = config_class("local")().model_dump()
     before = run_fingerprint(exp, algorithm)
     # the recorded provenance is a property of the result, not of the config the
@@ -242,14 +249,8 @@ def test_package_versions_come_from_installed_metadata():
         assert info["version"] == "0.1.0"
 
 
-def test_a_natural_run_must_name_its_partition():
-    """Otherwise its filename, fingerprint and pool identity all say None."""
-    with pytest.raises(ValueError, match="requires an explicit partition id"):
-        ExperimentConfig(scheme="natural")
-    with pytest.raises(ValueError, match="requires an explicit partition id"):
-        ExperimentConfig(scheme="natural", partition="  ")
+def test_a_biosilo_dataset_entry_must_name_its_partition():
+    from rigfl.data.config import BioSiloDatasetSettings
 
-    exp = ExperimentConfig(scheme="natural", partition="eicu-hosp-7f3a91")
-    assert "eicu-hosp-7f3a91" in result_filename(
-        exp, "local", run_fingerprint(exp, config_class("local")().model_dump()))
-    assert ExperimentConfig().scheme == "dirichlet"        # unaffected
+    with pytest.raises(ValueError, match="partition id"):
+        BioSiloDatasetSettings(source_dataset="eicu", partition="  ")
