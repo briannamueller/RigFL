@@ -78,18 +78,22 @@ def algorithm_spec(name: str) -> AlgorithmSpec:
 def resolve_algorithm_config(name: str, exp: ExperimentConfig,
                              cfg: AlgorithmConfig) -> AlgorithmConfig:
     """Validate algorithm/experiment compatibility and resolve shorthand."""
-    if isinstance(exp, ResolvedExperimentConfig):
-        input_kind = exp.input_kind
-    else:
-        from rigfl.data.config import BioSiloDatasetSettings, dataset_settings
-        settings = dataset_settings(exp.dataset, exp.dataset_config)
-        input_kind = "temporal" if isinstance(settings, BioSiloDatasetSettings) else "image"
-    names = resolve_model_architectures(
-        architecture_family=exp.model_architecture_family,
-        architectures=exp.model_architectures,
-        input_kind=input_kind,
+    input_kind = (
+        exp.input_kind if isinstance(exp, ResolvedExperimentConfig) else None
     )
-    if name in {"fedavg", "fedprox"}:
+    has_model_selection = (
+        exp.model_architecture_family is not None
+        or exp.model_architectures is not None
+        or input_kind is not None
+    )
+    names = None
+    if has_model_selection:
+        names = resolve_model_architectures(
+            architecture_family=exp.model_architecture_family,
+            architectures=exp.model_architectures,
+            input_kind=input_kind,
+        )
+    if name in {"fedavg", "fedprox"} and names is not None:
         _validate_homogeneous_model_architecture(name, exp, names)
     return cfg
 
@@ -128,16 +132,13 @@ def adapter_factory(name: str):
     return lambda native, shared: LearnedProjection(native, shared)
 
 
-def _default_aux_backbone(shared_dim: int):
-    """The shared aux backbone when the caller doesn't supply one: a small CIFAR
-    CNN. For multi-input datasets (eICU) the caller passes a temporal backbone."""
-    return lambda: SmallCNN((16, 32), shared_dim)
+def _default_aux_backbone(shared_dim: int, input_spec: dict):
+    """The shared auxiliary backbone when the caller does not supply one."""
+    return lambda: SmallCNN((16, 32), shared_dim, input_spec=input_spec)
 
 
 def _aux_model(backbone, shared_dim: int, num_classes: int):
-    """A shared homogeneous aux ClientModel (FML's meme / FedKD's mentee) from a
-    single backbone architecture. The backbone must suit the dataset (a temporal
-    one for eICU), so the caller supplies it rather than it being a fixed CNN."""
+    """Construct FML's meme model or FedKD's mentee model."""
     def make() -> ClientModel:
         b = backbone()
         return ClientModel(b, LearnedProjection(b.out_dim, shared_dim), nn.Linear(shared_dim, num_classes))
@@ -149,12 +150,11 @@ def build_algorithm(name: str, exp: ResolvedExperimentConfig, cfg: AlgorithmConf
                     model_template=None):
     """Construct a registered algorithm through its standard factory hook.
 
-    ``aux_backbone`` is the (dataset-appropriate) backbone factory for the shared
-    meme/mentee that FML and FedKD need; run_one supplies a temporal one for a
-    multi-input (eICU) partition. Defaults to a small CIFAR CNN."""
+    ``aux_backbone`` is the backbone factory for the shared meme or mentee model
+    used by FML and FedKD. It defaults to a small CIFAR CNN."""
     cfg = resolve_algorithm_config(name, exp, cfg)
     sd, nc = exp.shared_dim, exp.num_classes
-    aux = aux_backbone or _default_aux_backbone(sd)
+    aux = aux_backbone or _default_aux_backbone(sd, model_input_spec or exp.input_spec)
     return algorithm_spec(name).algorithm.from_config(
         cfg,
         experiment=exp,

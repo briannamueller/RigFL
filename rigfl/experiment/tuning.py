@@ -18,7 +18,7 @@ from rigfl.eval.report import mean_ci, run_score
 from rigfl.eval.selection import SelectionError
 from rigfl.experiment.artifacts import (ResultValidationError, atomic_write_json,
                                         atomic_write_text, dumps, loads, read_json)
-from rigfl.experiment.config import (ExperimentConfig, _ALGORITHM_ENV_IRRELEVANT,
+from rigfl.experiment.config import (ExperimentConfig, algorithm_identity,
                                      fingerprint, hashable)
 from rigfl.experiment.registry import config_class
 
@@ -374,22 +374,26 @@ def effective_condition(record: dict, manifest: dict) -> dict:
     declare as a tuning parameter. What is being searched comes out, and so does
     the replicate axis.
 
-    Collector condition fields support comparisons across algorithms; tuning adds
-    the swept algorithm settings needed to distinguish candidates within an algorithm.
+    Collector condition fields support comparisons across algorithms. Tuning
+    also retains non-tuned algorithm settings so distinct configurations are
+    not combined.
     """
     from rigfl.experiment.collect import condition_fields
 
     tuned = list(manifest["tuning_parameters"]) + [manifest["replicate_axis"]]
     drop_exp = {_split(p)[1] for p in tuned if _split(p)[0] == "exp"}
+    drop_algorithm = {_split(p)[1] for p in tuned
+                      if _split(p)[0] == "algorithm"}
 
     cond = {k: v for k, v in condition_fields(record).items() if k not in drop_exp}
     exp = record.get("config", {}).get("experiment", {})
-    acfg = record.get("config", {}).get("algorithm", {})
+    acfg = algorithm_identity(record.get("config", {}).get("algorithm", {}))
+    for name, value in acfg.items():
+        if name not in drop_algorithm:
+            cond[f"algorithm.{name}"] = hashable(value)
     for axis in manifest["condition_axes"]:
         section, name = _split(axis)
         if section == "algorithm":
-            if name in _ALGORITHM_ENV_IRRELEVANT:      # a location, not a condition
-                continue
             if name in acfg:
                 cond[f"algorithm.{name}"] = hashable(acfg[name])
         elif name not in cond:          # a swept experiment field outside the
@@ -466,7 +470,16 @@ def place_records(records: list[dict], manifest: dict,
             continue
         gk = group_key(rec, manifest)
         conditions.setdefault(gk, effective_condition(rec, manifest))
-        placed.setdefault(gk, {}).setdefault(cid, {})[replicate_of(rec, manifest)] = rec
+        replicate = replicate_of(rec, manifest)
+        slot = placed.setdefault(gk, {}).setdefault(cid, {})
+        if replicate in slot:
+            first = slot[replicate].get("_source_file", "an earlier result")
+            second = rec.get("_source_file", "another result")
+            raise TuningError(
+                f"Duplicate results for {rec['algorithm']} candidate {cid}, "
+                f"replicate {replicate!r}: {first} and {second}."
+            )
+        slot[replicate] = rec
     return placed, conditions, unassigned
 
 

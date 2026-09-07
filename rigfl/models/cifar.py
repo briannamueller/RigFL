@@ -31,13 +31,16 @@ class SmallCNN(nn.Module):
                  in_ch: int = 3, input_spec=None):
         super().__init__()
         in_ch = _image_channels(input_spec, in_ch)
+        shape = tuple(input_spec.get("shape", ())) if input_spec else ()
+        pooled_height = shape[1] // 4 if shape else 8
+        pooled_width = shape[2] // 4 if shape else 8
         c1, c2 = channels
         self.features = nn.Sequential(
-            nn.Conv2d(in_ch, c1, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),   # 32 -> 16
-            nn.Conv2d(c1, c2, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),      # 16 -> 8
-            nn.AdaptiveAvgPool2d((8, 8)),
+            nn.Conv2d(in_ch, c1, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
+            nn.Conv2d(c1, c2, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
+            nn.AdaptiveAvgPool2d((pooled_height, pooled_width)),
         )
-        self.fc = nn.Linear(c2 * 8 * 8, hidden)
+        self.fc = nn.Linear(c2 * pooled_height * pooled_width, hidden)
         self.out_dim = hidden
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

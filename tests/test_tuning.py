@@ -839,6 +839,42 @@ def test_a_result_matching_no_candidate_is_reported_not_invented():
     assert any("match no candidate" in w for w in art["warnings"])
 
 
+def test_fixed_algorithm_settings_define_separate_tuning_groups():
+    grid, manifest = expand(_spec(sweep={
+        "seed": [0], "algorithm.base_lr": [0.01], "algorithm.graph_k": [3]
+    }))
+    recs = _records(grid, manifest, lambda cid: _flat(0.6, 0.5))
+    recs[0]["config"]["algorithm"] = config_class("feddes")(
+        **recs[0]["config"]["algorithm"]
+    ).model_dump()
+    changed = json.loads(json.dumps(recs[0]))
+    changed["config"]["algorithm"]["gnn_arch"] = "mlp"
+    changed["_source_file"] = "different_fixed_setting.json"
+
+    placed, conditions, unassigned = place_records(recs + [changed], manifest)
+
+    assert not unassigned
+    assert len(placed) == 2
+    values = {
+        condition["algorithm.gnn_arch"] for condition in conditions.values()
+    }
+    assert values == {"gat", "mlp"}
+
+
+def test_duplicate_tuning_result_is_rejected():
+    grid, manifest = expand(_spec(sweep={
+        "seed": [0], "algorithm.base_lr": [0.01], "algorithm.graph_k": [3]
+    }))
+    recs = _records(grid, manifest, lambda cid: _flat(0.6, 0.5))
+    duplicate = json.loads(json.dumps(recs[0]))
+    duplicate["config"]["algorithm"]["cache_dir"] = "another/cache"
+    duplicate["_source_file"] = "duplicate.json"
+
+    message = "Duplicate results.*task1.json.*duplicate.json"
+    with pytest.raises(TuningError, match=message):
+        place_records(recs + [duplicate], manifest)
+
+
 def test_string_and_numeric_spellings_of_a_value_match(tmp_path):
     """CLI-style sweep values are strings while result values are numeric."""
     grid, manifest = expand(_spec(sweep={"seed": "0-2", "algorithm.base_lr": "0.01,0.1",
@@ -880,7 +916,7 @@ def test_a_manifest_from_a_future_schema_is_refused(tmp_path):
 
 def _sweep_dir(tmp_path, spec, *, with_manifest=True, val=None):
     """A results directory holding real result files for a declared sweep."""
-    from rigfl.experiment.config import ExperimentConfig, result_filename, run_fingerprint
+    from rigfl.experiment.config import result_filename, run_fingerprint
     from rigfl.experiment.registry import config_class
     from rigfl.experiment.artifacts import make_run_record
 

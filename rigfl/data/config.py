@@ -6,7 +6,9 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from rigfl.data.transforms import get_data_transform
 
 
 DEFAULT_DATASET_CONFIG = "configs/datasets.yaml"
@@ -23,24 +25,36 @@ class SourceSplits(BaseModel):
     validation: str | None = None
 
 
-class PreprocessingSettings(BaseModel):
-    """Dataset-independent conversion of one source feature to a tensor."""
+class MergedSourceSplits(BaseModel):
+    """Source splits merged before creating client partitions."""
 
     model_config = ConfigDict(extra="forbid")
 
-    type: Literal["auto", "image", "numeric"] = "auto"
-    mean: list[float] | None = None
-    std: list[float] | None = None
+    merge_splits: list[str] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def _normalization_is_complete(self):
-        if (self.mean is None) != (self.std is None):
-            raise ValueError("preprocessing.mean and preprocessing.std must be set together")
-        if self.mean is not None:
-            if not self.mean or len(self.mean) != len(self.std):
-                raise ValueError("preprocessing.mean and preprocessing.std must have equal nonzero lengths")
-            if any(value <= 0 for value in self.std):
-                raise ValueError("preprocessing.std values must be greater than zero")
+    def _split_names_are_unique(self):
+        if len(set(self.merge_splits)) != len(self.merge_splits):
+            raise ValueError("source_splits.merge_splits must contain unique names")
+        return self
+
+
+class ClientSplitSettings(BaseModel):
+    """Fractions used to divide each merged client partition."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    validation_fraction: float = Field(gt=0, lt=1)
+    test_fraction: float = Field(gt=0, lt=1)
+    stratify: bool
+
+    @model_validator(mode="after")
+    def _leave_training_data(self):
+        if self.validation_fraction + self.test_fraction >= 1:
+            raise ValueError(
+                "client_split.validation_fraction and test_fraction must sum to "
+                "less than one"
+            )
         return self
 
 
@@ -66,7 +80,7 @@ class ContinuousSettings(PartitionSettingsBase):
     """Arguments passed to Flower's ContinuousPartitioner."""
 
     scheme: Literal["continuous"] = "continuous"
-    num_clients: int = Field(20, ge=1)
+    num_clients: int = Field(5, ge=1)
     partition_by: str
     strictness: float = Field(ge=0, le=1)
 
@@ -75,7 +89,7 @@ class DirichletSettings(PartitionSettingsBase):
     """Arguments passed to Flower's DirichletPartitioner."""
 
     scheme: Literal["dirichlet"] = "dirichlet"
-    num_clients: int = Field(20, ge=1)
+    num_clients: int = Field(5, ge=1)
     partition_by: str | None = None
     alpha: Alpha = 0.1
     min_partition_size: int = Field(10, ge=1)
@@ -95,7 +109,7 @@ class DistributionSettings(PartitionSettingsBase):
 
     scheme: Literal["distribution"] = "distribution"
     distribution_array: list[list[float]]
-    num_clients: int = Field(20, ge=1)
+    num_clients: int = Field(5, ge=1)
     num_unique_labels_per_partition: int = Field(ge=1)
     partition_by: str | None = None
     preassigned_num_samples_per_label: int = Field(ge=0)
@@ -106,7 +120,7 @@ class ExponentialSettings(PartitionSettingsBase):
     """Arguments passed to Flower's ExponentialPartitioner."""
 
     scheme: Literal["exponential"] = "exponential"
-    num_clients: int = Field(20, ge=1)
+    num_clients: int = Field(5, ge=1)
 
 
 class GroupedNaturalIdSettings(PartitionSettingsBase):
@@ -119,13 +133,14 @@ class GroupedNaturalIdSettings(PartitionSettingsBase):
         "allow-smaller", "allow-bigger", "drop-reminder", "strict"
     ] = "allow-smaller"
     sort_unique_ids: bool = True
+    client_limit: int | None = Field(None, ge=1)
 
 
 class IidSettings(PartitionSettingsBase):
     """Arguments passed to Flower's IidPartitioner."""
 
     scheme: Literal["iid"] = "iid"
-    num_clients: int = Field(20, ge=1)
+    num_clients: int = Field(5, ge=1)
 
 
 class InnerDirichletSettings(PartitionSettingsBase):
@@ -141,7 +156,7 @@ class LinearSettings(PartitionSettingsBase):
     """Arguments passed to Flower's LinearPartitioner."""
 
     scheme: Literal["linear"] = "linear"
-    num_clients: int = Field(20, ge=1)
+    num_clients: int = Field(5, ge=1)
 
 
 class NaturalIdSettings(PartitionSettingsBase):
@@ -149,13 +164,14 @@ class NaturalIdSettings(PartitionSettingsBase):
 
     scheme: Literal["natural_id"] = "natural_id"
     partition_by: str
+    client_limit: int | None = Field(None, ge=1)
 
 
 class PathologicalSettings(PartitionSettingsBase):
     """Arguments passed to Flower's PathologicalPartitioner."""
 
     scheme: Literal["pathological"] = "pathological"
-    num_clients: int = Field(20, ge=1)
+    num_clients: int = Field(5, ge=1)
     partition_by: str | None = None
     num_classes_per_partition: int = Field(ge=1)
     class_assignment_mode: Literal[
@@ -167,7 +183,7 @@ class ShardSettings(PartitionSettingsBase):
     """Arguments passed to Flower's ShardPartitioner."""
 
     scheme: Literal["shard"] = "shard"
-    num_clients: int = Field(20, ge=1)
+    num_clients: int = Field(5, ge=1)
     partition_by: str | None = None
     num_shards_per_partition: int | None = Field(None, ge=1)
     shard_size: int | None = Field(None, ge=1)
@@ -193,7 +209,7 @@ class SquareSettings(PartitionSettingsBase):
     """Arguments passed to Flower's SquarePartitioner."""
 
     scheme: Literal["square"] = "square"
-    num_clients: int = Field(20, ge=1)
+    num_clients: int = Field(5, ge=1)
 
 
 PartitionSettings = Annotated[
@@ -222,36 +238,36 @@ class FlowerDatasetSettings(BaseModel):
     backend: Literal["flower"] = "flower"
     source_dataset: str
     source_subset: str | None = None
-    source_splits: SourceSplits | None = None
+    source_revision: str | None = None
+    source_splits: SourceSplits | MergedSourceSplits | None = None
+    client_split: ClientSplitSettings | None = None
     input_column: str | None = None
     target_column: str | None = None
     task: Literal["auto", "classification", "regression"] = "auto"
-    preprocessing: PreprocessingSettings = Field(default_factory=PreprocessingSettings)
+    data_transform: str = Field("auto", min_length=1)
     partition: PartitionSettings = Field(default_factory=DirichletSettings)
 
-
-class BioSiloDatasetSettings(BaseModel):
-    """One existing BioSilo partition consumed without copying its data."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    backend: Literal["biosilo"] = "biosilo"
-    source_dataset: str
-    partition: str
-    data_root: str | None = None
-    validation_fraction: float = Field(0.2, gt=0, lt=1)
+    @field_validator("data_transform")
+    @classmethod
+    def _data_transform_is_registered(cls, value):
+        get_data_transform(value)
+        return value
 
     @model_validator(mode="after")
-    def _partition_is_named(self):
-        if not self.partition.strip():
-            raise ValueError("a BioSilo dataset entry requires a partition id")
+    def _client_split_matches_source_splits(self):
+        merged = isinstance(self.source_splits, MergedSourceSplits)
+        if merged and self.client_split is None:
+            raise ValueError(
+                "client_split is required when source_splits.merge_splits is set"
+            )
+        if not merged and self.client_split is not None:
+            raise ValueError(
+                "client_split requires source_splits.merge_splits"
+            )
         return self
 
 
-DatasetSettings = Annotated[
-    FlowerDatasetSettings | BioSiloDatasetSettings,
-    Field(discriminator="backend"),
-]
+DatasetSettings = FlowerDatasetSettings
 
 
 class DatasetRegistry(BaseModel):

@@ -20,7 +20,7 @@ import numpy as np
 import torch
 
 from rigfl.data.partitions import build_partition_clients, load_partition
-from rigfl.data.config import BioSiloDatasetSettings, FlowerDatasetSettings, dataset_settings
+from rigfl.data.config import FlowerDatasetSettings, dataset_settings
 from rigfl.experiment.artifacts import (ResultValidationError, existing_result_decision,
                                         make_run_record, write_run_record)
 from rigfl.experiment.config import (ExperimentConfig, ResolvedExperimentConfig,
@@ -43,7 +43,7 @@ def set_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
-def partition_summary(clients, num_classes: int, handle=None, artifact=None) -> dict:
+def partition_summary(clients, num_classes: int, artifact=None) -> dict:
     """Per-client split sizes, label histograms, and partition identity."""
     out = []
     for c in clients:
@@ -63,9 +63,6 @@ def partition_summary(clients, num_classes: int, handle=None, artifact=None) -> 
             "partition_id": artifact.partition_id,
             "settings": artifact.settings.model_dump(mode="json"),
         }
-    if handle is not None:
-        summary["biosilo"] = {"partition_id": handle.partition_id,
-                              "provenance": handle.provenance}
     return summary
 
 
@@ -73,9 +70,8 @@ def partition_summary(clients, num_classes: int, handle=None, artifact=None) -> 
 class ResolvedData:
     """The backend object and metadata selected by a dataset-registry entry."""
 
-    settings: Any
-    artifact: Any = None
-    handle: Any = None
+    settings: FlowerDatasetSettings
+    artifact: Any
 
 
 def resolve_experiment_data(
@@ -87,67 +83,37 @@ def resolve_experiment_data(
     }
     settings = dataset_settings(exp.dataset, exp.dataset_config)
 
-    if isinstance(settings, FlowerDatasetSettings):
-        artifact = load_partition(
-            exp.dataset, config_path=exp.dataset_config, data_dir=exp.data_dir
+    artifact = load_partition(
+        exp.dataset, config_path=exp.dataset_config, data_dir=exp.data_dir
+    )
+    target_spec = artifact.manifest["target_spec"]
+    if artifact.manifest["task"] != "classification":
+        raise ValueError(
+            "RigFL's experiment algorithms currently support classification only; "
+            f"dataset {exp.dataset!r} generated a "
+            f"{artifact.manifest['task']} partition"
         )
-        target_spec = artifact.manifest["target_spec"]
-        if artifact.manifest["task"] != "classification":
-            raise ValueError(
-                "RigFL's experiment algorithms currently support classification only; "
-                f"dataset {exp.dataset!r} generated a "
-                f"{artifact.manifest['task']} partition"
-            )
-        manifest_input_spec = dict(artifact.manifest["input_spec"])
-        input_kind = manifest_input_spec.pop("kind")
-        input_spec = {"input_kind": input_kind, **manifest_input_spec}
-        resolved = ResolvedExperimentConfig(
-            **experiment_input,
-            data_backend="flower",
-            partition_id=artifact.partition_id,
-            partition_scheme=settings.partition.scheme,
-            num_clients=artifact.manifest["num_clients"],
-            num_classes=target_spec["num_classes"],
-            validation_fraction=settings.partition.val_frac,
-            input_kind=input_kind,
-            input_spec=input_spec,
-        )
-        return resolve_experiment_architectures(
-            resolved, input_kind=resolved.input_kind
-        ), ResolvedData(settings=settings, artifact=artifact)
-
-    if isinstance(settings, BioSiloDatasetSettings):
-        import biosilo
-
-        handle = biosilo.load(
-            settings.source_dataset,
-            root=settings.data_root,
-            partition=settings.partition,
-        )
-        from rigfl.data.biosilo import temporal_dims
-        n_ts, n_static = temporal_dims(handle)
-        input_spec = {
-            "input_kind": "temporal",
-            "n_ts": n_ts,
-            "n_static": n_static,
-            "seq_len": handle.inputs[0]["shape"][0],
-        }
-        resolved = ResolvedExperimentConfig(
-            **experiment_input,
-            data_backend="biosilo",
-            partition_id=handle.partition_id,
-            partition_scheme=None,
-            num_clients=handle.num_clients,
-            num_classes=handle.num_classes,
-            validation_fraction=settings.validation_fraction,
-            input_kind="temporal",
-            input_spec=input_spec,
-        )
-        return resolve_experiment_architectures(
-            resolved, input_kind=resolved.input_kind
-        ), ResolvedData(settings=settings, handle=handle)
-
-    raise ValueError(f"unsupported dataset backend: {settings.backend!r}")
+    manifest_input_spec = dict(artifact.manifest["input_spec"])
+    input_kind = manifest_input_spec.pop("kind")
+    input_spec = {"input_kind": input_kind, **manifest_input_spec}
+    resolved = ResolvedExperimentConfig(
+        **experiment_input,
+        data_backend="flower",
+        partition_id=artifact.partition_id,
+        partition_scheme=settings.partition.scheme,
+        num_clients=artifact.manifest["num_clients"],
+        num_classes=target_spec["num_classes"],
+        validation_fraction=(
+            settings.client_split.validation_fraction
+            if settings.client_split is not None
+            else settings.partition.val_frac
+        ),
+        input_kind=input_kind,
+        input_spec=input_spec,
+    )
+    return resolve_experiment_architectures(
+        resolved, input_kind=resolved.input_kind
+    ), ResolvedData(settings=settings, artifact=artifact)
 
 
 def resolve_experiment_architectures(
@@ -180,48 +146,25 @@ def run_one(name, exp: ExperimentConfig, cfg, device, *, data: ResolvedData | No
     adapter = adapter_factory(name)                       # the algorithm's paper alignment
     aux_backbone = None                                  # FML/FedKD shared aux model
     model_input_spec = dict(exp.input_spec)
-    handle = data.handle
     generated_artifact = data.artifact
-    if exp.data_backend == "biosilo":
-        # BioSilo provides an existing temporal partition; RigFL derives the
-        # validation split and constructs the client models for this run.
-        from rigfl.data.biosilo import build_biosilo_clients, temporal_dims
-        from rigfl.models.eicu import GRUTabularBackbone
-        n_ts, n_static = temporal_dims(handle)
-        backbone_names = resolve_model_architectures(
-            architecture_family=exp.model_architecture_family,
-            architectures=exp.model_architectures,
-            input_kind="temporal",
-        )
-        backbones = instantiate_backbones(backbone_names, input_spec=model_input_spec)
-        clients, handle = build_biosilo_clients(
-            data.settings.source_dataset, exp.shared_dim, backbones,
-            root=data.settings.data_root, partition=data.settings.partition,
-            val_frac=exp.validation_fraction, batch=exp.batch, adapter=adapter)
-        # FML/FedKD's shared meme/mentee must consume the same multi-input as
-        # the clients. FedDES builds its pool from the experiment's same resolved
-        # architectures and input description below.
-        aux_backbone = lambda: GRUTabularBackbone(n_ts, n_static, 64, exp.shared_dim)
-    elif exp.data_backend == "flower":
-        input_kind = exp.input_kind
-        if "shape" in model_input_spec:
-            model_input_spec["shape"] = tuple(model_input_spec["shape"])
-        backbone_names = resolve_model_architectures(
-            architecture_family=exp.model_architecture_family,
-            architectures=exp.model_architectures,
-            input_kind=input_kind,
-        )
-        backbones = instantiate_backbones(backbone_names, input_spec=model_input_spec)
-        aux_backbone = backbones[0]
-        clients = build_partition_clients(
-            generated_artifact,
-            shared_dim=exp.shared_dim,
-            batch=exp.batch,
-            adapter=adapter,
-            backbones=backbones,
-        )
-    else:
-        raise RuntimeError(f"unresolved data backend: {exp.data_backend!r}")
+    input_kind = exp.input_kind
+    if "shape" in model_input_spec:
+        model_input_spec["shape"] = tuple(model_input_spec["shape"])
+    backbone_names = resolve_model_architectures(
+        architecture_family=exp.model_architecture_family,
+        architectures=exp.model_architectures,
+        input_kind=input_kind,
+    )
+    backbones = instantiate_backbones(backbone_names, input_spec=model_input_spec)
+    aux_backbone = backbones[0]
+    clients = build_partition_clients(
+        generated_artifact,
+        shared_dim=exp.shared_dim,
+        batch=exp.batch,
+        seed=exp.seed,
+        adapter=adapter,
+        backbones=backbones,
+    )
     algorithm = build_algorithm(
         name, exp, cfg, aux_backbone=aux_backbone,
         model_input_spec=model_input_spec,
@@ -243,9 +186,7 @@ def run_one(name, exp: ExperimentConfig, cfg, device, *, data: ResolvedData | No
         result=result,
         env=capture_env(), device=str(device),
         wall_seconds=round(time.time() - t0, 1),
-        partition=partition_summary(
-            clients, exp.num_classes, handle, generated_artifact
-        ),
+        partition=partition_summary(clients, exp.num_classes, generated_artifact),
     )
     if tracker is not None:
         tracker.finish(result)

@@ -1,26 +1,13 @@
-"""Provenance metadata: what produced a result, recorded without deciding anything.
-
-Two facts a result should carry and did not. Whether the checkout that ran it
-matched its recorded commit -- a commit plus uncommitted edits describes the code
-only loosely. And, for a BioSilo dataset, which existing partition it loaded:
-BioSilo already assigns one an id, so the id is recorded rather than a second
-identity being derived from it.
-
-Both are metadata. Neither may reach run identity, filenames or the decision to
-rerun a configuration, and that is what most of this file pins down.
-"""
+"""Provenance metadata recorded with experiment results."""
 
 from __future__ import annotations
 
 import subprocess
 
-import pytest
-
 from rigfl.experiment import env as env_mod
-from rigfl.experiment.config import ExperimentConfig, result_filename, run_fingerprint
+from rigfl.experiment.config import result_filename, run_fingerprint
 from rigfl.experiment.env import _git_dirty, capture_env
 from rigfl.experiment.registry import config_class
-from rigfl.experiment.run import partition_summary
 from tests.helpers import resolved_experiment
 
 
@@ -125,71 +112,6 @@ def test_the_environment_block_is_not_in_the_fingerprint():
     assert record["run_fingerprint"] == fingerprint
 
 
-# ── BioSilo partition provenance ─────────────────────────────────────────────
-
-class _Handle:
-    partition_id = "eicu-hosp-7f3a91"
-    provenance = {"biosilo_version": "0.1.0", "generated": "2026-02-11",
-                  "source": "eICU-CRD v2.0", "params": {"min_clients": 5}}
-
-
-def _clients(n=1):
-    import torch
-    from torch.utils.data import DataLoader, TensorDataset
-
-    out = []
-    for _ in range(n):
-        ds = TensorDataset(torch.zeros(4, 2), torch.zeros(4, dtype=torch.long))
-        loader = DataLoader(ds, batch_size=4)
-
-        class C:
-            train_loader = loader
-            val_loader = loader
-            test_loader = loader
-        out.append(C())
-    return out
-
-
-def test_a_biosilo_run_records_the_partition_id_and_provenance():
-    summary = partition_summary(_clients(2), num_classes=2, handle=_Handle())
-    assert summary["biosilo"]["partition_id"] == "eicu-hosp-7f3a91"
-    assert summary["biosilo"]["provenance"] == _Handle.provenance
-    assert len(summary["per_client"]) == 2          # the existing content is unchanged
-
-
-def test_a_flower_run_records_no_biosilo_block():
-    summary = partition_summary(_clients(2), num_classes=2)
-    assert "biosilo" not in summary
-    assert len(summary["per_client"]) == 2
-
-
-def test_the_partition_id_is_recorded_not_derived():
-    """BioSilo assigns the id; RigFL copies it rather than computing a second one."""
-    class Other:
-        partition_id = "a-completely-different-id"
-        provenance = {"note": "whatever biosilo wrote"}
-
-    summary = partition_summary(_clients(1), num_classes=2, handle=Other())
-    assert summary["biosilo"] == {"partition_id": "a-completely-different-id",
-                                  "provenance": {"note": "whatever biosilo wrote"}}
-
-
-def test_partition_provenance_is_not_part_of_run_identity():
-    exp = resolved_experiment(
-        data_backend="biosilo", partition_scheme=None, partition_id="p1",
-        input_kind="temporal",
-        input_spec={"input_kind": "temporal", "n_ts": 3, "n_static": 2,
-                    "seq_len": 8},
-        rounds=2,
-    )
-    algorithm = config_class("local")().model_dump()
-    before = run_fingerprint(exp, algorithm)
-    # the recorded provenance is a property of the result, not of the config the
-    # fingerprint is taken over
-    assert run_fingerprint(exp, algorithm) == before
-    assert "biosilo" not in exp.model_dump()
-
-
 def test_provenance_describes_rigfl_not_the_working_directory(tmp_path, monkeypatch):
     """Launching from inside another checkout must not borrow its commit.
 
@@ -247,10 +169,3 @@ def test_package_versions_come_from_installed_metadata():
         if info is None:                              # not installed here
             continue
         assert info["version"] == "0.1.0"
-
-
-def test_a_biosilo_dataset_entry_must_name_its_partition():
-    from rigfl.data.config import BioSiloDatasetSettings
-
-    with pytest.raises(ValueError, match="partition id"):
-        BioSiloDatasetSettings(source_dataset="eicu", partition="  ")

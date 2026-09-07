@@ -1,6 +1,7 @@
 """Datasets -> generated partitions -> federated clients."""
 
 from rigfl.data.config import (
+    ClientSplitSettings,
     ContinuousSettings,
     DatasetRegistry,
     DatasetSettings,
@@ -12,10 +13,10 @@ from rigfl.data.config import (
     IidSettings,
     InnerDirichletSettings,
     LinearSettings,
+    MergedSourceSplits,
     NaturalIdSettings,
     PartitionSettings,
     PathologicalSettings,
-    PreprocessingSettings,
     ShardSettings,
     SizeSettings,
     SourceSplits,
@@ -37,6 +38,7 @@ __all__ = [
     "PartitionArtifact",
     "PartitionSettings",
     "ContinuousSettings",
+    "ClientSplitSettings",
     "DirichletSettings",
     "DistributionSettings",
     "ExponentialSettings",
@@ -45,9 +47,9 @@ __all__ = [
     "IidSettings",
     "InnerDirichletSettings",
     "LinearSettings",
+    "MergedSourceSplits",
     "NaturalIdSettings",
     "PathologicalSettings",
-    "PreprocessingSettings",
     "ShardSettings",
     "SizeSettings",
     "SourceSplits",

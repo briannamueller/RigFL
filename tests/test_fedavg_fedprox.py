@@ -161,10 +161,8 @@ def test_one_selected_architecture_constructs_separate_homogeneous_models():
 
 
 @pytest.mark.parametrize("name", ["fedavg", "fedprox"])
-def test_homogeneous_algorithms_reject_multiple_or_implicit_architectures(name):
+def test_homogeneous_algorithms_reject_multiple_architectures(name):
     cfg = config_class(name)()
-    with pytest.raises(ValueError, match="requires exactly one model architecture"):
-        resolve_algorithm_config(name, ExperimentConfig(), cfg)
     with pytest.raises(ValueError, match="requires exactly one model architecture"):
         resolve_algorithm_config(
             name,
@@ -184,12 +182,11 @@ def test_homogeneous_algorithms_reject_multiple_or_implicit_architectures(name):
 @pytest.mark.parametrize("name", ["fedavg", "fedprox"])
 def test_homogeneous_algorithms_reject_models_incompatible_with_the_input(name):
     exp = resolved_experiment(
-        data_backend="biosilo", partition_scheme=None, input_kind="temporal",
-        input_spec={"input_kind": "temporal", "n_ts": 3, "n_static": 2,
-                    "seq_len": 8},
+        input_kind="numeric",
+        input_spec={"input_kind": "numeric", "shape": [10]},
         model_architectures=["fedavg_cnn"],
     )
-    with pytest.raises(ValueError, match="do not accept temporal inputs"):
+    with pytest.raises(ValueError, match="do not accept numeric inputs"):
         resolve_algorithm_config(name, exp, config_class(name)())
 
 

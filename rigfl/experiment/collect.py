@@ -196,9 +196,19 @@ def _rows_by_group(by_algorithm: dict[str, list[dict]], group_by: list[str], met
         if multi:
             label += f"  [{describe_condition(rec, fields)}]"
         groups[label].append(rec)
-    return {label: summarize(groups[label], metric, view=view, aggregation=aggregation,
-                             tie_break=tie_break)
-            for label in sorted(groups)}
+    rows = {}
+    for label in sorted(groups):
+        records = groups[label]
+        if len({algorithm_variant(record) for record in records}) > 1:
+            raise ValueError(
+                f"group {label!r} combines multiple algorithm configurations; "
+                "include the differing algorithm fields in --group-by"
+            )
+        rows[label] = summarize(
+            records, metric, view=view, aggregation=aggregation,
+            tie_break=tie_break,
+        )
+    return rows
 
 
 def _records_supporting(by_algorithm: dict[str, list[dict]], view: str) -> dict[str, list[dict]]:

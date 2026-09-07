@@ -103,9 +103,9 @@ class ResolvedExperimentConfig(ExperimentConfig):
     metadata remain the source of truth for them.
     """
 
-    data_backend: str
+    data_backend: Literal["flower"]
     partition_id: str
-    partition_scheme: str | None = None
+    partition_scheme: str
     num_clients: int = Field(ge=1)
     num_classes: int = Field(ge=2)
     validation_fraction: float = Field(gt=0, lt=1)

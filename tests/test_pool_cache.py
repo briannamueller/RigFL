@@ -80,17 +80,15 @@ def test_pool_fp_tracks_templates_separately_from_readable_names():
     assert first._pool_fp() != second._pool_fp()
 
 
-def test_biosilo_validation_fraction_reaches_the_pool_identity():
+def test_validation_fraction_reaches_the_pool_identity():
     from rigfl.experiment.registry import build_algorithm, config_class
 
     factories = [lambda: nn.Linear(4, 3) for _ in range(3)]
     cfg = config_class("feddes")(cache_dir="pool_cache")
-    partition_id = "mortality_24h_n0_size_s1_abc123"
+    partition_id = "partition-fingerprint"
     common = dict(
-        dataset="eicu", data_backend="biosilo", partition_scheme=None,
-        partition_id=partition_id, num_classes=3, input_kind="temporal",
-        input_spec={"input_kind": "temporal", "n_ts": 3, "n_static": 2,
-                    "seq_len": 8},
+        dataset="cifar10", partition_scheme="dirichlet",
+        partition_id=partition_id, num_classes=3,
     )
     a = build_algorithm("feddes", resolved_experiment(
         **common, validation_fraction=0.2), cfg,
@@ -99,7 +97,7 @@ def test_biosilo_validation_fraction_reaches_the_pool_identity():
         **common, validation_fraction=0.4), cfg,
                      base_pool=factories)
 
-    assert a.data_id == b.data_id == f"eicu-{partition_id}"
+    assert a.data_id == b.data_id == f"cifar10-{partition_id}"
     assert a._pool_fp() != b._pool_fp()
 
 

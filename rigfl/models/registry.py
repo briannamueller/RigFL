@@ -9,44 +9,48 @@ from rigfl.models.cifar import (
     CifarMobileNetV2,
     CifarResNet18,
     FedAvgCNN,
+    SmallCNN,
 )
-from rigfl.models.eicu import (
-    ConvTabularBackbone,
-    GRUTabularBackbone,
-    LSTMTabularBackbone,
-)
+from rigfl.models.mnist import FedAvgMNISTCNN, LeNet5
+from rigfl.models.tabular import TabularLinear, TabularMLP, TabularResidualMLP
 
 
 # Short YAML name -> input kind + feature-extractor class. The same resolved
 # names construct the federated client models and FedDES's per-client pool.
 MODEL_ARCHITECTURE_REGISTRY: dict[str, tuple[str, type[nn.Module]]] = {
+    "lenet5": ("image", LeNet5),
+    "fedavg_mnist_cnn": ("image", FedAvgMNISTCNN),
+    "small_cnn": ("image", SmallCNN),
     "fedavg_cnn": ("image", FedAvgCNN),
     "cifar_resnet18": ("image", CifarResNet18),
     "cifar_mobilenet_v2": ("image", CifarMobileNetV2),
-    "gru_tabular": ("temporal", GRUTabularBackbone),
-    "conv_tabular": ("temporal", ConvTabularBackbone),
-    "lstm_tabular": ("temporal", LSTMTabularBackbone),
+    "tabular_linear": ("numeric", TabularLinear),
+    "tabular_mlp": ("numeric", TabularMLP),
+    "tabular_residual_mlp": ("numeric", TabularResidualMLP),
 }
 
 MODEL_ARCHITECTURE_FAMILIES = {
+    "mnist_heterogeneous_3": [
+        "lenet5", "fedavg_mnist_cnn", "small_cnn"
+    ],
     "image_heterogeneous_3": [
         "fedavg_cnn", "cifar_resnet18", "cifar_mobilenet_v2"
     ],
-    "temporal_heterogeneous_3": [
-        "gru_tabular", "conv_tabular", "lstm_tabular"
+    "tabular_heterogeneous_3": [
+        "tabular_linear", "tabular_mlp", "tabular_residual_mlp"
     ],
 }
 
 
 DEFAULT_ARCHITECTURE_FAMILY = {
     "image": "image_heterogeneous_3",
-    "temporal": "temporal_heterogeneous_3",
+    "numeric": "tabular_heterogeneous_3",
 }
 
 
 def resolve_model_architectures(*, architecture_family: str | None,
                                 architectures: list[str] | None,
-                                input_kind: str) -> list[str]:
+                                input_kind: str | None) -> list[str]:
     """Resolve one family or explicit architecture list and validate it."""
     if architecture_family is not None and architectures is not None:
         raise ValueError(
@@ -78,7 +82,7 @@ def resolve_model_architectures(*, architecture_family: str | None,
             f"Unknown model architecture(s): {', '.join(unknown)}; known: "
             f"{', '.join(sorted(MODEL_ARCHITECTURE_REGISTRY))}."
         )
-    incompatible = [
+    incompatible = [] if input_kind is None else [
         name for name in names
         if MODEL_ARCHITECTURE_REGISTRY[name][0] != input_kind
     ]
@@ -94,17 +98,10 @@ def instantiate_backbones(names: list[str], *, input_spec: dict):
     """Return factories so every client receives a fresh backbone instance."""
     factories = []
     for name in names:
-        input_kind, backbone_class = MODEL_ARCHITECTURE_REGISTRY[name]
-        if input_kind == "image":
-            factories.append(
-                lambda cls=backbone_class: cls(input_spec=input_spec)
-            )
-        else:
-            factories.append(
-                lambda cls=backbone_class: cls(
-                    input_spec["n_ts"], input_spec["n_static"]
-                )
-            )
+        _, backbone_class = MODEL_ARCHITECTURE_REGISTRY[name]
+        factories.append(
+            lambda cls=backbone_class: cls(input_spec=input_spec)
+        )
     return factories
 
 

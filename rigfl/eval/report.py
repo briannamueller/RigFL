@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import statistics
 from typing import Optional
@@ -9,6 +10,7 @@ from typing import Optional
 from rigfl.eval.metrics import canonical, direction_of
 from rigfl.eval.selection import (SelectionError, client_distribution,
                                   resolve_metric, select)
+from rigfl.experiment.config import algorithm_identity
 
 _T95 = {
     1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447,
@@ -18,6 +20,28 @@ _T95 = {
     23: 2.069, 24: 2.064, 25: 2.060, 26: 2.056, 27: 2.052,
     28: 2.048, 29: 2.045, 30: 2.042,
 }
+
+
+def _seed(record: dict) -> int:
+    seed = record.get("config", {}).get("experiment", {}).get("seed")
+    if seed is None:
+        raise ValueError("result record is missing config.experiment.seed")
+    return seed
+
+
+def _records_by_seed(records: list[dict], label: str) -> dict[int, dict]:
+    indexed = {}
+    for record in records:
+        seed = _seed(record)
+        if seed in indexed:
+            raise ValueError(f"{label} contains more than one record for seed {seed}")
+        indexed[seed] = record
+    return indexed
+
+
+def _algorithm_configuration(record: dict) -> str:
+    config = record.get("config", {}).get("algorithm", {})
+    return json.dumps(algorithm_identity(config), sort_keys=True)
 
 
 def mean_ci(xs: list[float]) -> tuple[float, float]:
@@ -122,6 +146,9 @@ def summarize(records: list[dict], metric: str, *, view: str = "global",
 
     Client-distribution statistics are computed per seed and then averaged.
     """
+    if len({_algorithm_configuration(record) for record in records}) > 1:
+        raise ValueError("summary requires one algorithm configuration")
+    _records_by_seed(records, "summary")
     name = canonical(metric)
     sels = [selection_for(r, name, view=view, aggregation=aggregation,
                           tie_break=tie_break) for r in records]
@@ -209,13 +236,18 @@ def win_rate(algorithm_records: list[dict], local_records: list[dict], metric: s
     name = canonical(metric)
     better = (lambda a, b: a > b) if direction_of(name) == "maximize" else (lambda a, b: a < b)
 
-    def seed(r):
-        return r.get("config", {}).get("experiment", {}).get("seed")
-
-    local_by_seed = {seed(r): r for r in local_records}
+    local_configurations = {
+        _algorithm_configuration(record) for record in local_records
+    }
+    if len(local_configurations) > 1:
+        raise ValueError(
+            "win rate requires one Local configuration per experiment"
+        )
+    local_by_seed = _records_by_seed(local_records, "Local baseline")
+    algorithm_by_seed = _records_by_seed(algorithm_records, "algorithm")
     wins = total = 0
-    for m in algorithm_records:
-        l = local_by_seed.get(seed(m))
+    for seed, m in algorithm_by_seed.items():
+        l = local_by_seed.get(seed)
         if l is None:
             continue
         mv = _by_client(selection_for(m, name, **kw), name, "test")

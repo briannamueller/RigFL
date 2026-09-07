@@ -15,13 +15,57 @@ from rigfl.data.partitions import (
     load_partition,
     partition_fingerprint,
 )
-from rigfl.data.config import dataset_settings
+from rigfl.data.config import (
+    FlowerDatasetSettings,
+    dataset_settings,
+    load_dataset_registry,
+)
 from rigfl.experiment.config import ExperimentConfig, run_fingerprint
 from rigfl.experiment.run import resolve_experiment_data
-from rigfl.algorithms.local import LocalConfig
+from rigfl.algorithms.local import Local, LocalConfig
+from rigfl.core.round import iterative
 
 
 DATASET = "my_images"
+
+
+def test_bundled_dataset_config_includes_the_starter_datasets():
+    registry = load_dataset_registry()
+
+    assert {
+        "mnist",
+        "fashion_mnist",
+        "cifar10",
+        "cifar100",
+        "tiny_imagenet",
+        "femnist",
+        "paysim_fraud",
+    } <= set(registry.datasets)
+    assert registry.datasets["mnist"].source_dataset == "ylecun/mnist"
+    assert (
+        registry.datasets["fashion_mnist"].source_dataset
+        == "zalando-datasets/fashion_mnist"
+    )
+    assert registry.datasets["cifar100"].data_transform == "cifar100"
+    assert registry.datasets["tiny_imagenet"].data_transform == "tiny_imagenet"
+    assert registry.datasets["femnist"].partition.client_limit == 20
+    assert registry.datasets["paysim_fraud"].partition.partition_by == "BankID"
+    assert all(
+        registry.datasets[name].partition.num_clients == 5
+        for name in (
+            "mnist",
+            "fashion_mnist",
+            "cifar10",
+            "cifar100",
+            "tiny_imagenet",
+        )
+    )
+
+
+def test_synthetic_partitioner_defaults_to_five_clients():
+    settings = FlowerDatasetSettings(source_dataset="organization/source-data")
+
+    assert settings.partition.num_clients == 5
 
 
 def _config(path, *, alpha=0.3):
@@ -96,6 +140,77 @@ def test_partition_fingerprint_is_stable_and_tracks_generation_settings(tmp_path
     assert partition_fingerprint(DATASET, first) != partition_fingerprint(DATASET, second)
 
 
+def test_partition_fingerprint_tracks_pipeline_version(monkeypatch, tmp_path):
+    settings = dataset_settings(DATASET, _config(tmp_path / "datasets.yaml"))
+    baseline = partition_fingerprint(DATASET, settings)
+
+    monkeypatch.setattr(
+        partitions,
+        "PARTITION_PIPELINE_VERSION",
+        partitions.PARTITION_PIPELINE_VERSION + 1,
+    )
+
+    assert baseline != partition_fingerprint(DATASET, settings)
+
+
+def test_partition_fingerprint_tracks_merged_and_client_split_settings():
+    def settings(
+        merge_splits, validation_fraction=0.1, test_fraction=0.2, stratify=True
+    ):
+        return FlowerDatasetSettings(
+            source_dataset="organization/source-data",
+            source_splits={"merge_splits": merge_splits},
+            client_split={
+                "validation_fraction": validation_fraction,
+                "test_fraction": test_fraction,
+                "stratify": stratify,
+            },
+            partition={"scheme": "iid", "num_clients": 2},
+        )
+
+    baseline = partition_fingerprint(DATASET, settings(["train", "test"]))
+
+    assert baseline == partition_fingerprint(DATASET, settings(["train", "test"]))
+    assert baseline != partition_fingerprint(DATASET, settings(["test", "train"]))
+    assert baseline != partition_fingerprint(
+        DATASET, settings(["train", "test"], validation_fraction=0.15)
+    )
+    assert baseline != partition_fingerprint(
+        DATASET, settings(["train", "test"], test_fraction=0.25)
+    )
+    assert baseline != partition_fingerprint(
+        DATASET, settings(["train", "test"], stratify=False)
+    )
+
+
+def test_partition_fingerprint_tracks_source_and_transform_settings():
+    def settings(*, revision="revision-1", client_limit=2, transform="image"):
+        return FlowerDatasetSettings(
+            source_dataset="organization/source-data",
+            source_revision=revision,
+            source_splits={"merge_splits": ["train"]},
+            client_split={
+                "validation_fraction": 0.1,
+                "test_fraction": 0.2,
+                "stratify": False,
+            },
+            input_column="image",
+            target_column="label",
+            data_transform=transform,
+            partition={
+                "scheme": "natural_id",
+                "partition_by": "writer",
+                "client_limit": client_limit,
+            },
+        )
+
+    baseline = partition_fingerprint(DATASET, settings())
+
+    assert baseline != partition_fingerprint(DATASET, settings(revision="revision-2"))
+    assert baseline != partition_fingerprint(DATASET, settings(client_limit=3))
+    assert baseline != partition_fingerprint(DATASET, settings(transform="auto"))
+
+
 def test_partition_count_can_be_derived_from_partition_sizes(monkeypatch, tmp_path):
     config = tmp_path / "datasets.yaml"
     config.write_text(
@@ -140,6 +255,7 @@ def test_generation_dispatches_by_backend_and_reuses_partition(monkeypatch, tmp_
     assert artifact.path.name == f"partition_{artifact.partition_id}"
     assert (artifact.path / "clients" / "client_0" / "train.pt").exists()
     manifest = json.loads((artifact.path / "manifest.json").read_text())
+    assert manifest["pipeline_version"] == partitions.PARTITION_PIPELINE_VERSION
     assert manifest["source"]["dataset"] == "organization/source-data"
     assert manifest["num_clients"] == 2
     assert manifest["clients"][0]["validation"] == 3
@@ -177,6 +293,36 @@ def test_experiment_uses_alias_to_resolve_partition(monkeypatch, tmp_path):
     )
 
 
+def test_experiment_uses_merged_client_validation_fraction(monkeypatch, tmp_path):
+    config = tmp_path / "datasets.yaml"
+    config.write_text(
+        "datasets:\n"
+        f"  {DATASET}:\n"
+        "    backend: flower\n"
+        "    source_dataset: organization/source-data\n"
+        "    source_splits:\n"
+        "      merge_splits: [train, test]\n"
+        "    client_split:\n"
+        "      validation_fraction: 0.15\n"
+        "      test_fraction: 0.2\n"
+        "      stratify: true\n"
+        "    partition:\n"
+        "      scheme: iid\n"
+        "      num_clients: 2\n"
+    )
+    _generate(monkeypatch, config, tmp_path / "data")
+
+    resolved, _ = resolve_experiment_data(
+        ExperimentConfig(
+            dataset=DATASET,
+            dataset_config=str(config),
+            data_dir=str(tmp_path / "data"),
+        )
+    )
+
+    assert resolved.validation_fraction == 0.15
+
+
 def test_partition_settings_are_not_accepted_in_experiment():
     with pytest.raises(Exception, match="alpha"):
         ExperimentConfig(alpha=0.9)
@@ -202,6 +348,42 @@ def test_generated_partition_builds_clients_without_repartitioning(monkeypatch, 
     assert len(clients[0].train_loader.dataset) == 9
     assert len(clients[0].val_loader.dataset) == 3
     assert len(clients[0].test_loader.dataset) == 6
+
+
+def test_evaluation_frequency_does_not_change_training(monkeypatch, tmp_path):
+    config = _config(tmp_path / "datasets.yaml")
+    artifact, _ = _generate(monkeypatch, config, tmp_path / "data")
+
+    def trained_state(eval_gap):
+        torch.manual_seed(19)
+        clients = build_partition_clients(
+            artifact, shared_dim=4, batch=4, seed=19, backbones=[_Backbone]
+        )
+        iterative(
+            Local(LocalConfig(local_epochs=1, lr=0.05)),
+            clients,
+            num_rounds=3,
+            device=torch.device("cpu"),
+            num_classes=3,
+            eval_gap=eval_gap,
+            verbose=False,
+        )
+        return [
+            {
+                name: value.detach().clone()
+                for name, value in client.model.state_dict().items()
+            }
+            for client in clients
+        ]
+
+    every_round = trained_state(1)
+    final_round = trained_state(3)
+
+    assert all(
+        torch.equal(every_round[cid][name], final_round[cid][name])
+        for cid in range(len(every_round))
+        for name in every_round[cid]
+    )
 
 
 def test_generated_partition_runs_through_experiment_infrastructure(monkeypatch, tmp_path):

@@ -12,7 +12,6 @@ split, where:
     grouped data (e.g. BraTS's adjacent same-brain slices) cannot leak from train
     into val. When ``None``, val is a plain random split.
 
-CIFAR wraps flwr behind this signature; the biomedical repo exposes the same one.
 ``build_clients`` is the single place that turns a source into ``Client``s, so
 every dataset is handled identically regardless of storage or grouping.
 """
@@ -33,8 +32,7 @@ Source = Callable[[int, str], tuple]
 
 
 def _is_multi(X) -> bool:
-    """Multi-input X is a namedtuple of arrays (e.g. eICU's ``(ts, static)``);
-    single-input X is a bare array."""
+    """Return whether X is a named tuple containing multiple input arrays."""
     return isinstance(X, tuple) and hasattr(X, "_fields")
 
 
@@ -112,10 +110,15 @@ def _train_val_indices(n: int, groups, val_frac: float, *,
     return train_idx, val_idx
 
 
+def _client_generator(seed: int, client_id: int, stream: int) -> torch.Generator:
+    return torch.Generator().manual_seed(seed + client_id * 4 + stream)
+
+
 def build_clients(source: Source, num_clients: int, num_classes: int,
                   backbones: list[Callable[[], nn.Module]], shared_dim: int,
                   val_frac: float = 0.2, batch: int = 32,
-                  adapter: Callable[[int, int], nn.Module] | None = None) -> list[Client]:
+                  adapter: Callable[[int, int], nn.Module] | None = None,
+                  seed: int = 0) -> list[Client]:
     """Turn a data source + a pool of backbone *factories* into ``Client``s.
 
     ``backbones`` are factories (not instances) so every client gets its OWN
@@ -131,7 +134,10 @@ def build_clients(source: Source, num_clients: int, num_classes: int,
     clients: list[Client] = []
     for cid in range(num_clients):
         x_tr, y_tr, g_tr = source(cid, "train")
-        train_idx, val_idx = _train_val_indices(len(y_tr), g_tr, val_frac)
+        train_idx, val_idx = _train_val_indices(
+            len(y_tr), g_tr, val_frac,
+            generator=_client_generator(seed, cid, 0),
+        )
         x_te, y_te, _ = source(cid, "test")
 
         backbone = backbones[cid % len(backbones)]()          # fresh instance per client
@@ -140,8 +146,20 @@ def build_clients(source: Source, num_clients: int, num_classes: int,
             adapter=adapter)
         clients.append(Client(
             model,
-            DataLoader(_ArrayDataset(x_tr, y_tr, train_idx), batch_size=batch, shuffle=True, collate_fn=_collate),
-            DataLoader(_ArrayDataset(x_tr, y_tr, val_idx), batch_size=batch, collate_fn=_collate),
-            DataLoader(_ArrayDataset(x_te, y_te, range(len(y_te))), batch_size=batch, collate_fn=_collate),
+            DataLoader(
+                _ArrayDataset(x_tr, y_tr, train_idx), batch_size=batch,
+                shuffle=True, collate_fn=_collate,
+                generator=_client_generator(seed, cid, 1),
+            ),
+            DataLoader(
+                _ArrayDataset(x_tr, y_tr, val_idx), batch_size=batch,
+                collate_fn=_collate,
+                generator=_client_generator(seed, cid, 2),
+            ),
+            DataLoader(
+                _ArrayDataset(x_te, y_te, range(len(y_te))), batch_size=batch,
+                collate_fn=_collate,
+                generator=_client_generator(seed, cid, 3),
+            ),
         ))
     return clients

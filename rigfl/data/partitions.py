@@ -14,7 +14,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from rigfl.core import Client, LearnedProjection, assemble_model
-from rigfl.data.builder import _ArrayDataset, _collate
+from rigfl.data.builder import _ArrayDataset, _client_generator, _collate
 from rigfl.data.config import (
     DEFAULT_DATASET_CONFIG,
     DEFAULT_DATA_DIR,
@@ -23,9 +23,11 @@ from rigfl.data.config import (
     FlowerDatasetSettings,
 )
 from rigfl.data.flower import generate_flower_partition
+from rigfl.data.transforms import data_transform_identity
 
 
 MANIFEST_SCHEMA_VERSION = 2
+PARTITION_PIPELINE_VERSION = 1
 
 
 @dataclass(frozen=True)
@@ -39,7 +41,12 @@ class PartitionArtifact:
 
 def partition_fingerprint(dataset: str, settings: DatasetSettings) -> str:
     """Stable identity derived only from settings that determine partition data."""
-    payload = {"dataset": dataset, **settings.model_dump(mode="json")}
+    payload = {
+        "pipeline_version": PARTITION_PIPELINE_VERSION,
+        "dataset": dataset,
+        **settings.model_dump(mode="json"),
+        "data_transform": data_transform_identity(settings.data_transform),
+    }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()[:12]
 
@@ -93,6 +100,7 @@ def generate_partition(
         manifest = {
             **backend_metadata,
             "schema_version": MANIFEST_SCHEMA_VERSION,
+            "pipeline_version": PARTITION_PIPELINE_VERSION,
             "dataset": dataset,
             "partition_id": partition_id,
             "settings": settings.model_dump(mode="json"),
@@ -142,6 +150,7 @@ def load_partition(
     expected = {
         "dataset": dataset,
         "partition_id": partition_id,
+        "pipeline_version": PARTITION_PIPELINE_VERSION,
         "settings": settings.model_dump(mode="json"),
     }
     for key, value in expected.items():
@@ -161,6 +170,9 @@ def load_partition(
             "num_clients value; regenerate the configured partition"
         )
     configured_num_clients = getattr(settings.partition, "num_clients", None)
+    client_limit = getattr(settings.partition, "client_limit", None)
+    if client_limit is not None:
+        configured_num_clients = client_limit
     partition_sizes = getattr(settings.partition, "partition_sizes", None)
     if partition_sizes is not None:
         configured_num_clients = len(partition_sizes)
@@ -207,6 +219,7 @@ def build_partition_clients(
     *,
     shared_dim: int,
     batch: int,
+    seed: int = 0,
     adapter=None,
     backbones=None,
 ) -> list[Client]:
@@ -242,6 +255,7 @@ def build_partition_clients(
                     batch_size=batch,
                     shuffle=True,
                     collate_fn=_collate,
+                    generator=_client_generator(seed, cid, 1),
                 ),
                 DataLoader(
                     _ArrayDataset(
@@ -249,11 +263,13 @@ def build_partition_clients(
                     ),
                     batch_size=batch,
                     collate_fn=_collate,
+                    generator=_client_generator(seed, cid, 2),
                 ),
                 DataLoader(
                     _ArrayDataset(x_test, y_test, range(len(y_test))),
                     batch_size=batch,
                     collate_fn=_collate,
+                    generator=_client_generator(seed, cid, 3),
                 ),
             )
         )

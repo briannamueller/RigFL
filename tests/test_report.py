@@ -112,6 +112,25 @@ def test_win_rate_pairs_by_seed_not_position():
     assert win_rate(algorithm, local, "accuracy", **_SEL) == 1.0
 
 
+def test_win_rate_rejects_multiple_local_configurations():
+    algorithm = [_record("feddes", 0, [.9], [.8], rounds=(0,))]
+    local = [_record("local", 0, [.9], [.5], rounds=(0,)),
+             _record("local", 1, [.9], [.5], rounds=(0,))]
+    local[0]["config"]["algorithm"] = {"lr": 0.01}
+    local[1]["config"]["algorithm"] = {"lr": 0.02}
+
+    with pytest.raises(ValueError, match="one Local configuration"):
+        win_rate(algorithm, local, "accuracy", **_SEL)
+
+
+def test_summarize_rejects_duplicate_seeds():
+    records = [_record("feddes", 0, [.9], [.8], rounds=(0,)),
+               _record("feddes", 0, [.9], [.7], rounds=(0,))]
+
+    with pytest.raises(ValueError, match="more than one record for seed 0"):
+        summarize(records, "accuracy", **_SEL)
+
+
 def test_win_rate_direction_follows_the_metric():
     """A lower-is-better metric must not be compared as though larger wins."""
     from rigfl.eval import metrics

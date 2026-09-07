@@ -1,0 +1,107 @@
+name: release check
+
+on:
+  workflow_dispatch:
+
+jobs:
+  readme-workflow:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Build package
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: Install wheel
+        run: |
+          python -m venv /tmp/rigfl-release-check/venv
+          /tmp/rigfl-release-check/venv/bin/python -m pip install --upgrade pip
+          /tmp/rigfl-release-check/venv/bin/python -m pip install dist/*.whl
+
+      - name: Create release-check configurations
+        working-directory: /tmp/rigfl-release-check
+        run: |
+          mkdir -p configs
+          cat > configs/datasets.yaml <<'YAML'
+          datasets:
+            cifar10_dirichlet:
+              backend: flower
+              source_dataset: uoft-cs/cifar10
+              source_splits:
+                merge_splits: [train, test]
+              client_split:
+                validation_fraction: 0.25
+                test_fraction: 0.2
+                stratify: true
+              data_transform: cifar10
+              partition:
+                scheme: dirichlet
+                num_clients: 2
+                alpha: 0.5
+                min_partition_size: 2
+                partition_seed: 0
+                train_per_client: 8
+                validation_per_client: 2
+                test_per_client: 4
+            cifar10_pathological:
+              backend: flower
+              source_dataset: uoft-cs/cifar10
+              data_transform: cifar10
+              partition:
+                scheme: pathological
+                num_clients: 10
+                num_classes_per_partition: 1
+                class_assignment_mode: deterministic
+                partition_seed: 0
+                train_per_client: 4
+                test_per_client: 2
+                val_frac: 0.25
+          YAML
+          cat > configs/experiment.yaml <<'YAML'
+          experiment:
+            dataset: cifar10_dirichlet
+            dataset_config: configs/datasets.yaml
+            data_dir: data
+            model_architectures: [fedavg_cnn]
+            rounds: 1
+            seed: 0
+            shared_dim: 16
+            batch: 4
+            eval_gap: 1
+            device: cpu
+            out_dir: results/dirichlet
+          algorithm:
+            local_epochs: 1
+            lr: 0.01
+          YAML
+
+      - name: Generate partitions and run experiments
+        working-directory: /tmp/rigfl-release-check
+        run: |
+          RIGFL_PYTHON=/tmp/rigfl-release-check/venv/bin/python
+          $RIGFL_PYTHON -m rigfl.data.generate \
+            --dataset cifar10_dirichlet \
+            --dataset-config configs/datasets.yaml \
+            --data-dir data
+          $RIGFL_PYTHON -m rigfl.data.generate \
+            --dataset cifar10_pathological \
+            --dataset-config configs/datasets.yaml \
+            --data-dir data
+          $RIGFL_PYTHON -m rigfl.experiment.run \
+            --algorithm local \
+            --config configs/experiment.yaml
+          $RIGFL_PYTHON -m rigfl.experiment.run \
+            --algorithm local \
+            --config configs/experiment.yaml \
+            --dataset cifar10_pathological \
+            --out-dir results/pathological
+          $RIGFL_PYTHON -m rigfl.experiment.collect \
+            --results-dir results/dirichlet
+          $RIGFL_PYTHON -m rigfl.experiment.collect \
+            --results-dir results/pathological

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -9,6 +9,7 @@ description = "A modular research framework for rigorous federated learning expe
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
 license = "MIT"
+license-files = ["LICENSE", "licenses/*", "THIRD_PARTY_NOTICES.md"]
 authors = [{ name = "Brianna Mueller" }]
 dependencies = [
     "numpy<2",               # torch 2.0.x is built against numpy 1.x

@@ -71,9 +71,10 @@ datasets:
   cifar10:
     backend: flower
     source_dataset: uoft-cs/cifar10
+    data_transform: cifar10
     partition:
       scheme: dirichlet
-      num_clients: 3
+      num_clients: 5
       alpha: 0.5
 ```
 
@@ -103,6 +104,8 @@ separate directory instead of replacing the previous partition.
 
 To add another dataset, create another entry in
 [`configs/datasets.yaml`](https://github.com/briannamueller/RigFL/blob/main/configs/datasets.yaml).
+The included configuration contains MNIST, Fashion-MNIST, CIFAR-10, CIFAR-100,
+Tiny ImageNet, FEMNIST, and PaySim fraud-detection starting points.
 See the
 [data configuration guide](https://github.com/briannamueller/RigFL/blob/main/rigfl/data/README.md)
 for the available settings and guidance for datasets with multiple
@@ -134,6 +137,13 @@ configuration for the execution of RigFL’s shared workflow. Entries under
 `algorithm` specify how individual algorithms operate. An algorithm entry may be
 supported by one or several algorithms. In a multi-algorithm sweep, each entry is
 applied only to algorithms that support it.
+
+For 28×28 image datasets, RigFL provides `lenet5`, `fedavg_mnist_cnn`, and
+`small_cnn`, as well as the `mnist_heterogeneous_3` family. The existing
+`fedavg_cnn`, `cifar_resnet18`, and `cifar_mobilenet_v2` architectures support
+CIFAR-10, CIFAR-100, and Tiny ImageNet. For fixed-width tabular data such as the
+PaySim configuration, RigFL provides `tabular_linear`, `tabular_mlp`, and
+`tabular_residual_mlp`, grouped as `tabular_heterogeneous_3`.
 
 Run the experiment with:
 

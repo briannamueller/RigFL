@@ -1,16 +1,103 @@
 datasets:
-  cifar10:
+  mnist:
     backend: flower
-    source_dataset: uoft-cs/cifar10
-    preprocessing:
-      type: image
-      mean: [0.4914, 0.4822, 0.4465]
-      std: [0.2470, 0.2435, 0.2616]
+    source_dataset: ylecun/mnist
+    data_transform: mnist
     partition:
       scheme: dirichlet
-      num_clients: 3
+      num_clients: 5
       alpha: 0.5
       partition_seed: 0
       train_per_client: 200
       test_per_client: 100
+      val_frac: 0.2
+
+  fashion_mnist:
+    backend: flower
+    source_dataset: zalando-datasets/fashion_mnist
+    data_transform: fashion_mnist
+    partition:
+      scheme: dirichlet
+      num_clients: 5
+      alpha: 0.5
+      partition_seed: 0
+      train_per_client: 200
+      test_per_client: 100
+      val_frac: 0.2
+
+  cifar10:
+    backend: flower
+    source_dataset: uoft-cs/cifar10
+    data_transform: cifar10
+    partition:
+      scheme: dirichlet
+      num_clients: 5
+      alpha: 0.5
+      partition_seed: 0
+      train_per_client: 200
+      test_per_client: 100
+      val_frac: 0.2
+
+  cifar100:
+    backend: flower
+    source_dataset: uoft-cs/cifar100
+    data_transform: cifar100
+    partition:
+      scheme: dirichlet
+      num_clients: 5
+      alpha: 0.5
+      partition_seed: 0
+      train_per_client: 200
+      test_per_client: 100
+      val_frac: 0.2
+
+  tiny_imagenet:
+    backend: flower
+    source_dataset: zh-plus/tiny-imagenet
+    source_revision: 5a77092c28e51558c5586e9c5eb71a7e17a5e43f
+    source_splits:
+      train: train
+      test: valid
+    data_transform: tiny_imagenet
+    partition:
+      scheme: dirichlet
+      num_clients: 5
+      alpha: 0.5
+      partition_seed: 0
+      train_per_client: 200
+      test_per_client: 100
+      val_frac: 0.2
+
+  femnist:
+    backend: flower
+    source_dataset: flwrlabs/femnist
+    source_revision: df739a2b09df2b5cc1ec93107659b9a9a8566487
+    source_splits:
+      merge_splits: [train]
+    client_split:
+      validation_fraction: 0.1
+      test_fraction: 0.2
+      stratify: false
+    data_transform: femnist
+    partition:
+      scheme: natural_id
+      partition_by: writer_id
+      client_limit: 20
+      partition_seed: 0
+      train_per_client: 200
+      validation_per_client: 50
+      test_per_client: 50
+
+  paysim_fraud:
+    backend: flower
+    source_dataset: flwrlabs/fed-fraud-paysim-banks
+    source_revision: a48633710ded3045aa9c80833498ab16de3560ca
+    data_transform: paysim_fraud
+    partition:
+      scheme: natural_id
+      partition_by: BankID
+      partition_seed: 0
+      train_per_client: null
+      validation_per_client: null
+      test_per_client: null
       val_frac: 0.2

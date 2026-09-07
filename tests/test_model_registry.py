@@ -9,13 +9,16 @@ import torch
 import torch.nn as nn
 
 from rigfl.core import ClientModel
+from rigfl.data.config import FlowerDatasetSettings
+from rigfl.experiment.artifacts import validate_run_record
 from rigfl.experiment.config import ExperimentConfig, run_fingerprint
 from rigfl.experiment.launch import build_grid
 from rigfl.experiment.registry import (build_algorithm, config_class,
                                        resolve_algorithm_config)
-from rigfl.experiment.run import (resolve_experiment_architectures,
-                                  resolve_experiment_data)
+from rigfl.experiment.run import (ResolvedData, resolve_experiment_architectures,
+                                  resolve_experiment_data, run_one)
 from rigfl.models.registry import (
+    MODEL_ARCHITECTURE_FAMILIES,
     MODEL_ARCHITECTURE_REGISTRY,
     instantiate_backbones,
     resolve_model_architectures,
@@ -35,6 +38,66 @@ def test_model_architectures_are_configured_independently_of_dataset_name():
     assert names == ["fedavg_cnn", "cifar_resnet18"]
     assert factories[0]() is not factories[0]()
     assert factories[0]()(torch.randn(2, 1, 28, 28)).shape == (2, 512)
+
+
+def test_mnist_architecture_family_constructs_distinct_backbones():
+    names = resolve_model_architectures(
+        architecture_family="mnist_heterogeneous_3",
+        architectures=None,
+        input_kind="image",
+    )
+    factories = instantiate_backbones(
+        names, input_spec={"kind": "image", "shape": (1, 28, 28)}
+    )
+
+    assert names == ["lenet5", "fedavg_mnist_cnn", "small_cnn"]
+    assert [factory()(torch.randn(2, 1, 28, 28)).shape for factory in factories] == [
+        (2, 84), (2, 512), (2, 128)
+    ]
+
+
+@pytest.mark.parametrize("name", ["lenet5", "fedavg_mnist_cnn"])
+def test_mnist_architectures_reject_other_image_sizes(name):
+    factory = instantiate_backbones(
+        [name], input_spec={"kind": "image", "shape": (3, 32, 32)}
+    )[0]
+
+    with pytest.raises(ValueError, match="28x28"):
+        factory()
+
+
+def test_tabular_architecture_family_constructs_distinct_backbones():
+    names = resolve_model_architectures(
+        architecture_family="tabular_heterogeneous_3",
+        architectures=None,
+        input_kind="numeric",
+    )
+    factories = instantiate_backbones(
+        names, input_spec={"kind": "numeric", "shape": (12,)}
+    )
+
+    assert names == ["tabular_linear", "tabular_mlp", "tabular_residual_mlp"]
+    assert [factory()(torch.randn(2, 12)).shape for factory in factories] == [
+        (2, 64),
+        (2, 64),
+        (2, 64),
+    ]
+
+
+def test_numeric_inputs_use_the_tabular_family_by_default():
+    assert resolve_model_architectures(
+        architecture_family=None,
+        architectures=None,
+        input_kind="numeric",
+    ) == ["tabular_linear", "tabular_mlp", "tabular_residual_mlp"]
+
+
+def test_model_families_only_contain_registered_architectures():
+    assert all(
+        name in MODEL_ARCHITECTURE_REGISTRY
+        for family in MODEL_ARCHITECTURE_FAMILIES.values()
+        for name in family
+    )
 
 
 def test_model_architecture_family_and_list_are_mutually_exclusive():
@@ -119,6 +182,121 @@ def test_registered_architecture_compatibility_is_validated(monkeypatch):
         )
 
 
+def test_numeric_backbone_receives_the_resolved_input_spec(monkeypatch):
+    class NumericBackbone(nn.Module):
+        def __init__(self, input_spec):
+            super().__init__()
+            self.input_spec = input_spec
+            self.out_dim = 4
+            self.linear = nn.Linear(input_spec["shape"][0], self.out_dim)
+
+        def forward(self, x):
+            return self.linear(x)
+
+    monkeypatch.setitem(
+        MODEL_ARCHITECTURE_REGISTRY,
+        "custom_numeric",
+        ("numeric", NumericBackbone),
+    )
+    input_spec = {"input_kind": "numeric", "shape": (10,)}
+    make_backbone = instantiate_backbones(
+        ["custom_numeric"], input_spec=input_spec
+    )[0]
+
+    backbone = make_backbone()
+
+    assert backbone.input_spec == input_spec
+    assert backbone(torch.randn(2, 10)).shape == (2, 4)
+
+
+def test_unresolved_dataset_does_not_assume_image_inputs(monkeypatch):
+    class NumericBackbone(nn.Module):
+        pass
+
+    monkeypatch.setitem(
+        MODEL_ARCHITECTURE_REGISTRY,
+        "custom_numeric",
+        ("numeric", NumericBackbone),
+    )
+    exp = ExperimentConfig(model_architectures=["custom_numeric"])
+
+    assert resolve_algorithm_config(
+        "feddes", exp, config_class("feddes")()
+    ) == config_class("feddes")()
+
+    grid = build_grid({
+        "algorithms": ["local"],
+        "base": {"experiment": {"model_architectures": ["custom_numeric"]}},
+    })
+    assert grid[0]["experiment"]["model_architectures"] == ["custom_numeric"]
+
+
+def test_numeric_partition_runs_through_experiment_infrastructure(
+    monkeypatch, tmp_path
+):
+    class NumericBackbone(nn.Module):
+        def __init__(self, input_spec):
+            super().__init__()
+            self.out_dim = 4
+            self.linear = nn.Linear(input_spec["shape"][0], self.out_dim)
+
+        def forward(self, x):
+            return torch.relu(self.linear(x))
+
+    monkeypatch.setitem(
+        MODEL_ARCHITECTURE_REGISTRY,
+        "custom_numeric",
+        ("numeric", NumericBackbone),
+    )
+    for cid in range(2):
+        directory = tmp_path / "clients" / f"client_{cid}"
+        directory.mkdir(parents=True)
+        for split, size in (("train", 6), ("validation", 4), ("test", 4)):
+            inputs = torch.randn(size, 10)
+            targets = (torch.arange(size) + cid) % 2
+            torch.save((inputs, targets), directory / f"{split}.pt")
+
+    settings = FlowerDatasetSettings(
+        source_dataset="test/source",
+        partition={"scheme": "dirichlet", "num_clients": 2},
+    )
+    artifact = SimpleNamespace(
+        dataset="numeric",
+        partition_id="numeric-partition",
+        path=tmp_path,
+        settings=settings,
+        manifest={
+            "task": "classification",
+            "num_clients": 2,
+            "input_spec": {"kind": "numeric", "shape": [10]},
+            "target_spec": {"num_classes": 2},
+        },
+    )
+    exp = resolved_experiment(
+        dataset="numeric",
+        partition_id=artifact.partition_id,
+        input_kind="numeric",
+        input_spec={"input_kind": "numeric", "shape": [10]},
+        num_classes=2,
+        model_architectures=["custom_numeric"],
+        rounds=1,
+        shared_dim=3,
+        batch=2,
+    )
+
+    record = run_one(
+        "local",
+        exp,
+        config_class("local")(local_epochs=1),
+        torch.device("cpu"),
+        data=ResolvedData(settings=settings, artifact=artifact),
+    )
+
+    assert record["config"]["experiment"]["input_kind"] == "numeric"
+    assert record["result"]["evaluation_history"]["evaluation_rounds"] == [0]
+    validate_run_record(record)
+
+
 def test_unknown_architecture_fails_during_algorithm_validation():
     exp = ExperimentConfig(model_architectures=["does_not_exist"])
     with pytest.raises(ValueError, match="Unknown model architecture"):
@@ -127,34 +305,12 @@ def test_unknown_architecture_fails_during_algorithm_validation():
 
 def test_dataset_supplies_architecture_compatibility_context():
     exp = resolved_experiment(
-        data_backend="biosilo", partition_scheme=None, input_kind="temporal",
-        input_spec={"input_kind": "temporal", "n_ts": 3, "n_static": 2,
-                    "seq_len": 8},
+        input_kind="numeric",
+        input_spec={"input_kind": "numeric", "shape": [10]},
         model_architectures=["fedavg_cnn"],
     )
-    with pytest.raises(ValueError, match="do not accept temporal inputs"):
+    with pytest.raises(ValueError, match="do not accept numeric inputs"):
         resolve_algorithm_config("feddes", exp, config_class("feddes")())
-
-
-def test_incompatible_architecture_fails_before_submission(tmp_path):
-    dataset_config = tmp_path / "datasets.yaml"
-    dataset_config.write_text(
-        "datasets:\n"
-        "  eicu:\n"
-        "    backend: biosilo\n"
-        "    source_dataset: eicu\n"
-        "    partition: p\n"
-    )
-    with pytest.raises(SystemExit, match="do not accept temporal inputs"):
-        build_grid({
-            "algorithms": ["feddes"],
-            "base": {
-                "experiment": {
-                    "dataset": "eicu", "dataset_config": str(dataset_config),
-                    "model_architectures": ["fedavg_cnn"],
-                },
-            },
-        })
 
 
 def test_feddes_has_no_separate_model_selection():

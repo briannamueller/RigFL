@@ -1,4 +1,6 @@
 include DEVIATIONS.md
+include THIRD_PARTY_NOTICES.md
+recursive-include licenses *.txt
 recursive-include configs *.yaml
 recursive-include examples *.py
 recursive-include experiments *.yaml

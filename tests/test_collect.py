@@ -6,6 +6,8 @@ its OWN row (its own mean ± CI), rather than being averaged together as extra s
 
 from __future__ import annotations
 
+import pytest
+
 from rigfl.experiment.collect import (_field, _records_supporting,
                                       _rows_by_algorithm, _rows_by_group)
 from tests.helpers import resolved_experiment
@@ -45,7 +47,7 @@ def _rows(by_algorithm, group_by=None):
 def _rec(algorithm, seed, result_acc, **algorithm_cfg):
     return {
         "algorithm": algorithm,
-        "config": {"algorithm": {"seed_note": seed, **algorithm_cfg},
+        "config": {"algorithm": algorithm_cfg,
                    "experiment": {"batch": 32, "seed": seed}},
         "result": _history(result_acc),
     }
@@ -81,6 +83,16 @@ def test_group_by_hyperparameter_makes_one_row_per_setting():
     assert rows["feddes graph_k=3"]["seeds"] == 2                 # 2 seeds per setting
     assert abs(rows["feddes graph_k=3"]["test_mean"] - 0.61) < 1e-9
     assert abs(rows["feddes graph_k=5"]["test_mean"] - 0.81) < 1e-9
+
+
+def test_group_by_rejects_unlabelled_algorithm_variants():
+    records = {"feddes": [
+        _rec("feddes", 0, 0.60, graph_k=3),
+        _rec("feddes", 1, 0.80, graph_k=5),
+    ]}
+
+    with pytest.raises(ValueError, match="multiple algorithm configurations"):
+        _rows(records, ["algorithm"])
 
 
 def test_group_by_keeps_algorithms_separate():
@@ -150,7 +162,6 @@ def test_client_model_pool_is_part_of_the_experiment_condition():
 
 def test_equivalent_client_family_and_list_share_an_experiment_condition():
     from rigfl.experiment.collect import experiment_condition
-    from rigfl.experiment.config import ExperimentConfig
     from rigfl.experiment.run import resolve_experiment_architectures
 
     family = resolve_experiment_architectures(
@@ -170,8 +181,8 @@ def test_equivalent_client_family_and_list_share_an_experiment_condition():
 def test_experiments_are_not_averaged_together():
     """Two datasets in one directory are two experiments, not extra seeds."""
     from rigfl.experiment.collect import experiment_condition
-    recs = {"local": [_cond_rec("local", 0), _cond_rec("local", 0, dataset="eICU")],
-            "feddes": [_cond_rec("feddes", 0), _cond_rec("feddes", 0, dataset="eICU")]}
+    recs = {"local": [_cond_rec("local", 0), _cond_rec("local", 0, dataset="mnist")],
+            "feddes": [_cond_rec("feddes", 0), _cond_rec("feddes", 0, dataset="mnist")]}
     assert len({experiment_condition(r) for rs in recs.values() for r in rs}) == 2
     rows = _rows(recs)
     assert len(rows) == 4
@@ -182,12 +193,12 @@ def test_local_is_paired_within_its_own_experiment():
     rows = _rows({
         "local":  [_cond_rec("local", 0, accs=(0.9, 0.9))],                  # cifar only
         "feddes": [_cond_rec("feddes", 0, accs=(0.5, 0.5)),
-                   _cond_rec("feddes", 0, dataset="eICU", accs=(0.5, 0.5))],
+                   _cond_rec("feddes", 0, dataset="mnist", accs=(0.5, 0.5))],
     })
     cifar = [k for k in rows if k.startswith("feddes") and "cifar10" in k][0]
-    eicu = [k for k in rows if k.startswith("feddes") and "eICU" in k][0]
+    mnist = [k for k in rows if k.startswith("feddes") and "mnist" in k][0]
     assert rows[cifar]["win"] == 0.0        # paired with cifar's local
-    assert "win" not in rows[eicu]          # no local ran in that experiment
+    assert "win" not in rows[mnist]          # no local ran in that experiment
 
 
 def test_one_algorithm_swept_over_its_own_settings_gets_separate_rows():
@@ -206,8 +217,6 @@ def test_sweep_task_rejects_an_unknown_setting(tmp_path):
     the bug was live. This one calls run_task and requires it to refuse.
     """
     import json
-
-    import pytest
 
     from rigfl.experiment.launch import run_task
     grid = tmp_path / "grid.jsonl"

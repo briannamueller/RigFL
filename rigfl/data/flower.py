@@ -3,20 +3,32 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 
 import numpy as np
 import torch
 from datasets import (
     ClassLabel,
+    DatasetDict,
     Image,
+    concatenate_datasets,
     get_dataset_config_names,
     get_dataset_split_names,
     load_dataset_builder,
 )
 
 from rigfl.data.builder import _train_val_indices
-from rigfl.data.config import FlowerDatasetSettings, SourceSplits
+from rigfl.data.config import (
+    FlowerDatasetSettings,
+    MergedSourceSplits,
+    SourceSplits,
+)
+from rigfl.data.transforms import DataTransform, get_data_transform
+from rigfl.data.transforms.image import image_tensor as _image_tensor
+
+
+_MERGED_SPLIT = "merged"
 
 
 @dataclass(frozen=True)
@@ -24,12 +36,13 @@ class ResolvedFlowerSource:
     """Source choices resolved from Hugging Face metadata before partitioning."""
 
     subset: str | None
-    splits: SourceSplits
+    splits: SourceSplits | MergedSourceSplits
     input_column: str
     target_column: str
     task: str
     features: object
     class_names: list[str] | None
+    data_transform: DataTransform
 
 
 def _available(values) -> str:
@@ -38,7 +51,12 @@ def _available(values) -> str:
 
 def inspect_flower_source(settings: FlowerDatasetSettings) -> ResolvedFlowerSource:
     """Resolve split and feature roles without creating a client partition."""
-    subsets = list(get_dataset_config_names(settings.source_dataset))
+    data_transform = get_data_transform(settings.data_transform)
+    subsets = list(
+        get_dataset_config_names(
+            settings.source_dataset, revision=settings.source_revision
+        )
+    )
     requested_subset = settings.source_subset
     if requested_subset is not None and requested_subset not in subsets:
         raise ValueError(
@@ -48,7 +66,11 @@ def inspect_flower_source(settings: FlowerDatasetSettings) -> ResolvedFlowerSour
     if requested_subset is None and len(subsets) == 1:
         requested_subset = subsets[0]
     try:
-        builder = load_dataset_builder(settings.source_dataset, name=requested_subset)
+        builder = load_dataset_builder(
+            settings.source_dataset,
+            name=requested_subset,
+            revision=settings.source_revision,
+        )
     except ValueError as exc:
         if requested_subset is None:
             raise ValueError(
@@ -59,7 +81,11 @@ def inspect_flower_source(settings: FlowerDatasetSettings) -> ResolvedFlowerSour
         raise
     subset = getattr(builder.config, "name", requested_subset)
     splits = list(
-        get_dataset_split_names(settings.source_dataset, config_name=subset)
+        get_dataset_split_names(
+            settings.source_dataset,
+            config_name=subset,
+            revision=settings.source_revision,
+        )
     )
     features = builder.info.features
     if features is None:
@@ -68,6 +94,15 @@ def inspect_flower_source(settings: FlowerDatasetSettings) -> ResolvedFlowerSour
             "RigFL cannot infer its model input and target columns"
         )
     columns = list(features)
+    missing_columns = [
+        column for column in data_transform.required_columns if column not in features
+    ]
+    if missing_columns:
+        missing = ", ".join(repr(column) for column in missing_columns)
+        raise ValueError(
+            f"data_transform={settings.data_transform!r} requires missing columns: "
+            f"{missing}.\nAvailable columns:\n{_available(columns)}"
+        )
 
     if settings.source_splits is None:
         missing = [name for name in ("train", "test") if name not in splits]
@@ -78,6 +113,15 @@ def inspect_flower_source(settings: FlowerDatasetSettings) -> ResolvedFlowerSour
                 "Set source_splits in the dataset configuration."
             )
         source_splits = SourceSplits(train="train", test="test")
+    elif isinstance(settings.source_splits, MergedSourceSplits):
+        source_splits = settings.source_splits
+        invalid = [name for name in source_splits.merge_splits if name not in splits]
+        if invalid:
+            given = ", ".join(repr(name) for name in invalid)
+            raise ValueError(
+                f"Invalid split name in source_splits.merge_splits: {given}.\n"
+                f"Available source splits:\n{_available(splits)}"
+            )
     else:
         source_splits = settings.source_splits
         requested = {
@@ -105,13 +149,23 @@ def inspect_flower_source(settings: FlowerDatasetSettings) -> ResolvedFlowerSour
     if isinstance(supervised, (tuple, list)) and len(supervised) == 2:
         supervised_input, supervised_target = supervised
 
-    if settings.target_column is not None:
-        if settings.target_column not in features:
+    if (
+        settings.target_column is not None
+        and data_transform.target_column is not None
+        and settings.target_column != data_transform.target_column
+    ):
+        raise ValueError(
+            f"data_transform={settings.data_transform!r} uses target column "
+            f"{data_transform.target_column!r}, not {settings.target_column!r}"
+        )
+    configured_target = data_transform.target_column or settings.target_column
+    if configured_target is not None:
+        if configured_target not in features:
             raise ValueError(
-                f"target_column={settings.target_column!r} does not exist.\n"
+                f"target_column={configured_target!r} does not exist.\n"
                 f"Available columns:\n{_available(columns)}"
             )
-        target_column = settings.target_column
+        target_column = configured_target
     elif supervised_target in features:
         target_column = supervised_target
     else:
@@ -124,13 +178,23 @@ def inspect_flower_source(settings: FlowerDatasetSettings) -> ResolvedFlowerSour
             )
         target_column = candidates[0]
 
-    if settings.input_column is not None:
-        if settings.input_column not in features:
+    if (
+        settings.input_column is not None
+        and data_transform.input_column is not None
+        and settings.input_column != data_transform.input_column
+    ):
+        raise ValueError(
+            f"data_transform={settings.data_transform!r} uses input column "
+            f"{data_transform.input_column!r}, not {settings.input_column!r}"
+        )
+    configured_input = data_transform.input_column or settings.input_column
+    if configured_input is not None:
+        if configured_input not in features and data_transform.prepare is None:
             raise ValueError(
-                f"input_column={settings.input_column!r} does not exist.\n"
+                f"input_column={configured_input!r} does not exist.\n"
                 f"Available columns:\n{_available(columns)}"
             )
-        input_column = settings.input_column
+        input_column = configured_input
     elif supervised_input in features and supervised_input != target_column:
         input_column = supervised_input
     else:
@@ -166,7 +230,27 @@ def inspect_flower_source(settings: FlowerDatasetSettings) -> ResolvedFlowerSour
 
     target_feature = features[target_column]
     inferred_task = "classification" if isinstance(target_feature, ClassLabel) else "regression"
-    task = inferred_task if settings.task == "auto" else settings.task
+    if (
+        settings.task != "auto"
+        and data_transform.task is not None
+        and settings.task != data_transform.task
+    ):
+        raise ValueError(
+            f"data_transform={settings.data_transform!r} defines a "
+            f"{data_transform.task} task, not {settings.task}"
+        )
+    task = data_transform.task or (
+        inferred_task if settings.task == "auto" else settings.task
+    )
+    if (
+        isinstance(source_splits, MergedSourceSplits)
+        and settings.client_split is not None
+        and settings.client_split.stratify
+        and task != "classification"
+    ):
+        raise ValueError(
+            "client_split.stratify is supported only for classification targets"
+        )
     label_partitioners = {
         "dirichlet",
         "distribution",
@@ -185,7 +269,13 @@ def inspect_flower_source(settings: FlowerDatasetSettings) -> ResolvedFlowerSour
             "partition.partition_by to a categorical column or choose a compatible "
             "partitioner"
         )
-    class_names = list(target_feature.names) if isinstance(target_feature, ClassLabel) else None
+    class_names = (
+        list(data_transform.class_names)
+        if data_transform.class_names is not None
+        else list(target_feature.names)
+        if isinstance(target_feature, ClassLabel)
+        else None
+    )
     return ResolvedFlowerSource(
         subset=subset,
         splits=source_splits,
@@ -194,6 +284,7 @@ def inspect_flower_source(settings: FlowerDatasetSettings) -> ResolvedFlowerSour
         task=task,
         features=features,
         class_names=class_names,
+        data_transform=data_transform,
     )
 
 
@@ -354,50 +445,69 @@ def _cap(partition, limit: int | None, seed: int):
     return partition
 
 
-def _image_tensor(values, mean, std) -> torch.Tensor:
-    tensors = []
-    for value in values:
-        array = np.asarray(value)
-        if array.ndim == 2:
-            array = array[:, :, None]
-        if array.ndim != 3:
-            raise ValueError(f"image input must have 2 or 3 dimensions, got {array.shape}")
-        tensor = torch.from_numpy(np.array(array, copy=True)).permute(2, 0, 1).float()
-        if np.issubdtype(array.dtype, np.integer):
-            tensor = tensor / float(np.iinfo(array.dtype).max)
-        tensors.append(tensor)
+def _merge_source_splits(
+    dataset: DatasetDict,
+    *,
+    split_names: tuple[str, ...],
+    shuffle: bool,
+    seed: int,
+) -> DatasetDict:
+    parts = [dataset[name] for name in split_names]
+    merged = parts[0] if len(parts) == 1 else concatenate_datasets(parts)
+    if shuffle:
+        merged = merged.shuffle(seed=seed)
+    return DatasetDict({_MERGED_SPLIT: merged})
+
+
+def _split_client_partition(partition, settings, target_column: str, seed: int):
+    stratify_by = target_column if settings.stratify else None
     try:
-        output = torch.stack(tensors)
-    except RuntimeError as exc:
-        shapes = sorted({tuple(tensor.shape) for tensor in tensors})
+        train_validation = partition.train_test_split(
+            test_size=settings.test_fraction,
+            seed=seed,
+            stratify_by_column=stratify_by,
+        )
+        validation_fraction = settings.validation_fraction / (
+            1 - settings.test_fraction
+        )
+        train_validation_split = train_validation["train"].train_test_split(
+            test_size=validation_fraction,
+            seed=seed + 1,
+            stratify_by_column=stratify_by,
+        )
+    except ValueError as exc:
+        suffix = (
+            " Set client_split.stratify to false to split without stratification."
+            if settings.stratify
+            else ""
+        )
         raise ValueError(
-            f"images have inconsistent shapes {shapes}; configure a resizing transform "
-            "before using this dataset"
+            "Could not divide a client partition into the requested train, validation, "
+            f"and test fractions.{suffix}"
         ) from exc
-    if mean is not None:
-        if output.shape[1] != len(mean):
-            raise ValueError(
-                f"normalization defines {len(mean)} channels but inputs have {output.shape[1]}"
-            )
-        mean_tensor = torch.tensor(mean, dtype=output.dtype).view(1, -1, 1, 1)
-        std_tensor = torch.tensor(std, dtype=output.dtype).view(1, -1, 1, 1)
-        output = (output - mean_tensor) / std_tensor
-    return output
+    return {
+        "train": train_validation_split["train"],
+        "validation": train_validation_split["test"],
+        "test": train_validation["test"],
+    }
 
 
-def _convert_partition(partition, resolved: ResolvedFlowerSource, settings):
+def _convert_partition(partition, resolved: ResolvedFlowerSource):
     feature = partition.features[resolved.input_column]
-    preprocessing = settings.preprocessing
-    conversion = preprocessing.type
+    transform = resolved.data_transform
+    conversion = transform.input_kind
     if conversion == "auto":
         conversion = "image" if isinstance(feature, Image) else "numeric"
     values = partition[resolved.input_column]
     if conversion == "image":
-        inputs = _image_tensor(values, preprocessing.mean, preprocessing.std)
+        inputs = _image_tensor(
+            values,
+            mean=transform.mean,
+            std=transform.std,
+            image_mode=transform.image_mode,
+        )
         input_kind = "image"
     else:
-        if preprocessing.mean is not None:
-            raise ValueError("mean/std normalization is supported only for image inputs")
         try:
             inputs = torch.as_tensor(np.asarray(values)).float()
         except (TypeError, ValueError) as exc:
@@ -418,6 +528,26 @@ def _convert_partition(partition, resolved: ResolvedFlowerSource, settings):
         ) from exc
     targets = targets.long() if resolved.task == "classification" else targets.float()
     return inputs, targets, input_kind
+
+
+def _prepare_source(
+    dataset: DatasetDict,
+    *,
+    data_transform: DataTransform,
+    training_split: str,
+    merge_splits: tuple[str, ...] | None,
+    shuffle: bool,
+    seed: int,
+    fitted_parameters: dict,
+) -> DatasetDict:
+    if data_transform.prepare is not None:
+        dataset, parameters = data_transform.prepare(dataset, training_split)
+        fitted_parameters.update(parameters)
+    if merge_splits is not None:
+        dataset = _merge_source_splits(
+            dataset, split_names=merge_splits, shuffle=shuffle, seed=seed
+        )
+    return dataset
 
 
 def _save(path: Path, inputs: torch.Tensor, targets: torch.Tensor, indices) -> None:
@@ -455,6 +585,65 @@ def _initialize_partitions(fds, role_to_source: dict[str, str], scheme: str):
     return initial, next(iter(counts.values()))
 
 
+def _client_raw_partitions(
+    fds,
+    *,
+    partition_id: int,
+    client_id: int,
+    merged_source: bool,
+    initial_merged,
+    initial_partitions,
+    role_to_source,
+    settings,
+    target_column: str,
+):
+    p = settings.partition
+    if merged_source:
+        merged_partition = (
+            initial_merged
+            if partition_id == 0
+            else fds.load_partition(partition_id, _MERGED_SPLIT)
+        )
+        raw = _split_client_partition(
+            merged_partition,
+            settings.client_split,
+            target_column,
+            p.partition_seed + client_id * 17,
+        )
+    else:
+        raw = {
+            role: (
+                initial_partitions[role]
+                if partition_id == 0
+                else fds.load_partition(partition_id, source_split)
+            )
+            for role, source_split in role_to_source.items()
+        }
+
+    limits = {
+        "train": p.train_per_client,
+        "validation": p.validation_per_client,
+        "test": p.test_per_client,
+    }
+    raw = {
+        role: _cap(
+            partition,
+            limits[role],
+            p.partition_seed + client_id * 17 + offset,
+        )
+        for offset, (role, partition) in enumerate(raw.items())
+    }
+    if not merged_source and "validation" not in raw:
+        generator = torch.Generator().manual_seed(p.partition_seed + client_id)
+        train_indices, validation_indices = _train_val_indices(
+            len(raw["train"]), None, p.val_frac, generator=generator
+        )
+        training = raw["train"]
+        raw["train"] = training.select(train_indices)
+        raw["validation"] = training.select(validation_indices)
+    return raw
+
+
 def generate_flower_partition(
     settings: FlowerDatasetSettings,
     output_directory: Path,
@@ -464,59 +653,118 @@ def generate_flower_partition(
 
     resolved = inspect_flower_source(settings)
     partition_factory = FLOWER_PARTITIONERS[settings.partition.scheme]
-    role_to_source = {
-        "train": resolved.splits.train,
-        "test": resolved.splits.test,
-        **(
-            {"validation": resolved.splits.validation}
-            if resolved.splits.validation is not None
-            else {}
-        ),
-    }
-    partitioners = {
-        source_name: partition_factory(settings.partition, resolved.target_column)
-        for source_name in role_to_source.values()
-    }
+    merged_source = isinstance(resolved.splits, MergedSourceSplits)
+    if merged_source:
+        role_to_source = None
+        partitioners = {
+            _MERGED_SPLIT: partition_factory(
+                settings.partition, resolved.target_column
+            )
+        }
+        merge_splits = tuple(resolved.splits.merge_splits)
+        training_split = merge_splits[0]
+    else:
+        role_to_source = {
+            "train": resolved.splits.train,
+            "test": resolved.splits.test,
+            **(
+                {"validation": resolved.splits.validation}
+                if resolved.splits.validation is not None
+                else {}
+            ),
+        }
+        partitioners = {
+            source_name: partition_factory(settings.partition, resolved.target_column)
+            for source_name in role_to_source.values()
+        }
+        merge_splits = None
+        training_split = resolved.splits.train
+    fitted_parameters = {}
+    preprocessor = partial(
+        _prepare_source,
+        data_transform=resolved.data_transform,
+        training_split=training_split,
+        merge_splits=merge_splits,
+        shuffle=settings.partition.shuffle,
+        seed=settings.partition.partition_seed,
+        fitted_parameters=fitted_parameters,
+    )
     fds = FederatedDataset(
         dataset=settings.source_dataset,
         subset=resolved.subset,
+        preprocessor=preprocessor,
         partitioners=partitioners,
         shuffle=settings.partition.shuffle,
         seed=settings.partition.partition_seed,
+        revision=settings.source_revision,
     )
 
     p = settings.partition
-    initial_partitions, num_clients = _initialize_partitions(
-        fds, role_to_source, p.scheme
-    )
-    limits = {
-        "train": p.train_per_client,
-        "validation": p.validation_per_client,
-        "test": p.test_per_client,
-    }
+    if merged_source:
+        initial_merged = fds.load_partition(0, _MERGED_SPLIT)
+        total_clients = fds.partitioners[_MERGED_SPLIT].num_partitions
+        initial_partitions = None
+    else:
+        initial_partitions, total_clients = _initialize_partitions(
+            fds, role_to_source, p.scheme
+        )
+        initial_merged = None
+
+    client_limit = getattr(p, "client_limit", None)
+    if client_limit is not None:
+        if client_limit > total_clients:
+            raise ValueError(
+                f"partition.client_limit={client_limit} exceeds the "
+                f"{total_clients} available natural clients"
+            )
+        selected_partition_ids = sorted(
+            np.random.default_rng(p.partition_seed).choice(
+                total_clients, size=client_limit, replace=False
+            ).tolist()
+        )
+    else:
+        selected_partition_ids = list(range(total_clients))
+    num_clients = len(selected_partition_ids)
+
+    identity_map = None
+    if p.scheme in {"natural_id", "grouped_natural_id"}:
+        split = _MERGED_SPLIT if merged_source else next(iter(role_to_source.values()))
+        partitioner = fds.partitioners[split]
+        identity_map = (
+            partitioner.partition_id_to_natural_id
+            if p.scheme == "natural_id"
+            else partitioner.partition_id_to_natural_ids
+        )
+
+    raw_clients = [
+        _client_raw_partitions(
+            fds,
+            partition_id=partition_id,
+            client_id=client_id,
+            merged_source=merged_source,
+            initial_merged=initial_merged,
+            initial_partitions=initial_partitions,
+            role_to_source=role_to_source,
+            settings=settings,
+            target_column=resolved.target_column,
+        )
+        for client_id, partition_id in enumerate(selected_partition_ids)
+    ]
     clients = []
     client_targets = []
     observed_targets = []
     input_shape = None
     target_shape = None
     input_kind = None
-    for cid in range(num_clients):
+    for cid, (partition_id, raw_partitions) in enumerate(
+        zip(selected_partition_ids, raw_clients)
+    ):
         client_directory = output_directory / "clients" / f"client_{cid}"
         client_directory.mkdir(parents=True)
 
         converted = {}
-        for offset, (role, source_split) in enumerate(role_to_source.items()):
-            partition = (
-                initial_partitions[role]
-                if cid == 0
-                else fds.load_partition(cid, source_split)
-            )
-            partition = _cap(
-                partition,
-                limits[role],
-                p.partition_seed + cid * 17 + offset,
-            )
-            x, y, kind = _convert_partition(partition, resolved, settings)
+        for role, partition in raw_partitions.items():
+            x, y, kind = _convert_partition(partition, resolved)
             converted[role] = (x, y)
             current_input_shape = list(x.shape[1:])
             current_target_shape = list(y.shape[1:])
@@ -530,16 +778,9 @@ def generate_flower_partition(
                 raise ValueError("source splits do not share one input and target shape")
 
         x_train, y_train = converted["train"]
-        if "validation" in converted:
-            x_validation, y_validation = converted["validation"]
-            train_indices = range(len(y_train))
-            validation_indices = range(len(y_validation))
-        else:
-            generator = torch.Generator().manual_seed(p.partition_seed + cid)
-            train_indices, validation_indices = _train_val_indices(
-                len(y_train), None, p.val_frac, generator=generator
-            )
-            x_validation, y_validation = x_train, y_train
+        x_validation, y_validation = converted["validation"]
+        train_indices = range(len(y_train))
+        validation_indices = range(len(y_validation))
         x_test, y_test = converted["test"]
 
         _save(client_directory / "train.pt", x_train, y_train, train_indices)
@@ -559,14 +800,19 @@ def generate_flower_partition(
         client_targets.append(
             {"train": train_targets, "validation": validation_targets, "test": y_test}
         )
-        clients.append(
-            {
-                "client_id": cid,
-                "train": len(train_targets),
-                "validation": len(validation_targets),
-                "test": len(y_test),
-            }
-        )
+        client = {
+            "client_id": cid,
+            "train": len(train_targets),
+            "validation": len(validation_targets),
+            "test": len(y_test),
+        }
+        if identity_map is not None:
+            key = "source_client_id" if p.scheme == "natural_id" else "source_client_ids"
+            source_ids = identity_map[partition_id]
+            client[key] = (
+                list(source_ids) if p.scheme == "grouped_natural_id" else source_ids
+            )
+        clients.append(client)
 
     target_spec = {
         "dtype": str(observed_targets[0].dtype).removeprefix("torch."),
@@ -596,9 +842,20 @@ def generate_flower_partition(
         "source": {
             "dataset": settings.source_dataset,
             "subset": resolved.subset,
+            "revision": settings.source_revision,
             "splits": resolved.splits.model_dump(mode="json"),
+            "client_split": (
+                settings.client_split.model_dump(mode="json")
+                if settings.client_split is not None
+                else None
+            ),
             "input_column": resolved.input_column,
             "target_column": resolved.target_column,
+            "data_transform": {
+                "name": settings.data_transform,
+                **resolved.data_transform.identity(),
+                "fitted_parameters": fitted_parameters or None,
+            },
         },
         "task": resolved.task,
         "num_clients": num_clients,

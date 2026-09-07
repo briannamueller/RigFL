@@ -26,18 +26,11 @@ def test_run_identity_tracks_partition_but_not_its_storage_location():
     assert run_fingerprint(a, {}) != run_fingerprint(other, {})
 
 
-def test_backend_and_validation_fraction_are_part_of_identity():
+def test_validation_fraction_is_part_of_identity():
     base = resolved_experiment(partition_id="same")
-    other_backend = resolved_experiment(
-        partition_id="same", data_backend="biosilo", partition_scheme=None,
-        input_kind="temporal",
-        input_spec={"input_kind": "temporal", "n_ts": 3, "n_static": 2,
-                    "seq_len": 8},
-    )
     other_validation = resolved_experiment(
         partition_id="same", validation_fraction=0.3
     )
-    assert run_fingerprint(base, {}) != run_fingerprint(other_backend, {})
     assert run_fingerprint(base, {}) != run_fingerprint(other_validation, {})
 
 

@@ -28,7 +28,7 @@ from pydantic import Field
 from rigfl.core.config import AlgorithmConfig
 from rigfl.core.interfaces import Algorithm, LocalSelection, OneShotContext
 from rigfl.prediction import Predictions
-from rigfl.data.builder import _collate    # multi-input-safe collate (works for single-input too)
+from rigfl.data.builder import _collate
 
 FEDDES_PREPROCESSING_KEY = "rigfl-feddes-multitensor-collation-v1"
 
@@ -108,11 +108,6 @@ class FedDES(Algorithm):
         )
         if base_pool is None:
             if model_input_spec is None:
-                if experiment.input_kind == "temporal":
-                    raise ValueError(
-                        "FedDES temporal models require model_input_spec with "
-                        "n_ts, n_static, and seq_len."
-                    )
                 model_input_spec = {
                     "input_kind": "image", "shape": (3, 32, 32)
                 }
@@ -217,7 +212,7 @@ class FedDES(Algorithm):
         from graphroute.pool import train_pool
         return train_pool(self.base_factories, tr_ds, va_ds, device,
                           num_classes=self.num_classes, lr=self.base_lr, max_epochs=self.base_epochs,
-                          collate_fn=_collate), None   # keep multi-input (ts, static) as a MultiTensor
+                          collate_fn=_collate), None
 
     def _train_or_load_pool(self, tr_ds, va_ds, device, client_id):
         """Load or train this client's pool for reuse across graph/GNN sweeps."""
@@ -335,11 +330,10 @@ class FedDES(Algorithm):
 # ── small helpers ────────────────────────────────────────────────────────────
 class _BatchDataset(Dataset):
     """Wrap a query batch as a (labelless) Dataset so it goes through the pool.
-    Handles single-input ``x`` (a tensor) and multi-input ``x`` (a MultiTensor /
-    tuple of tensors, e.g. eICU's ``(ts, static)``) -- indexing samples, not fields."""
+    Handles both tensor and tuple inputs by indexing samples rather than fields."""
     def __init__(self, x):
         self.x = x
-        self.multi = isinstance(x, tuple)          # MultiTensor is a tuple subclass
+        self.multi = isinstance(x, tuple)
     def __len__(self):
         return len(self.x[0]) if self.multi else len(self.x)
     def __getitem__(self, i):
