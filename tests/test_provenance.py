@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from importlib.metadata import version
 
 from rigfl.experiment import env as env_mod
 from rigfl.experiment.config import result_filename, run_fingerprint
@@ -168,4 +169,4 @@ def test_package_versions_come_from_installed_metadata():
         info = _package(name)
         if info is None:                              # not installed here
             continue
-        assert info["version"] == "0.1.0"
+        assert info["version"] == version(name)
