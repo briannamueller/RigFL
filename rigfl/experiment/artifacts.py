@@ -177,8 +177,8 @@ def validate_run_record(
             + ", ".join(missing)
         )
 
-    from rigfl.experiment.config import ResolvedExperimentConfig, run_fingerprint
-    from rigfl.experiment.registry import config_class
+    from rigfl.experiment.config import ResolvedExperimentConfig
+    from rigfl.experiment.registry import algorithm_run_fingerprint, config_class
 
     try:
         experiment = ResolvedExperimentConfig(**config["experiment"])
@@ -186,7 +186,9 @@ def validate_run_record(
     except Exception as exc:
         fail(f"saved configuration does not validate: {exc}")
 
-    computed_fingerprint = run_fingerprint(experiment, algorithm_config.model_dump())
+    computed_fingerprint = algorithm_run_fingerprint(
+        algorithm, experiment, algorithm_config.model_dump()
+    )
     if record.get("run_fingerprint") != computed_fingerprint:
         fail("saved run fingerprint does not match the saved configuration")
     if (

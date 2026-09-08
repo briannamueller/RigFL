@@ -18,12 +18,14 @@ from pathlib import Path
 
 from rigfl.experiment.artifacts import (ResultValidationError, atomic_write_text,
                                         existing_result_decision, write_run_record)
-from rigfl.experiment.config import ExperimentConfig, result_filename, run_fingerprint
+from rigfl.experiment.config import ExperimentConfig, result_filename
 from rigfl.experiment.device import resolve_device
-from rigfl.experiment.registry import (ALL_ALGORITHMS, BASELINES, config_class,
-                                       resolve_algorithm_config)
+from rigfl.experiment.registry import (ALL_ALGORITHMS, BASELINES,
+                                       algorithm_run_fingerprint, algorithm_spec,
+                                       config_class, resolve_algorithm_config)
 from rigfl.experiment.run import resolve_experiment_data, run_one
-from rigfl.experiment.tuning import (build_candidates, build_manifest,
+from rigfl.experiment.tuning import (applicable_parameters, build_candidates,
+                                     build_manifest,
                                      candidate_index, canonical_axis, parse_tuning,
                                      write_manifest, _norm)
 from rigfl.models.registry import MODEL_ARCHITECTURE_FAMILIES
@@ -72,6 +74,13 @@ def _validate_axes(exp_axes: dict, algorithm_axes: dict, algorithms: list[str],
                 f'ExperimentConfig has no field "{field}".'
                 f'{_suggest(field, known_exp)}\n\n'
                 f'Known experiment fields: {", ".join(sorted(known_exp))}')
+        if not any(
+            field not in algorithm_spec(name).ignored_experiment_fields
+            for name in algorithms
+        ):
+            raise SystemExit(
+                f"Sweep axis exp.{field} does not apply to any selected algorithm."
+            )
 
     # Fixed algorithm settings follow the same validation as algorithm axes.
     for field in base_algorithm:
@@ -245,6 +254,17 @@ def expand(spec: dict) -> tuple[list[dict], dict | None]:
     tuning = parse_tuning(tuning_block, axis_values)
     candidates = index = None
     if tuning:
+        unsupported = [
+            name for name in algorithms
+            if tuning.replicate_axis not in applicable_parameters(
+                name, [tuning.replicate_axis]
+            )
+        ]
+        if unsupported:
+            raise SystemExit(
+                f"tuning.replicate_axis {tuning.replicate_axis} does not apply to "
+                f"{', '.join(unsupported)}."
+            )
         candidates = build_candidates(algorithms, tuning.parameters, axis_values)
         index = candidate_index(candidates)
 
@@ -254,7 +274,8 @@ def expand(spec: dict) -> tuple[list[dict], dict | None]:
         fields = config_class(algorithm).model_fields
         # only the algorithm-axes this algorithm has; the rest don't multiply its grid
         m_axes = {k: v for k, v in algorithm_axes.items() if k in fields}
-        axes = {f"exp::{k}": v for k, v in exp_axes.items()}
+        ignored = set(algorithm_spec(algorithm).ignored_experiment_fields)
+        axes = {f"exp::{k}": v for k, v in exp_axes.items() if k not in ignored}
         axes.update({f"algorithm::{k}": v for k, v in m_axes.items()})
         keys = list(axes)
         for combo in itertools.product(*(axes[k] for k in keys)):   # () once when no axes
@@ -349,7 +370,7 @@ def run_task(grid_path: str, task_id: int, out_dir: Path,
         return
     # Non-dry tasks resolved the experiment data (including canonical client
     # models) above; only that resolved form is eligible for run identity.
-    fp = run_fingerprint(exp, cfg.model_dump())
+    fp = algorithm_run_fingerprint(name, exp, cfg.model_dump())
     path = out_dir / result_filename(exp, name, fp)
     try:
         skip, message = existing_result_decision(

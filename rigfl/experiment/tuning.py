@@ -20,7 +20,7 @@ from rigfl.experiment.artifacts import (ResultValidationError, atomic_write_json
                                         atomic_write_text, dumps, loads, read_json)
 from rigfl.experiment.config import (ExperimentConfig, algorithm_identity,
                                      fingerprint, hashable)
-from rigfl.experiment.registry import config_class
+from rigfl.experiment.registry import algorithm_spec, config_class
 
 #: Bumped when the manifest layout changes in a way a reader must notice.
 MANIFEST_SCHEMA_VERSION = 2
@@ -204,15 +204,19 @@ def candidate_hash(algorithm: str, parameters: dict) -> str:
 def applicable_parameters(algorithm: str, parameters: list[str]) -> list[str]:
     """The tuning parameters this algorithm actually has, in declaration order.
 
-    An ``algorithm.x`` axis applies only to algorithms defining ``x``. Dropping the rest
-    is what keeps a FedDES-only axis from minting duplicate "not applicable"
-    candidates for every other algorithm.
+    Algorithm fields apply only where defined, and experiment fields apply only
+    where used. Other axes do not mint duplicate "not applicable" candidates.
     """
     fields = set(config_class(algorithm).model_fields)
+    ignored_experiment_fields = set(
+        algorithm_spec(algorithm).ignored_experiment_fields
+    )
     out = []
     for p in parameters:
         section, name = _split(p)
         if section == "algorithm" and name not in fields:
+            continue
+        if section == "exp" and name in ignored_experiment_fields:
             continue
         out.append(p)
     return out
@@ -396,7 +400,10 @@ def effective_condition(record: dict, manifest: dict) -> dict:
         if section == "algorithm":
             if name in acfg:
                 cond[f"algorithm.{name}"] = hashable(acfg[name])
-        elif name not in cond:          # a swept experiment field outside the
+        elif (
+            axis in applicable_parameters(record["algorithm"], [axis])
+            and name not in cond
+        ):
             cond[name] = hashable(exp.get(name))   # collector's headline list
     return cond
 

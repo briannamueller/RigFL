@@ -39,13 +39,35 @@ def test_no_duplicate_configs():
     assert len(keys) == len(grid)                           # every task config is distinct
 
 
-def test_experiment_axis_multiplies_all_algorithms():
+def test_relevant_experiment_axis_multiplies_all_algorithms():
     grid = build_grid({
         "algorithms": ["local", "feddes"],
         "sweep": {"seed": [0, 1], "batch": [16, 32]},    # experiment axes apply to all
     })
     counts = _counts(grid)
     assert counts["local"] == 4 and counts["feddes"] == 4  # 2 seeds x 2 batches each
+
+
+def test_shared_dimension_does_not_multiply_feddes_runs():
+    grid = build_grid({
+        "algorithms": ["local", "feddes"],
+        "sweep": {"shared_dim": [64, 128]},
+    })
+
+    assert _counts(grid) == {"local": 2, "feddes": 1}
+    assert "shared_dim" not in next(
+        task["experiment"] for task in grid if task["algorithm"] == "feddes"
+    )
+
+
+def test_shared_dimension_axis_is_rejected_for_feddes_only_sweep():
+    import pytest
+
+    with pytest.raises(SystemExit, match="does not apply"):
+        build_grid({
+            "algorithms": ["feddes"],
+            "sweep": {"shared_dim": [64, 128]},
+        })
 
 
 def test_algorithm_specific_axis_lands_in_algorithm_config():

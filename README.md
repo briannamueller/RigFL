@@ -105,7 +105,8 @@ separate directory instead of replacing the previous partition.
 To add another dataset, create another entry in
 [`configs/datasets.yaml`](https://github.com/briannamueller/RigFL/blob/main/configs/datasets.yaml).
 The included configuration contains MNIST, Fashion-MNIST, CIFAR-10, CIFAR-100,
-Tiny ImageNet, FEMNIST, and PaySim fraud-detection starting points.
+Tiny ImageNet, FEMNIST, PaySim fraud-detection, and phishing URL-detection
+starting points.
 See the
 [data configuration guide](https://github.com/briannamueller/RigFL/blob/main/rigfl/data/README.md)
 for the available settings and guidance for datasets with multiple
@@ -137,6 +138,8 @@ configuration for the execution of RigFL’s shared workflow. Entries under
 `algorithm` specify how individual algorithms operate. An algorithm entry may be
 supported by one or several algorithms. In a multi-algorithm sweep, each entry is
 applied only to algorithms that support it.
+`shared_dim` applies only to algorithms that align internal representations;
+FedDES keeps each base classifier's native representation width.
 
 For 28×28 image datasets, RigFL provides `lenet5`, `fedavg_mnist_cnn`, and
 `small_cnn`, as well as the `mnist_heterogeneous_3` family. The existing
@@ -144,6 +147,8 @@ For 28×28 image datasets, RigFL provides `lenet5`, `fedavg_mnist_cnn`, and
 CIFAR-10, CIFAR-100, and Tiny ImageNet. For fixed-width tabular data such as the
 PaySim configuration, RigFL provides `tabular_linear`, `tabular_mlp`, and
 `tabular_residual_mlp`, grouped as `tabular_heterogeneous_3`.
+For the phishing URL configuration, `phishing_byte_cnn` operates on byte-token
+sequences derived from the URL strings.
 
 Run the experiment with:
 

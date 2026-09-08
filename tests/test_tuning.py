@@ -20,7 +20,7 @@ import pytest
 from rigfl.eval.metrics import register, unregister
 from rigfl.experiment.config import ExperimentConfig
 from rigfl.experiment.launch import expand
-from rigfl.experiment.registry import config_class
+from rigfl.experiment.registry import algorithm_run_fingerprint, config_class
 from rigfl.experiment.run import resolve_experiment_architectures
 from rigfl.experiment.tuning import (TuningError, candidate_index, candidate_of,
                                      load_manifest, manifest_candidates,
@@ -337,10 +337,10 @@ def test_values_are_not_selected_independently_per_parameter():
 # ── 7-10: tuning groups ──────────────────────────────────────────────────────
 
 def test_non_tuned_experiment_setting_creates_separate_tuning_groups():
-    spec = _spec(sweep={"seed": [0, 1, 2], "shared_dim": [64, 128],
+    spec = _spec(sweep={"seed": [0, 1, 2], "batch": [16, 32],
                         "algorithm.base_lr": [0.01, 0.1], "algorithm.graph_k": [3, 5]})
     grid, manifest = expand(spec)
-    assert manifest["condition_axes"] == ["exp.shared_dim"]
+    assert manifest["condition_axes"] == ["exp.batch"]
     assert len(manifest["candidates"]) == 4
 
     # Each fixed experiment condition may select a different candidate.
@@ -348,7 +348,7 @@ def test_non_tuned_experiment_setting_creates_separate_tuning_groups():
     recs = []
     for task_id, t in enumerate(grid, 1):
         cid = metadata[task_id]["candidate_id"]
-        best = 0 if t["experiment"]["shared_dim"] == 64 else 3
+        best = 0 if t["experiment"]["batch"] == 16 else 3
         recs.append({"algorithm": t["algorithm"],
                      "config": {"experiment": dict(t["experiment"]),
                                 "algorithm": dict(t["algorithm_config"])},
@@ -356,12 +356,12 @@ def test_non_tuned_experiment_setting_creates_separate_tuning_groups():
     art = _rank(recs, manifest)
     assert len(art["groups"]) == 2
     assert {g["label"] for g in art["groups"]} == {
-        "feddes [shared_dim=64]", "feddes [shared_dim=128]"}
+        "feddes [batch=16]", "feddes [batch=32]"}
     selected = {group["label"]: group["rankings"]["global"]["selected_candidate"]
                 for group in art["groups"]}
     assert selected == {
-        "feddes [shared_dim=64]": 0,
-        "feddes [shared_dim=128]": 3,
+        "feddes [batch=16]": 0,
+        "feddes [batch=32]": 3,
     }
 
 
@@ -387,15 +387,15 @@ def test_whatever_is_declared_the_replicate_axis_does_not_split_groups():
 
 
 def test_declaring_an_experiment_setting_as_tuned_makes_it_a_candidate():
-    spec = _spec(sweep={"seed": [0, 1, 2], "shared_dim": [64, 128],
+    spec = _spec(sweep={"seed": [0, 1, 2], "batch": [16, 32],
                         "algorithm.base_lr": [0.01, 0.1], "algorithm.graph_k": [3, 5]},
                  tuning={"strategy": "grid",
-                         "parameters": ["exp.shared_dim", "algorithm.base_lr", "algorithm.graph_k"],
+                         "parameters": ["exp.batch", "algorithm.base_lr", "algorithm.graph_k"],
                          "replicate_axis": "seed"})
     grid, manifest = expand(spec)
-    assert len(manifest["candidates"]) == 8       # 2 widths x 2 lr x 2 graph_k
+    assert len(manifest["candidates"]) == 8       # 2 batches x 2 lr x 2 graph_k
     assert manifest["condition_axes"] == []
-    assert all("exp.shared_dim" in c["parameters"] for c in manifest["candidates"])
+    assert all("exp.batch" in c["parameters"] for c in manifest["candidates"])
 
     recs = _records(grid, manifest, lambda cid: _flat(0.5 + 0.01 * cid, 0.5))
     art = _rank(recs, manifest)
@@ -678,10 +678,10 @@ def test_replicate_axis_cannot_also_be_a_tuning_parameter():
 def test_duplicate_tuning_parameters_are_rejected():
     with pytest.raises(SystemExit, match="Duplicate tuning parameter"):
         expand(_spec(tuning={"strategy": "grid",
-                             "parameters": ["algorithm.base_lr", "exp.shared_dim", "shared_dim"],
+                             "parameters": ["algorithm.base_lr", "exp.batch", "batch"],
                              "replicate_axis": "seed",
                              },
-                     sweep={"seed": [0], "shared_dim": [64, 128],
+                     sweep={"seed": [0], "batch": [16, 32],
                             "algorithm.base_lr": [0.01, 0.1]}))
 
 
@@ -783,10 +783,10 @@ def test_multiple_output_groups_cannot_silently_overwrite_one_another(tmp_path):
     recs = _records(grid, manifest, lambda cid: _flat(0.5 + 0.01 * cid, 0.5))
     art = _rank(recs, manifest, views=VIEWS)
 
-    assert len(art["groups"]) == 4                 # 2 algorithms x 2 dimensions
+    assert len(art["groups"]) == 3       # FedDES ignores shared_dim; FedProto does not
     written = write_selection(art, recs, manifest, tmp_path)
     cfgs = [p for p in written if p.suffix == ".yaml"]
-    assert len(cfgs) == 4 * 2                            # one per (group, view)
+    assert len(cfgs) == 3 * 2                            # one per (group, view)
     assert len({p.name for p in cfgs}) == len(cfgs)      # all distinct filenames
     assert len({p.read_text() for p in cfgs}) == len(cfgs)   # and distinct contents
 
@@ -916,7 +916,7 @@ def test_a_manifest_from_a_future_schema_is_refused(tmp_path):
 
 def _sweep_dir(tmp_path, spec, *, with_manifest=True, val=None):
     """A results directory holding real result files for a declared sweep."""
-    from rigfl.experiment.config import result_filename, run_fingerprint
+    from rigfl.experiment.config import result_filename
     from rigfl.experiment.registry import config_class
     from rigfl.experiment.artifacts import make_run_record
 
@@ -930,7 +930,7 @@ def _sweep_dir(tmp_path, spec, *, with_manifest=True, val=None):
         exp = resolved_experiment(**t["experiment"])
         cfg = config_class(t["algorithm"])(**t["algorithm_config"])
         cid = metadata.get(task_id, {}).get("candidate_id", 0)
-        fp = run_fingerprint(exp, cfg.model_dump())
+        fp = algorithm_run_fingerprint(t["algorithm"], exp, cfg.model_dump())
         rec = make_run_record(
             algorithm=t["algorithm"], experiment=exp.model_dump(),
             algorithm_config=cfg.model_dump(), run_fingerprint=fp,
@@ -1014,11 +1014,9 @@ def test_the_manifest_is_not_read_as_a_result_file(tmp_path, monkeypatch, capsys
 def _stub_run_one(name, exp, cfg, device, **kw):
     """What run_one returns, without training: a real envelope over a real history."""
     from rigfl.experiment.artifacts import make_run_record
-    from rigfl.experiment.config import run_fingerprint
-
     return make_run_record(
         algorithm=name, experiment=exp.model_dump(), algorithm_config=cfg.model_dump(),
-        run_fingerprint=run_fingerprint(exp, cfg.model_dump()),
+        run_fingerprint=algorithm_run_fingerprint(name, exp, cfg.model_dump()),
         result=_flat(0.5, 0.5, clients=exp.num_clients, rounds=exp.rounds),
         device=str(device), wall_seconds=0.0)
 

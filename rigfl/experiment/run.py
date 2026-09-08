@@ -20,14 +20,16 @@ import numpy as np
 import torch
 
 from rigfl.data.partitions import build_partition_clients, load_partition
-from rigfl.data.config import FlowerDatasetSettings, dataset_settings
+from rigfl.data.config import (BioSiloDatasetSettings, DatasetSettings,
+                               FlowerDatasetSettings, dataset_settings)
 from rigfl.experiment.artifacts import (ResultValidationError, existing_result_decision,
                                         make_run_record, write_run_record)
 from rigfl.experiment.config import (ExperimentConfig, ResolvedExperimentConfig,
-                                     result_filename, run_fingerprint)
+                                     result_filename)
 from rigfl.experiment.device import resolve_device
 from rigfl.experiment.env import capture_env
-from rigfl.experiment.registry import (BASELINES, adapter_factory, algorithm_spec,
+from rigfl.experiment.registry import (BASELINES, adapter_factory,
+                                       algorithm_run_fingerprint, algorithm_spec,
                                        build_algorithm, config_class,
                                        resolve_algorithm_config)
 from rigfl.experiment.tracking import make_tracker
@@ -43,7 +45,7 @@ def set_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
-def partition_summary(clients, num_classes: int, artifact=None) -> dict:
+def partition_summary(clients, num_classes: int, artifact=None, handle=None) -> dict:
     """Per-client split sizes, label histograms, and partition identity."""
     out = []
     for c in clients:
@@ -63,6 +65,16 @@ def partition_summary(clients, num_classes: int, artifact=None) -> dict:
             "partition_id": artifact.partition_id,
             "settings": artifact.settings.model_dump(mode="json"),
         }
+    if handle is not None:
+        for client, source_id in zip(out, handle.client_ids):
+            client["source_client_id"] = source_id
+        summary["biosilo"] = {
+            "dataset": handle.dataset,
+            "partition_id": handle.partition_id,
+            "schema_version": handle.schema_version,
+            "settings": handle.settings,
+            "provenance": handle.provenance,
+        }
     return summary
 
 
@@ -70,8 +82,9 @@ def partition_summary(clients, num_classes: int, artifact=None) -> dict:
 class ResolvedData:
     """The backend object and metadata selected by a dataset-registry entry."""
 
-    settings: FlowerDatasetSettings
-    artifact: Any
+    settings: DatasetSettings
+    artifact: Any = None
+    handle: Any = None
 
 
 def resolve_experiment_data(
@@ -83,37 +96,61 @@ def resolve_experiment_data(
     }
     settings = dataset_settings(exp.dataset, exp.dataset_config)
 
-    artifact = load_partition(
-        exp.dataset, config_path=exp.dataset_config, data_dir=exp.data_dir
-    )
-    target_spec = artifact.manifest["target_spec"]
-    if artifact.manifest["task"] != "classification":
-        raise ValueError(
-            "RigFL's experiment algorithms currently support classification only; "
-            f"dataset {exp.dataset!r} generated a "
-            f"{artifact.manifest['task']} partition"
+    if isinstance(settings, FlowerDatasetSettings):
+        artifact = load_partition(
+            exp.dataset, config_path=exp.dataset_config, data_dir=exp.data_dir
         )
-    manifest_input_spec = dict(artifact.manifest["input_spec"])
-    input_kind = manifest_input_spec.pop("kind")
-    input_spec = {"input_kind": input_kind, **manifest_input_spec}
-    resolved = ResolvedExperimentConfig(
-        **experiment_input,
-        data_backend="flower",
-        partition_id=artifact.partition_id,
-        partition_scheme=settings.partition.scheme,
-        num_clients=artifact.manifest["num_clients"],
-        num_classes=target_spec["num_classes"],
-        validation_fraction=(
-            settings.client_split.validation_fraction
-            if settings.client_split is not None
-            else settings.partition.val_frac
-        ),
-        input_kind=input_kind,
-        input_spec=input_spec,
-    )
-    return resolve_experiment_architectures(
-        resolved, input_kind=resolved.input_kind
-    ), ResolvedData(settings=settings, artifact=artifact)
+        target_spec = artifact.manifest["target_spec"]
+        if artifact.manifest["task"] != "classification":
+            raise ValueError(
+                "RigFL's experiment algorithms currently support classification only; "
+                f"dataset {exp.dataset!r} generated a "
+                f"{artifact.manifest['task']} partition"
+            )
+        manifest_input_spec = dict(artifact.manifest["input_spec"])
+        input_kind = manifest_input_spec.pop("kind")
+        input_spec = {"input_kind": input_kind, **manifest_input_spec}
+        resolved = ResolvedExperimentConfig(
+            **experiment_input,
+            data_backend="flower",
+            partition_id=artifact.partition_id,
+            partition_scheme=settings.partition.scheme,
+            num_clients=artifact.manifest["num_clients"],
+            num_classes=target_spec["num_classes"],
+            validation_fraction=(
+                settings.client_split.validation_fraction
+                if settings.client_split is not None
+                else settings.partition.val_frac
+            ),
+            input_kind=input_kind,
+            input_spec=input_spec,
+        )
+        return resolve_experiment_architectures(
+            resolved, input_kind=resolved.input_kind
+        ), ResolvedData(settings=settings, artifact=artifact)
+
+    if isinstance(settings, BioSiloDatasetSettings):
+        from rigfl.data.biosilo import (biosilo_input_spec,
+                                        load_biosilo_partition)
+
+        handle = load_biosilo_partition(settings)
+        input_kind, input_spec = biosilo_input_spec(handle)
+        resolved = ResolvedExperimentConfig(
+            **experiment_input,
+            data_backend="biosilo",
+            partition_id=handle.partition_id,
+            partition_scheme=None,
+            num_clients=handle.num_clients,
+            num_classes=handle.num_classes,
+            validation_fraction=settings.validation_fraction,
+            input_kind=input_kind,
+            input_spec=input_spec,
+        )
+        return resolve_experiment_architectures(
+            resolved, input_kind=resolved.input_kind
+        ), ResolvedData(settings=settings, handle=handle)
+
+    raise ValueError(f"unsupported dataset backend: {settings.backend!r}")
 
 
 def resolve_experiment_architectures(
@@ -142,11 +179,11 @@ def run_one(name, exp: ExperimentConfig, cfg, device, *, data: ResolvedData | No
     elif not isinstance(exp, ResolvedExperimentConfig):
         raise TypeError("pre-resolved data requires a ResolvedExperimentConfig")
     cfg = resolve_algorithm_config(name, exp, cfg)
+    spec = algorithm_spec(name)
     set_seed(exp.seed)                                    # training + model determinism
-    adapter = adapter_factory(name)                       # the algorithm's paper alignment
+    adapter = adapter_factory(name) if spec.requires_client_model else None
     aux_backbone = None                                  # FML/FedKD shared aux model
     model_input_spec = dict(exp.input_spec)
-    generated_artifact = data.artifact
     input_kind = exp.input_kind
     if "shape" in model_input_spec:
         model_input_spec["shape"] = tuple(model_input_spec["shape"])
@@ -157,21 +194,38 @@ def run_one(name, exp: ExperimentConfig, cfg, device, *, data: ResolvedData | No
     )
     backbones = instantiate_backbones(backbone_names, input_spec=model_input_spec)
     aux_backbone = backbones[0]
-    clients = build_partition_clients(
-        generated_artifact,
-        shared_dim=exp.shared_dim,
-        batch=exp.batch,
-        seed=exp.seed,
-        adapter=adapter,
-        backbones=backbones,
-    )
+    if exp.data_backend == "flower":
+        clients = build_partition_clients(
+            data.artifact,
+            shared_dim=exp.shared_dim,
+            batch=exp.batch,
+            seed=exp.seed,
+            adapter=adapter,
+            backbones=backbones,
+            build_models=spec.requires_client_model,
+        )
+    elif exp.data_backend == "biosilo":
+        from rigfl.data.biosilo import build_biosilo_clients
+
+        clients = build_biosilo_clients(
+            data.handle,
+            shared_dim=exp.shared_dim,
+            batch=exp.batch,
+            seed=exp.seed,
+            adapter=adapter,
+            backbones=backbones,
+            validation_fraction=exp.validation_fraction,
+            build_models=spec.requires_client_model,
+        )
+    else:
+        raise RuntimeError(f"unresolved data backend: {exp.data_backend!r}")
     algorithm = build_algorithm(
         name, exp, cfg, aux_backbone=aux_backbone,
         model_input_spec=model_input_spec,
         model_template=clients[0].model)
     tracker = make_tracker(name, exp, cfg)               # W&B if exp.wandb else no-op
     t0 = time.time()
-    runner = algorithm_spec(name).runner
+    runner = spec.runner
     result = runner(algorithm, clients, num_rounds=exp.rounds, device=device,
                     num_classes=exp.num_classes, eval_gap=exp.eval_gap,
                     verbose=not exp.quiet, tracker=tracker,
@@ -182,11 +236,16 @@ def run_one(name, exp: ExperimentConfig, cfg, device, *, data: ResolvedData | No
     record = make_run_record(
         algorithm=name,
         experiment=exp.model_dump(), algorithm_config=cfg.model_dump(),
-        run_fingerprint=run_fingerprint(exp, cfg.model_dump()),
+        run_fingerprint=algorithm_run_fingerprint(name, exp, cfg.model_dump()),
         result=result,
         env=capture_env(), device=str(device),
         wall_seconds=round(time.time() - t0, 1),
-        partition=partition_summary(clients, exp.num_classes, generated_artifact),
+        partition=partition_summary(
+            clients,
+            exp.num_classes,
+            artifact=data.artifact,
+            handle=data.handle,
+        ),
     )
     if tracker is not None:
         tracker.finish(result)
@@ -275,7 +334,7 @@ def _run_resolved_experiment(name: str, exp: ResolvedExperimentConfig, cfg, *,
     device = resolve_device(exp.device)
     out_dir = Path(exp.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    fp = run_fingerprint(exp, cfg.model_dump())
+    fp = algorithm_run_fingerprint(name, exp, cfg.model_dump())
     path = out_dir / result_filename(exp, name, fp)
     skip, message = existing_result_decision(
         path, expected_algorithm=name, expected_fingerprint=fp, force=force

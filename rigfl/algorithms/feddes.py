@@ -36,7 +36,7 @@ FEDDES_PREPROCESSING_KEY = "rigfl-feddes-multitensor-collation-v1"
 class FedDESConfig(AlgorithmConfig):
     # FedDES trains base classifiers + a GNN meta-learner; it does not use the
     # local_epochs/lr settings used by algorithms with a client training loop.
-    gnn_arch: Literal["gat", "graph_gps", "mlp"] = "gat"
+    gnn_arch: Literal["gat", "hetero_gat", "graph_gps", "mlp"] = "gat"
     base_lr: float = Field(5e-4, gt=0)
     base_epochs: int = Field(100, ge=1)
     graph_k: int = Field(5, ge=1)
@@ -44,6 +44,9 @@ class FedDESConfig(AlgorithmConfig):
     gnn_epochs: int = Field(500, ge=1)
     gnn_patience: int = Field(50, ge=1)
     calibrate: bool = True
+    base_weighted_by_class: bool = True
+    use_edge_attr: bool = False
+    fallback: Literal["uniform", "wacc", "acc", "bacc"] = "uniform"
     # OOF stacking produces training meta-labels from models that did not see the
     # corresponding rows. In-sample mode is cheaper but measures training fit.
     base_split_mode: Literal["oof_stacking", "in_sample"] = "oof_stacking"
@@ -75,6 +78,9 @@ class FedDES(Algorithm):
         self.base_lr, self.base_epochs = config.base_lr, config.base_epochs
         self.graph_k, self.hidden_dim = config.graph_k, config.hidden_dim
         self.calibrate = config.calibrate
+        self.base_weighted_by_class = config.base_weighted_by_class
+        self.use_edge_attr = config.use_edge_attr
+        self.fallback = config.fallback
         self.base_split_mode = config.base_split_mode
         self.base_oof_folds = config.base_oof_folds
         self.cache_dir = config.cache_dir or None
@@ -94,8 +100,7 @@ class FedDES(Algorithm):
     @classmethod
     def from_config(cls, config, *, experiment, base_pool=None,
                     model_input_spec=None, **resources):
-        from rigfl.core.adapters import LearnedProjection
-        from rigfl.models.registry import (instantiate_models,
+        from rigfl.models.registry import (instantiate_native_models,
                                            resolve_model_architectures)
 
         data_id = f"{experiment.dataset}-{experiment.partition_id}"
@@ -111,12 +116,10 @@ class FedDES(Algorithm):
                 model_input_spec = {
                     "input_kind": "image", "shape": (3, 32, 32)
                 }
-            base_pool = instantiate_models(
+            base_pool = instantiate_native_models(
                 model_ids,
                 num_classes=experiment.num_classes,
                 input_spec=model_input_spec,
-                shared_dim=experiment.shared_dim,
-                adapter=lambda native, shared: LearnedProjection(native, shared),
             )
         return cls(
             config,
@@ -187,7 +190,8 @@ class FedDES(Algorithm):
                 "oof_folds": self.base_oof_folds,
                 "lr": self.base_lr, "epochs": self.base_epochs,
                 "batch_size": 64, "patience": 20, "optimizer": "Adam",
-                "weight_decay": 5e-4, "weighted_by_class": True,
+                "weight_decay": 5e-4,
+                "weighted_by_class": self.base_weighted_by_class,
                 "es_metric": "val_loss", "inner_val_ratio": 0.2,
                 "client_validation_fraction": self.validation_fraction,
                 "seed_policy": "experiment_seed_plus_client_id",
@@ -207,12 +211,14 @@ class FedDES(Algorithm):
                 self.base_factories, tr_ds, va_ds, device,
                 n_folds=self.base_oof_folds, num_classes=self.num_classes,
                 lr=self.base_lr, max_epochs=self.base_epochs,
-                seed=self.seed + int(client_id), collate_fn=_collate)
+                seed=self.seed + int(client_id), collate_fn=_collate,
+                weighted_by_class=self.base_weighted_by_class)
             return models, oof_logits          # [N_tr, M_local, C], row i unseen by its predictor
         from graphroute.pool import train_pool
         return train_pool(self.base_factories, tr_ds, va_ds, device,
                           num_classes=self.num_classes, lr=self.base_lr, max_epochs=self.base_epochs,
-                          collate_fn=_collate), None
+                          collate_fn=_collate,
+                          weighted_by_class=self.base_weighted_by_class), None
 
     def _train_or_load_pool(self, tr_ds, va_ds, device, client_id):
         """Load or train this client's pool for reuse across graph/GNN sweeps."""
@@ -253,6 +259,8 @@ class FedDES(Algorithm):
             gnn={"arch": self.gnn_arch, "hidden_dim": self.hidden_dim,
                  "epochs": self.gnn_epochs, "patience": self.gnn_patience,
                  "es_metric": "val_acc",
+                 "use_edge_attr": self.use_edge_attr,
+                 "fallback": self.fallback,
                  "ens_combination_mode": "hard_weighted_voting",
                  "voting_weight_space": "sig"})
 

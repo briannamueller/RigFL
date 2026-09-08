@@ -4,7 +4,7 @@ from rigfl.core.adapters import Adapter, AdaptivePool, Identity, LearnedProjecti
 from rigfl.core.interfaces import (Algorithm, IterativeAlgorithm, LocalSelection,
                                    OneShotContext, P2POneShotAlgorithm)
 from rigfl.prediction import Predictions, as_predictions
-from rigfl.core.model import ClientModel, assemble_model
+from rigfl.core.model import ClientModel, assemble_model, assemble_native_model
 from rigfl.core.round import Client, iterative, p2p_one_shot
 
 __all__ = [
@@ -14,6 +14,7 @@ __all__ = [
     "LearnedProjection",
     "ClientModel",
     "assemble_model",
+    "assemble_native_model",
     "Algorithm",
     "IterativeAlgorithm",
     "P2POneShotAlgorithm",

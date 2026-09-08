@@ -71,7 +71,7 @@ class ExperimentConfig(BaseModel):
     data_dir: str = "data"
     rounds: int = Field(100, ge=1)
     seed: int = Field(0, ge=0)
-    shared_dim: int = Field(512, ge=1)              # common representation width for the adapters
+    shared_dim: int = Field(512, ge=1)  # width for algorithms that align representations
     model_architecture_family: Optional[str] = None
     model_architectures: Optional[list[str]] = None
     batch: int = Field(32, ge=1)
@@ -103,9 +103,9 @@ class ResolvedExperimentConfig(ExperimentConfig):
     metadata remain the source of truth for them.
     """
 
-    data_backend: Literal["flower"]
+    data_backend: Literal["flower", "biosilo"]
     partition_id: str
-    partition_scheme: str
+    partition_scheme: str | None
     num_clients: int = Field(ge=1)
     num_classes: int = Field(ge=2)
     validation_fraction: float = Field(gt=0, lt=1)
@@ -129,12 +129,19 @@ def algorithm_identity(algorithm_dump: dict) -> dict:
             if k not in _ALGORITHM_ENV_IRRELEVANT}
 
 
-def run_fingerprint(exp: "ResolvedExperimentConfig", algorithm_dump: dict) -> str:
+def run_fingerprint(
+    exp: "ResolvedExperimentConfig",
+    algorithm_dump: dict,
+    *,
+    ignored_experiment_fields: tuple[str, ...] = (),
+) -> str:
     """Run identity from resolved experiment and algorithm configurations."""
     if not isinstance(exp, ResolvedExperimentConfig):
         raise TypeError("run identity requires a resolved dataset partition")
     e = exp.model_dump()
     for k in _ENV_IRRELEVANT:
+        e.pop(k, None)
+    for k in ignored_experiment_fields:
         e.pop(k, None)
     # Disabled stopping governs nothing, so its other settings must not mint a
     # second identity for the same run.

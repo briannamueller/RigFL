@@ -25,13 +25,13 @@ from rigfl.eval.selection import aggregate
 
 @dataclass
 class Client:
-    """A client's model, data, identity, and persistent algorithm state.
+    """A client's data, optional model, identity, and persistent algorithm state.
 
     Behavior lives entirely in the algorithm. ``state`` is an algorithm-defined
     dictionary that persists across this client's operations during one run.
     """
 
-    model: ClientModel
+    model: ClientModel | None
     train_loader: DataLoader
     val_loader: DataLoader | None = None
     test_loader: DataLoader | None = None

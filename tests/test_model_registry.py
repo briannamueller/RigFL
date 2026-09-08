@@ -8,12 +8,13 @@ import pytest
 import torch
 import torch.nn as nn
 
-from rigfl.core import ClientModel
+from rigfl.core import ClientModel, Identity
 from rigfl.data.config import FlowerDatasetSettings
 from rigfl.experiment.artifacts import validate_run_record
 from rigfl.experiment.config import ExperimentConfig, run_fingerprint
 from rigfl.experiment.launch import build_grid
-from rigfl.experiment.registry import (build_algorithm, config_class,
+from rigfl.experiment.registry import (algorithm_run_fingerprint, build_algorithm,
+                                       config_class,
                                        resolve_algorithm_config)
 from rigfl.experiment.run import (ResolvedData, resolve_experiment_architectures,
                                   resolve_experiment_data, run_one)
@@ -90,6 +91,21 @@ def test_numeric_inputs_use_the_tabular_family_by_default():
         architectures=None,
         input_kind="numeric",
     ) == ["tabular_linear", "tabular_mlp", "tabular_residual_mlp"]
+
+
+def test_token_sequences_use_the_phishing_byte_cnn_by_default():
+    names = resolve_model_architectures(
+        architecture_family=None,
+        architectures=None,
+        input_kind="token_sequence",
+    )
+    factory = instantiate_backbones(
+        names,
+        input_spec={"input_kind": "token_sequence", "shape": (256,)},
+    )[0]
+
+    assert names == ["phishing_byte_cnn"]
+    assert factory()(torch.randint(0, 258, (2, 256))).shape == (2, 128)
 
 
 def test_model_families_only_contain_registered_architectures():
@@ -342,6 +358,21 @@ def test_feddes_relevant_settings_still_change_its_fingerprint():
     assert original != run_fingerprint(exp, changed_lr.model_dump())
 
 
+def test_feddes_shared_dimension_does_not_change_its_fingerprint():
+    exp = resolved_experiment(shared_dim=64)
+    other = exp.model_copy(update={"shared_dim": 1024})
+    cfg = config_class("feddes")().model_dump()
+
+    assert algorithm_run_fingerprint("feddes", exp, cfg) == algorithm_run_fingerprint(
+        "feddes", other, cfg
+    )
+    assert algorithm_run_fingerprint(
+        "local", exp, config_class("local")().model_dump()
+    ) != algorithm_run_fingerprint(
+        "local", other, config_class("local")().model_dump()
+    )
+
+
 def test_local_training_settings_remain_on_every_algorithm_that_uses_them():
     locally_trained = {
         "local", "global", "fedproto", "fedgh", "lgfedavg", "fml",
@@ -385,4 +416,6 @@ def test_feddes_builds_its_pool_from_the_experiment_architectures(monkeypatch):
     assert len(algorithm.base_models) == 1
     assert isinstance(algorithm.base_models[0], ClientModel)
     assert isinstance(algorithm.base_models[0].backbone, TinyBackbone)
+    assert isinstance(algorithm.base_models[0].adapter, Identity)
+    assert algorithm.base_models[0].head.in_features == TinyBackbone.out_dim
     assert algorithm.base_models[0](torch.randn(2, 4)).shape == (2, 3)

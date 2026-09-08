@@ -18,16 +18,15 @@ from rigfl.data.builder import _ArrayDataset, _client_generator, _collate
 from rigfl.data.config import (
     DEFAULT_DATASET_CONFIG,
     DEFAULT_DATA_DIR,
-    DatasetSettings,
-    dataset_settings,
     FlowerDatasetSettings,
+    dataset_settings,
 )
 from rigfl.data.flower import generate_flower_partition
 from rigfl.data.transforms import data_transform_identity
 
 
-MANIFEST_SCHEMA_VERSION = 2
-PARTITION_PIPELINE_VERSION = 1
+MANIFEST_SCHEMA_VERSION = 3
+PARTITION_PIPELINE_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -35,11 +34,11 @@ class PartitionArtifact:
     dataset: str
     partition_id: str
     path: Path
-    settings: DatasetSettings
+    settings: FlowerDatasetSettings
     manifest: dict
 
 
-def partition_fingerprint(dataset: str, settings: DatasetSettings) -> str:
+def partition_fingerprint(dataset: str, settings: FlowerDatasetSettings) -> str:
     """Stable identity derived only from settings that determine partition data."""
     payload = {
         "pipeline_version": PARTITION_PIPELINE_VERSION,
@@ -60,7 +59,7 @@ def expected_partition(
     *,
     config_path: str | Path = DEFAULT_DATASET_CONFIG,
     data_dir: str | Path = DEFAULT_DATA_DIR,
-) -> tuple[DatasetSettings, str, Path]:
+) -> tuple[FlowerDatasetSettings, str, Path]:
     settings = dataset_settings(dataset, config_path)
     if not isinstance(settings, FlowerDatasetSettings):
         raise ValueError(
@@ -72,6 +71,48 @@ def expected_partition(
 
 
 BACKEND_GENERATORS = {"flower": generate_flower_partition}
+
+
+def _omit_none(value):
+    if isinstance(value, dict):
+        return {
+            key: _omit_none(item)
+            for key, item in value.items()
+            if item is not None
+        }
+    if isinstance(value, list):
+        return [_omit_none(item) for item in value]
+    return value
+
+
+def _format_json(value, level=0):
+    indent = "  "
+    prefix = indent * level
+    child_prefix = indent * (level + 1)
+    if isinstance(value, dict):
+        if not value:
+            return "{}"
+        if len(value) <= 3 and all(
+            item is None or isinstance(item, (str, int, float, bool))
+            for item in value.values()
+        ):
+            return json.dumps(value)
+        entries = [
+            f"{child_prefix}{json.dumps(key)}: {_format_json(item, level + 1)}"
+            for key, item in value.items()
+        ]
+        return "{\n" + ",\n".join(entries) + f"\n{prefix}}}"
+    if isinstance(value, list):
+        if not value:
+            return "[]"
+        if all(
+            item is None or isinstance(item, (str, int, float, bool))
+            for item in value
+        ):
+            return json.dumps(value)
+        entries = [f"{child_prefix}{_format_json(item, level + 1)}" for item in value]
+        return "[\n" + ",\n".join(entries) + f"\n{prefix}]"
+    return json.dumps(value)
 
 
 def generate_partition(
@@ -98,16 +139,27 @@ def generate_partition(
             raise ValueError(f"unsupported dataset backend: {settings.backend!r}") from exc
         backend_metadata = generator(settings, temporary)
         manifest = {
-            **backend_metadata,
-            "schema_version": MANIFEST_SCHEMA_VERSION,
-            "pipeline_version": PARTITION_PIPELINE_VERSION,
             "dataset": dataset,
             "partition_id": partition_id,
-            "settings": settings.model_dump(mode="json"),
+            "backend": backend_metadata["backend"],
+            "task": backend_metadata["task"],
+            "num_clients": backend_metadata["num_clients"],
+            "partition": settings.partition.model_dump(
+                mode="json", exclude_none=True
+            ),
+            "clients": backend_metadata["clients"],
+            "input_spec": backend_metadata["input_spec"],
+            "target_spec": backend_metadata["target_spec"],
+            "source": _omit_none(backend_metadata["source"]),
+            "dataset_configuration": settings.model_dump(
+                mode="json",
+                exclude={"backend", "partition"},
+                exclude_none=True,
+            ),
+            "schema_version": MANIFEST_SCHEMA_VERSION,
+            "pipeline_version": PARTITION_PIPELINE_VERSION,
         }
-        (temporary / "manifest.json").write_text(
-            json.dumps(manifest, indent=2, sort_keys=True) + "\n"
-        )
+        (temporary / "manifest.json").write_text(_format_json(manifest) + "\n")
         os.replace(temporary, target)
     except Exception:
         shutil.rmtree(temporary, ignore_errors=True)
@@ -151,7 +203,12 @@ def load_partition(
         "dataset": dataset,
         "partition_id": partition_id,
         "pipeline_version": PARTITION_PIPELINE_VERSION,
-        "settings": settings.model_dump(mode="json"),
+        "partition": settings.partition.model_dump(mode="json", exclude_none=True),
+        "dataset_configuration": settings.model_dump(
+            mode="json",
+            exclude={"backend", "partition"},
+            exclude_none=True,
+        ),
     }
     for key, value in expected.items():
         if manifest.get(key) != value:
@@ -222,8 +279,12 @@ def build_partition_clients(
     seed: int = 0,
     adapter=None,
     backbones=None,
+    build_models: bool = True,
 ) -> list[Client]:
-    """Construct federated clients from one previously generated partition."""
+    """Construct federated clients from one previously generated partition.
+
+    ``build_models=False`` is for workflows that construct their own model pool.
+    """
     if artifact.manifest["task"] != "classification":
         raise ValueError(
             "RigFL's current experiment algorithms support classification only; "
@@ -231,27 +292,39 @@ def build_partition_clients(
         )
     if adapter is None:
         adapter = lambda native, shared: LearnedProjection(native, shared)
-    if backbones is None:
+    if build_models and backbones is None:
         raise ValueError("backbones must be selected independently of the dataset")
-    if not backbones:
+    if build_models and not backbones:
         raise ValueError("backbones must contain at least one model factory")
     num_clients = int(artifact.manifest["num_clients"])
     num_classes = int(artifact.manifest["target_spec"]["num_classes"])
+    input_dtype = (
+        torch.long
+        if artifact.manifest["input_spec"]["kind"] == "token_sequence"
+        else torch.float32
+    )
     clients = []
     for cid in range(num_clients):
         directory = artifact.path / "clients" / f"client_{cid}"
         x_train, y_train = _load_split(directory / "train.pt")
         x_validation, y_validation = _load_split(directory / "validation.pt")
         x_test, y_test = _load_split(directory / "test.pt")
-        backbone = backbones[cid % len(backbones)]()
-        model = assemble_model(
-            backbone, shared_dim=shared_dim, num_classes=num_classes,
-            adapter=adapter)
+        model = None
+        if build_models:
+            backbone = backbones[cid % len(backbones)]()
+            model = assemble_model(
+                backbone, shared_dim=shared_dim, num_classes=num_classes,
+                adapter=adapter)
         clients.append(
             Client(
                 model,
                 DataLoader(
-                    _ArrayDataset(x_train, y_train, range(len(y_train))),
+                    _ArrayDataset(
+                        x_train,
+                        y_train,
+                        range(len(y_train)),
+                        input_dtype=input_dtype,
+                    ),
                     batch_size=batch,
                     shuffle=True,
                     collate_fn=_collate,
@@ -259,14 +332,22 @@ def build_partition_clients(
                 ),
                 DataLoader(
                     _ArrayDataset(
-                        x_validation, y_validation, range(len(y_validation))
+                        x_validation,
+                        y_validation,
+                        range(len(y_validation)),
+                        input_dtype=input_dtype,
                     ),
                     batch_size=batch,
                     collate_fn=_collate,
                     generator=_client_generator(seed, cid, 2),
                 ),
                 DataLoader(
-                    _ArrayDataset(x_test, y_test, range(len(y_test))),
+                    _ArrayDataset(
+                        x_test,
+                        y_test,
+                        range(len(y_test)),
+                        input_dtype=input_dtype,
+                    ),
                     batch_size=batch,
                     collate_fn=_collate,
                     generator=_client_generator(seed, cid, 3),

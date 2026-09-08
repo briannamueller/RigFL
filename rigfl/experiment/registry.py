@@ -16,7 +16,8 @@ import torch.nn as nn
 from rigfl.core import ClientModel, LearnedProjection, iterative, p2p_one_shot
 from rigfl.core.adapters import AdaptivePool
 from rigfl.core.config import AlgorithmConfig
-from rigfl.experiment.config import ExperimentConfig, ResolvedExperimentConfig
+from rigfl.experiment.config import (ExperimentConfig, ResolvedExperimentConfig,
+                                     run_fingerprint)
 from rigfl.models.cifar import SmallCNN
 from rigfl.models.registry import resolve_model_architectures
 from rigfl.algorithms.fedavg import FedAvg, FedAvgConfig
@@ -39,6 +40,8 @@ class AlgorithmSpec:
     algorithm: type
     config: type[AlgorithmConfig]
     runner: Callable = iterative
+    requires_client_model: bool = True
+    ignored_experiment_fields: tuple[str, ...] = ()
 
 
 REGISTRY = {
@@ -52,7 +55,13 @@ REGISTRY = {
     "fml":      AlgorithmSpec(FML, FMLConfig),
     "fedkd":    AlgorithmSpec(FedKD, FedKDConfig),
     "fedtgp":   AlgorithmSpec(FedTGP, FedTGPConfig),
-    "feddes":   AlgorithmSpec(FedDES, FedDESConfig, runner=p2p_one_shot),
+    "feddes":   AlgorithmSpec(
+        FedDES,
+        FedDESConfig,
+        runner=p2p_one_shot,
+        requires_client_model=False,
+        ignored_experiment_fields=("shared_dim",),
+    ),
 }
 
 # Algorithms used by the baseline sweep, plus Local as the reference condition.
@@ -73,6 +82,17 @@ def algorithm_spec(name: str) -> AlgorithmSpec:
     if name not in REGISTRY:
         raise KeyError(f"unknown algorithm '{name}'; known: {', '.join(ALL_ALGORITHMS)}")
     return REGISTRY[name]
+
+
+def algorithm_run_fingerprint(
+    name: str, exp: ResolvedExperimentConfig, algorithm_dump: dict
+) -> str:
+    """Run identity using only experiment fields relevant to the algorithm."""
+    return run_fingerprint(
+        exp,
+        algorithm_dump,
+        ignored_experiment_fields=algorithm_spec(name).ignored_experiment_fields,
+    )
 
 
 def resolve_algorithm_config(name: str, exp: ExperimentConfig,
@@ -118,15 +138,14 @@ def _validate_homogeneous_model_architecture(
         )
 
 
-# Algorithms whose own paper aligns representation widths by pooling. Every other
-# algorithm's paper uses a learned projection, which is the default.
+# Standard client-model algorithms that align representation widths by pooling.
 _POOLING_ALGORITHMS = {"fedtgp"}
 
 
 def adapter_factory(name: str):
-    """A ``(native_dim, shared_dim) -> Adapter`` factory for an algorithm, using the
-    alignment its own paper specifies: FedTGP pools, everything else learns a
-    linear projection. See :mod:`rigfl.core.adapters`."""
+    """Return the alignment used by an algorithm's standard client model."""
+    if not algorithm_spec(name).requires_client_model:
+        raise ValueError(f"{name} does not use a standard client model")
     if name in _POOLING_ALGORITHMS:
         return lambda native, shared: AdaptivePool(shared)
     return lambda native, shared: LearnedProjection(native, shared)

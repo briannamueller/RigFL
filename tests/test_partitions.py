@@ -40,6 +40,7 @@ def test_bundled_dataset_config_includes_the_starter_datasets():
         "tiny_imagenet",
         "femnist",
         "paysim_fraud",
+        "phishing_urls",
     } <= set(registry.datasets)
     assert registry.datasets["mnist"].source_dataset == "ylecun/mnist"
     assert (
@@ -50,6 +51,8 @@ def test_bundled_dataset_config_includes_the_starter_datasets():
     assert registry.datasets["tiny_imagenet"].data_transform == "tiny_imagenet"
     assert registry.datasets["femnist"].partition.client_limit == 20
     assert registry.datasets["paysim_fraud"].partition.partition_by == "BankID"
+    assert registry.datasets["phishing_urls"].partition.partition_by == "client_id"
+    assert registry.datasets["phishing_urls"].partition.client_limit == 5
     assert all(
         registry.datasets[name].partition.num_clients == 5
         for name in (
@@ -97,11 +100,16 @@ def _fake_flower_backend(settings, output_directory):
         directory = output_directory / "clients" / f"client_{cid}"
         directory.mkdir(parents=True)
         summary = {"client_id": cid}
+        sizes = {}
+        label_counts = {}
         for split, n in (("train", 9), ("validation", 3), ("test", 6)):
             inputs = torch.rand(n, 3, 32, 32)
             targets = (torch.arange(n) + cid) % 3
             torch.save((inputs, targets), directory / f"{split}.pt")
-            summary[split] = n
+            sizes[split] = n
+            label_counts[split] = torch.bincount(targets, minlength=3).tolist()
+        summary["sizes"] = sizes
+        summary["label_counts"] = label_counts
         clients.append(summary)
     return {
         "backend": "flower",
@@ -257,8 +265,14 @@ def test_generation_dispatches_by_backend_and_reuses_partition(monkeypatch, tmp_
     manifest = json.loads((artifact.path / "manifest.json").read_text())
     assert manifest["pipeline_version"] == partitions.PARTITION_PIPELINE_VERSION
     assert manifest["source"]["dataset"] == "organization/source-data"
+    assert "validation" not in manifest["source"]["splits"]
     assert manifest["num_clients"] == 2
-    assert manifest["clients"][0]["validation"] == 3
+    assert manifest["clients"][0]["sizes"]["validation"] == 3
+    assert manifest["clients"][0]["label_counts"]["train"] == [3, 3, 3]
+    manifest_text = (artifact.path / "manifest.json").read_text()
+    assert manifest_text.index('"dataset"') < manifest_text.index('"clients"')
+    assert '"sizes": {"train": 9, "validation": 3, "test": 6}' in manifest_text
+    assert '"shape": [3, 32, 32]' in manifest_text
 
     reused, created = generate_partition(
         DATASET, config_path=config, data_dir=tmp_path / "data"
@@ -348,6 +362,17 @@ def test_generated_partition_builds_clients_without_repartitioning(monkeypatch, 
     assert len(clients[0].train_loader.dataset) == 9
     assert len(clients[0].val_loader.dataset) == 3
     assert len(clients[0].test_loader.dataset) == 6
+
+
+def test_generated_partition_can_skip_unused_client_models(monkeypatch, tmp_path):
+    config = _config(tmp_path / "datasets.yaml")
+    artifact, _ = _generate(monkeypatch, config, tmp_path / "data")
+
+    clients = build_partition_clients(
+        artifact, shared_dim=4, batch=4, build_models=False
+    )
+
+    assert all(client.model is None for client in clients)
 
 
 def test_evaluation_frequency_does_not_change_training(monkeypatch, tmp_path):

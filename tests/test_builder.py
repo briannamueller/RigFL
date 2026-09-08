@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 
 from rigfl.core import Client
-from rigfl.data.builder import _train_val_indices, build_clients
+from rigfl.data.builder import _ArrayDataset, _train_val_indices, build_clients
 
 NUM_CLASSES = 3
 INPUT_DIM = 8
@@ -46,6 +46,21 @@ def test_train_val_indices_random_partition_is_disjoint_and_complete():
     assert set(train) | set(val) == set(range(n))
 
 
+def test_array_dataset_can_load_integer_token_sequences():
+    dataset = _ArrayDataset(
+        torch.tensor([[2, 3, 0]], dtype=torch.int16),
+        torch.tensor([1]),
+        [0],
+        input_dtype=torch.long,
+    )
+
+    inputs, target = dataset[0]
+
+    assert inputs.dtype == torch.long
+    assert inputs.tolist() == [2, 3, 0]
+    assert target == 1
+
+
 def test_train_val_indices_group_split_keeps_whole_groups_on_one_side():
     # 10 groups of 10 samples each; no group may straddle train and val.
     groups = [i // 10 for i in range(100)]
@@ -59,6 +74,13 @@ def test_train_val_indices_group_split_keeps_whole_groups_on_one_side():
     assert train_groups.isdisjoint(val_groups), "a group leaked across the split"
     # every group landed entirely on exactly one side
     assert train_groups | val_groups == set(range(10))
+
+
+def test_small_grouped_clients_keep_one_group_for_validation():
+    train, val = _train_val_indices(4, groups=[0, 0, 1, 1], val_frac=0.1)
+
+    assert len(train) == 2
+    assert len(val) == 2
 
 
 def test_build_clients_yields_clients_with_nonempty_loaders():
@@ -93,6 +115,15 @@ def test_build_clients_gives_each_client_its_own_backbone():
         backbones=backbones, shared_dim=SHARED_DIM, batch=8,
     )
     assert clients[0].model.backbone is not clients[1].model.backbone
+
+
+def test_build_clients_can_skip_unused_client_models():
+    clients = build_clients(
+        _synth_source(), num_clients=2, num_classes=NUM_CLASSES,
+        backbones=[], shared_dim=SHARED_DIM, batch=8, build_models=False,
+    )
+
+    assert all(client.model is None for client in clients)
 
 
 def test_small_clients_still_get_a_validation_split():

@@ -5,7 +5,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from rigfl.core.adapters import Adapter
+from rigfl.core.adapters import Adapter, Identity
 
 
 class ClientModel(nn.Module):
@@ -49,4 +49,13 @@ def assemble_model(backbone: nn.Module, *, shared_dim: int, num_classes: int,
         backbone,
         adapter(backbone.out_dim, shared_dim),
         nn.Linear(shared_dim, num_classes),
+    )
+
+
+def assemble_native_model(backbone: nn.Module, *, num_classes: int) -> ClientModel:
+    """Attach a classification head directly to a backbone's native output."""
+    return ClientModel(
+        backbone,
+        Identity(backbone.out_dim),
+        nn.Linear(backbone.out_dim, num_classes),
     )

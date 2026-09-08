@@ -1,0 +1,16 @@
+datasets:
+  cifar10_full_10_clients:
+    backend: flower
+    source_dataset: uoft-cs/cifar10
+    data_transform: cifar10
+    partition:
+      scheme: dirichlet
+      num_clients: 10
+      alpha: 0.5
+      min_partition_size: 10
+      self_balancing: false
+      partition_seed: 0
+      train_per_client: null
+      validation_per_client: null
+      test_per_client: null
+      val_frac: 0.2

@@ -11,6 +11,7 @@ from rigfl.data import flower
 from rigfl.data.config import FlowerDatasetSettings
 from rigfl.data.partitions import partition_fingerprint
 from rigfl.data.transforms import DATA_TRANSFORMS, get_data_transform
+from rigfl.data.transforms.phishing import MAX_LENGTH, encode_urls
 
 
 def _paysim_rows(offset: float):
@@ -59,6 +60,24 @@ def test_paysim_uses_training_statistics_and_flower_feature_definition():
     feature_schema = transformed["test"].features["features"]
     assert feature_schema.feature.dtype == "float32"
     assert feature_schema.length == 15
+
+
+def test_phishing_urls_are_normalized_and_byte_encoded():
+    inputs = encode_urls(["A%20B", "https://example.com"])
+
+    assert inputs.dtype == torch.int16
+    assert inputs.shape == (2, MAX_LENGTH)
+    assert inputs[0, :3].tolist() == [ord("a") + 2, ord(" ") + 2, ord("b") + 2]
+    assert torch.count_nonzero(inputs[0, 3:]) == 0
+
+
+def test_phishing_transform_records_its_tensor_parameters():
+    identity = get_data_transform("phishing_urls").identity()
+
+    assert identity["parameters"]["sequence_length"] == 256
+    assert identity["parameters"]["vocab_size"] == 258
+    assert identity["parameters"]["padding_index"] == 0
+    assert identity["source"].endswith("fed-phish-guard/phishguard/data.py")
 
 
 def test_transform_version_contributes_to_partition_fingerprint(monkeypatch):
@@ -161,3 +180,75 @@ def test_paysim_transform_runs_through_partition_generation(monkeypatch, tmp_pat
     assert transform["fitted_parameters"]["input_dim"] == 15
     assert transform["source"].endswith("fed-fin-fraud/fed_fraud/task.py")
     assert saved_inputs.shape == (16, 15)
+
+
+def test_phishing_transform_runs_through_partition_generation(monkeypatch, tmp_path):
+    features = Features(
+        {
+            "url": Value("string"),
+            "label": Value("int64"),
+            "client_id": Value("int64"),
+        }
+    )
+
+    def rows(size):
+        return {
+            "url": [f"https://example-{index}.com" for index in range(size)],
+            "label": [index % 2 for index in range(size)],
+            "client_id": [index % 2 for index in range(size)],
+        }
+
+    source = DatasetDict(
+        {
+            "train": Dataset.from_dict(rows(40), features=features),
+            "test": Dataset.from_dict(rows(20), features=features),
+        }
+    )
+    builder = SimpleNamespace(
+        config=SimpleNamespace(name="default"),
+        info=SimpleNamespace(features=features, supervised_keys=None),
+    )
+    monkeypatch.setattr(flower, "load_dataset_builder", lambda *args, **kwargs: builder)
+    monkeypatch.setattr(
+        flower, "get_dataset_config_names", lambda *args, **kwargs: ["default"]
+    )
+    monkeypatch.setattr(
+        flower, "get_dataset_split_names", lambda *args, **kwargs: ["train", "test"]
+    )
+
+    class FakeFederatedDataset:
+        def __init__(self, *, preprocessor, partitioners, **_kwargs):
+            dataset = preprocessor(source)
+            self.partitioners = partitioners
+            for split, partitioner in partitioners.items():
+                partitioner.dataset = dataset[split]
+
+        def load_partition(self, partition_id, split):
+            return self.partitioners[split].load_partition(partition_id)
+
+    monkeypatch.setattr("flwr_datasets.FederatedDataset", FakeFederatedDataset)
+    settings = FlowerDatasetSettings(
+        source_dataset="organization/phishing",
+        data_transform="phishing_urls",
+        partition={
+            "scheme": "natural_id",
+            "partition_by": "client_id",
+            "train_per_client": None,
+            "validation_per_client": None,
+            "test_per_client": None,
+        },
+    )
+
+    manifest = flower.generate_flower_partition(settings, tmp_path)
+    saved_inputs, _ = torch.load(
+        tmp_path / "clients" / "client_0" / "train.pt", weights_only=True
+    )
+
+    assert manifest["num_clients"] == 2
+    assert manifest["input_spec"] == {
+        "kind": "token_sequence",
+        "shape": [MAX_LENGTH],
+    }
+    assert manifest["target_spec"]["class_names"] == ["benign", "phishing"]
+    assert saved_inputs.dtype == torch.int16
+    assert saved_inputs.shape == (16, MAX_LENGTH)

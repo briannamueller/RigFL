@@ -6,13 +6,21 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
+from rigfl.data.transforms.phishing import (
+    MAX_LENGTH,
+    PADDING_INDEX,
+    REQUIRED_COLUMNS as PHISHING_REQUIRED_COLUMNS,
+    SOURCE_URL as PHISHING_SOURCE_URL,
+    VOCAB_SIZE,
+    encode_urls,
+)
 from rigfl.data.transforms.paysim import REQUIRED_COLUMNS, SOURCE_URL, prepare_paysim
 
 
 @dataclass(frozen=True)
 class DataTransform:
     version: int
-    input_kind: Literal["auto", "image", "numeric"]
+    input_kind: Literal["auto", "image", "numeric", "token_sequence"]
     input_column: str | None = None
     target_column: str | None = None
     task: Literal["classification", "regression"] | None = None
@@ -22,7 +30,11 @@ class DataTransform:
     std: tuple[float, ...] | None = None
     image_mode: Literal["rgb", "grayscale"] | None = None
     prepare: Callable | None = None
+    convert: Callable | None = None
     source: str | None = None
+    sequence_length: int | None = None
+    vocab_size: int | None = None
+    padding_index: int | None = None
 
     def identity(self) -> dict:
         parameters = {
@@ -35,6 +47,9 @@ class DataTransform:
             "mean": list(self.mean) if self.mean else None,
             "std": list(self.std) if self.std else None,
             "image_mode": self.image_mode,
+            "sequence_length": self.sequence_length,
+            "vocab_size": self.vocab_size,
+            "padding_index": self.padding_index,
         }
         return {
             "version": self.version,
@@ -100,6 +115,20 @@ DATA_TRANSFORMS = {
         required_columns=REQUIRED_COLUMNS,
         prepare=prepare_paysim,
         source=SOURCE_URL,
+    ),
+    "phishing_urls": DataTransform(
+        version=1,
+        input_kind="token_sequence",
+        input_column="url",
+        target_column="label",
+        task="classification",
+        class_names=("benign", "phishing"),
+        required_columns=PHISHING_REQUIRED_COLUMNS,
+        convert=encode_urls,
+        source=PHISHING_SOURCE_URL,
+        sequence_length=MAX_LENGTH,
+        vocab_size=VOCAB_SIZE,
+        padding_index=PADDING_INDEX,
     ),
 }
 

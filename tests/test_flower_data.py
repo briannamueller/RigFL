@@ -588,7 +588,11 @@ def test_merged_generation_partitions_once_then_splits_each_client(
         "stratify": True,
     }
     assert all(
-        (client["train"], client["validation"], client["test"])
+        (
+            client["sizes"]["train"],
+            client["sizes"]["validation"],
+            client["sizes"]["test"],
+        )
         == (14, 2, 4)
         for client in manifest["clients"]
     )

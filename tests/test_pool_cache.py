@@ -62,10 +62,22 @@ def test_pool_fp_ignores_gnn_but_tracks_base():
         base = _feddes(tmp)._pool_fp()
         # graph/GNN settings must NOT change the pool identity (that's the reuse win)
         assert _feddes(tmp, gnn_arch="mlp", gnn_epochs=99, graph_k=9)._pool_fp() == base
+        assert _feddes(tmp, gnn_arch="hetero_gat")._pool_fp() == base
+        assert _feddes(tmp, use_edge_attr=True, fallback="wacc")._pool_fp() == base
         # base-training settings MUST change it
         assert _feddes(tmp, base_lr=0.1)._pool_fp() != base
         assert _feddes(tmp, base_epochs=7)._pool_fp() != base
+        assert _feddes(tmp, base_weighted_by_class=False)._pool_fp() != base
         assert _feddes(tmp, validation_fraction=0.4)._pool_fp() != base
+
+
+def test_graphroute_config_forwards_edge_attributes_and_fallback():
+    with tempfile.TemporaryDirectory() as tmp:
+        model = _feddes(tmp, use_edge_attr=True, fallback="wacc")
+        cfg = model._graphroute_config(0, torch.device("cpu"))
+
+    assert cfg.gnn.use_edge_attr is True
+    assert cfg.gnn.fallback == "wacc"
 
 
 def test_pool_fp_tracks_templates_separately_from_readable_names():

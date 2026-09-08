@@ -1,0 +1,34 @@
+name: cifar10_full_fedavg_cnn_gnn_arch_compare
+algorithms: [feddes]
+
+base:
+  experiment:
+    dataset: cifar10_full_10_clients
+    dataset_config: configs/datasets_cifar10_full_10_clients.yaml
+    data_dir: data
+    model_architectures: [fedavg_cnn]
+    rounds: 1
+    batch: 32
+    eval_gap: 1
+    device: cuda
+    quiet: true
+  algorithm:
+    base_lr: 0.0005
+    base_epochs: 100
+    graph_k: 5
+    hidden_dim: 128
+    gnn_epochs: 500
+    gnn_patience: 50
+    calibrate: true
+    base_split_mode: oof_stacking
+    base_oof_folds: 3
+    cache_dir: pool_cache/cifar10_full_10_clients_fedavg_cnn
+
+sweep:
+  seed: [0, 1, 2]
+  algorithm.gnn_arch: [gat, hetero_gat]
+
+tuning:
+  strategy: grid
+  replicate_axis: seed
+  parameters: [algorithm.gnn_arch]

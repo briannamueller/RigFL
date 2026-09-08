@@ -101,3 +101,18 @@ datasets:
       validation_per_client: null
       test_per_client: null
       val_frac: 0.2
+
+  phishing_urls:
+    backend: flower
+    source_dataset: flwrlabs/fed-phishing-urls
+    source_revision: 941d45362de147c316b05d6b3b00e0aefec33448
+    data_transform: phishing_urls
+    partition:
+      scheme: natural_id
+      partition_by: client_id
+      client_limit: 5
+      partition_seed: 0
+      train_per_client: 2000
+      validation_per_client: null
+      test_per_client: 500
+      val_frac: 0.2

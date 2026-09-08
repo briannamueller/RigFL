@@ -1,6 +1,7 @@
 """Datasets -> generated partitions -> federated clients."""
 
 from rigfl.data.config import (
+    BioSiloDatasetSettings,
     ClientSplitSettings,
     ContinuousSettings,
     DatasetRegistry,
@@ -33,6 +34,7 @@ from rigfl.data.partitions import (
 )
 
 __all__ = [
+    "BioSiloDatasetSettings",
     "DatasetRegistry",
     "DatasetSettings",
     "PartitionArtifact",

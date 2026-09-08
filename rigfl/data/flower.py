@@ -499,7 +499,10 @@ def _convert_partition(partition, resolved: ResolvedFlowerSource):
     if conversion == "auto":
         conversion = "image" if isinstance(feature, Image) else "numeric"
     values = partition[resolved.input_column]
-    if conversion == "image":
+    if transform.convert is not None:
+        inputs = transform.convert(values)
+        input_kind = conversion
+    elif conversion == "image":
         inputs = _image_tensor(
             values,
             mean=transform.mean,
@@ -507,7 +510,7 @@ def _convert_partition(partition, resolved: ResolvedFlowerSource):
             image_mode=transform.image_mode,
         )
         input_kind = "image"
-    else:
+    elif conversion == "numeric":
         try:
             inputs = torch.as_tensor(np.asarray(values)).float()
         except (TypeError, ValueError) as exc:
@@ -518,6 +521,10 @@ def _convert_partition(partition, resolved: ResolvedFlowerSource):
         if inputs.ndim < 2:
             inputs = inputs.unsqueeze(1)
         input_kind = "numeric"
+    else:
+        raise ValueError(
+            f"data transform has no conversion for input kind {conversion!r}"
+        )
 
     target_values = partition[resolved.target_column]
     try:
@@ -802,9 +809,11 @@ def generate_flower_partition(
         )
         client = {
             "client_id": cid,
-            "train": len(train_targets),
-            "validation": len(validation_targets),
-            "test": len(y_test),
+            "sizes": {
+                "train": len(train_targets),
+                "validation": len(validation_targets),
+                "test": len(y_test),
+            },
         }
         if identity_map is not None:
             key = "source_client_id" if p.scheme == "natural_id" else "source_client_ids"
@@ -830,12 +839,12 @@ def generate_flower_partition(
             {"num_classes": num_classes, "class_names": resolved.class_names}
         )
         for client, targets_by_role in zip(clients, client_targets):
-            for role, key in (("train", "train_label_hist"),
-                              ("validation", "validation_label_hist"),
-                              ("test", "test_label_hist")):
-                client[key] = torch.bincount(
+            client["label_counts"] = {
+                role: torch.bincount(
                     targets_by_role[role].long(), minlength=num_classes
                 ).tolist()
+                for role in ("train", "validation", "test")
+            }
 
     return {
         "backend": "flower",

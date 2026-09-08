@@ -103,7 +103,7 @@ def capture_env() -> dict:
     if rigfl and rigfl.get("version"):
         env["rigfl"] = rigfl["version"]
     # Record optional packages when they are installed.
-    for name in ("graphroute",):
+    for name in ("graphroute", "biosilo"):
         info = _package(name)
         if info:
             env[name] = info

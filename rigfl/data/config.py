@@ -267,7 +267,29 @@ class FlowerDatasetSettings(BaseModel):
         return self
 
 
-DatasetSettings = FlowerDatasetSettings
+class BioSiloDatasetSettings(BaseModel):
+    """One previously generated BioSilo partition used by RigFL."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    backend: Literal["biosilo"] = "biosilo"
+    source_dataset: str = Field(min_length=1)
+    partition: str = Field(min_length=1)
+    data_root: str | None = None
+    validation_fraction: float = Field(0.2, gt=0, lt=1)
+
+    @field_validator("source_dataset", "partition")
+    @classmethod
+    def _value_is_not_blank(cls, value):
+        if not value.strip():
+            raise ValueError("must not be blank")
+        return value
+
+
+DatasetSettings = Annotated[
+    FlowerDatasetSettings | BioSiloDatasetSettings,
+    Field(discriminator="backend"),
+]
 
 
 class DatasetRegistry(BaseModel):

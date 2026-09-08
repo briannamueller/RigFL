@@ -21,6 +21,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import Callable, Sequence
 
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
@@ -59,17 +60,33 @@ class _ArrayDataset(Dataset):
     or a namedtuple of arrays (multi-input); a multi-input item is a tuple of
     tensors, one per field."""
 
-    def __init__(self, X, y, indices: Sequence[int]):
+    def __init__(
+        self,
+        X,
+        y,
+        indices: Sequence[int],
+        input_dtype: torch.dtype = torch.float32,
+    ):
         self.fields = [getattr(X, f) for f in X._fields] if _is_multi(X) else [X]
         self.multi = _is_multi(X)
         self.y, self.indices = y, list(indices)
+        self.input_dtype = input_dtype
 
     def __len__(self) -> int:
         return len(self.indices)
 
     def __getitem__(self, i):
         j = self.indices[i]
-        item = tuple(torch.as_tensor(f[j]).float() for f in self.fields)
+        values = [f[j] for f in self.fields]
+        values = [
+            np.array(value, copy=True)
+            if isinstance(value, np.ndarray) and not value.flags.writeable
+            else value
+            for value in values
+        ]
+        item = tuple(
+            torch.as_tensor(value).to(dtype=self.input_dtype) for value in values
+        )
         return (item if self.multi else item[0]), int(self.y[j])
 
 
@@ -99,7 +116,9 @@ def _train_val_indices(n: int, groups, val_frac: float, *,
     counts = Counter(groups)
     uniq = list(dict.fromkeys(groups))                       # stable unique
     uniq = [uniq[i] for i in torch.randperm(len(uniq), generator=generator).tolist()]
-    val_groups, seen, target = set(), 0, int(n * val_frac)
+    if len(uniq) < 2:
+        return list(range(n)), []
+    val_groups, seen, target = set(), 0, max(1, round(n * val_frac))
     for g in uniq:
         if seen >= target or len(val_groups) >= len(uniq) - 1:   # keep >=1 group in train
             break
@@ -118,7 +137,7 @@ def build_clients(source: Source, num_clients: int, num_classes: int,
                   backbones: list[Callable[[], nn.Module]], shared_dim: int,
                   val_frac: float = 0.2, batch: int = 32,
                   adapter: Callable[[int, int], nn.Module] | None = None,
-                  seed: int = 0) -> list[Client]:
+                  seed: int = 0, build_models: bool = True) -> list[Client]:
     """Turn a data source + a pool of backbone *factories* into ``Client``s.
 
     ``backbones`` are factories (not instances) so every client gets its OWN
@@ -128,6 +147,8 @@ def build_clients(source: Source, num_clients: int, num_classes: int,
     representation-alignment component. It defaults to a learned projection; the
     caller supplies a different one (e.g. FedTGP's ``AdaptivePool``) so each
     client model uses the alignment its own paper specifies.
+
+    ``build_models=False`` is for workflows that construct their own model pool.
     """
     if adapter is None:
         adapter = lambda native, shared: LearnedProjection(native, shared)
@@ -140,10 +161,12 @@ def build_clients(source: Source, num_clients: int, num_classes: int,
         )
         x_te, y_te, _ = source(cid, "test")
 
-        backbone = backbones[cid % len(backbones)]()          # fresh instance per client
-        model = assemble_model(
-            backbone, shared_dim=shared_dim, num_classes=num_classes,
-            adapter=adapter)
+        model = None
+        if build_models:
+            backbone = backbones[cid % len(backbones)]()      # fresh instance per client
+            model = assemble_model(
+                backbone, shared_dim=shared_dim, num_classes=num_classes,
+                adapter=adapter)
         clients.append(Client(
             model,
             DataLoader(
