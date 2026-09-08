@@ -56,6 +56,10 @@ pip install rigfl
 
 RigFL requires Python 3.10–3.12.
 
+Install the optional BioSilo backend with `pip install "rigfl[biosilo]"`. See
+the [data configuration guide](https://github.com/briannamueller/RigFL/blob/main/rigfl/data/README.md)
+for its configuration and dataset-specific dependencies.
+
 ## Example workflow
 
 The following CIFAR-10 example walks you through generating client data

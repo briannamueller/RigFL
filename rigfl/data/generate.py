@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import argparse
 
+from rigfl.data.config import BioSiloDatasetSettings, dataset_settings
 from rigfl.data.partitions import (
-    DEFAULT_DATASET_CONFIG,
     DEFAULT_DATA_DIR,
+    DEFAULT_DATASET_CONFIG,
     generate_partition,
 )
 
@@ -26,9 +27,15 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    artifact, created = generate_partition(
-        args.dataset, config_path=args.dataset_config, data_dir=args.data_dir
-    )
+    settings = dataset_settings(args.dataset, args.dataset_config)
+    if isinstance(settings, BioSiloDatasetSettings):
+        from rigfl.data.biosilo import generate_biosilo_partition
+
+        artifact, created = generate_biosilo_partition(settings, data_dir=args.data_dir)
+    else:
+        artifact, created = generate_partition(
+            args.dataset, config_path=args.dataset_config, data_dir=args.data_dir
+        )
     action = "generated" if created else "already exists"
     print(f"{action}: {artifact.path}")
     print(f"partition fingerprint: {artifact.partition_id}")

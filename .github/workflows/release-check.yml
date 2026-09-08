@@ -23,6 +23,7 @@ jobs:
           python -m venv /tmp/rigfl-release-check/venv
           /tmp/rigfl-release-check/venv/bin/python -m pip install --upgrade pip
           /tmp/rigfl-release-check/venv/bin/python -m pip install dist/*.whl
+          /tmp/rigfl-release-check/venv/bin/python -m pip install "biosilo>=0.1.1,<0.2"
 
       - name: Create release-check configurations
         working-directory: /tmp/rigfl-release-check
@@ -62,6 +63,16 @@ jobs:
                 train_per_client: 4
                 test_per_client: 2
                 val_frac: 0.25
+            biosilo_synthetic:
+              backend: biosilo
+              source_dataset: synthetic
+              parameters:
+                n_clients: 2
+                n_per_client: 20
+                n_classes: 3
+                n_features: 5
+                seed: 7
+              validation_fraction: 0.2
           YAML
           cat > configs/experiment.yaml <<'YAML'
           experiment:
@@ -80,6 +91,23 @@ jobs:
             local_epochs: 1
             lr: 0.01
           YAML
+          cat > configs/biosilo_experiment.yaml <<'YAML'
+          experiment:
+            dataset: biosilo_synthetic
+            dataset_config: configs/datasets.yaml
+            data_dir: data
+            model_architectures: [tabular_mlp]
+            rounds: 1
+            seed: 0
+            shared_dim: 16
+            batch: 4
+            eval_gap: 1
+            device: cpu
+            out_dir: results/biosilo
+          algorithm:
+            local_epochs: 1
+            lr: 0.01
+          YAML
 
       - name: Generate partitions and run experiments
         working-directory: /tmp/rigfl-release-check
@@ -93,6 +121,10 @@ jobs:
             --dataset cifar10_pathological \
             --dataset-config configs/datasets.yaml \
             --data-dir data
+          $RIGFL_PYTHON -m rigfl.data.generate \
+            --dataset biosilo_synthetic \
+            --dataset-config configs/datasets.yaml \
+            --data-dir data
           $RIGFL_PYTHON -m rigfl.experiment.run \
             --algorithm local \
             --config configs/experiment.yaml
@@ -101,7 +133,12 @@ jobs:
             --config configs/experiment.yaml \
             --dataset cifar10_pathological \
             --out-dir results/pathological
+          $RIGFL_PYTHON -m rigfl.experiment.run \
+            --algorithm local \
+            --config configs/biosilo_experiment.yaml
           $RIGFL_PYTHON -m rigfl.experiment.collect \
             --results-dir results/dirichlet
           $RIGFL_PYTHON -m rigfl.experiment.collect \
             --results-dir results/pathological
+          $RIGFL_PYTHON -m rigfl.experiment.collect \
+            --results-dir results/biosilo

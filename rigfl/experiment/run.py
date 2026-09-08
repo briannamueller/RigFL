@@ -133,7 +133,12 @@ def resolve_experiment_data(
         from rigfl.data.biosilo import (biosilo_input_spec,
                                         load_biosilo_partition)
 
-        handle = load_biosilo_partition(settings)
+        handle = load_biosilo_partition(
+            settings,
+            data_dir=exp.data_dir,
+            dataset_name=exp.dataset,
+            dataset_config=exp.dataset_config,
+        )
         input_kind, input_spec = biosilo_input_spec(handle)
         resolved = ResolvedExperimentConfig(
             **experiment_input,

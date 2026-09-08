@@ -1,26 +1,83 @@
-"""Load generated BioSilo partitions for RigFL experiments."""
+"""Generate and load BioSilo partitions for RigFL experiments."""
 
 from __future__ import annotations
 
-from typing import Callable
+import shlex
+from collections.abc import Callable
 
-import torch.nn as nn
+from torch import nn
 
 from rigfl.data.builder import build_clients
 
 
-def load_biosilo_partition(settings):
-    """Load the exact BioSilo partition named by a dataset configuration."""
+def _biosilo():
     try:
         import biosilo
     except ModuleNotFoundError as exc:
         raise ModuleNotFoundError(
-            "The BioSilo data backend requires the optional 'biosilo' package."
+            "The BioSilo data backend requires the optional 'biosilo' package. "
+            "Install it with: pip install 'rigfl[biosilo]'"
         ) from exc
+    return biosilo
+
+
+def _root(settings, data_dir):
+    return settings.data_root or data_dir
+
+
+def generate_biosilo_partition(settings, *, data_dir="data"):
+    """Generate or reuse the configured BioSilo partition."""
+    biosilo = _biosilo()
+    expected = biosilo.expected_partition(
+        settings.source_dataset,
+        root=_root(settings, data_dir),
+        **settings.parameters,
+    )
+    existed = (expected / "manifest.json").is_file()
+    path = biosilo.generate(
+        settings.source_dataset,
+        root=_root(settings, data_dir),
+        **settings.parameters,
+    )
+    handle = biosilo.load(
+        settings.source_dataset,
+        root=_root(settings, data_dir),
+        partition=path.name,
+    )
+    return handle, not existed
+
+
+def load_biosilo_partition(
+    settings, *, data_dir="data", dataset_name=None, dataset_config=None
+):
+    """Load the BioSilo partition determined by the configured parameters."""
+    biosilo = _biosilo()
+    path = biosilo.expected_partition(
+        settings.source_dataset,
+        root=_root(settings, data_dir),
+        **settings.parameters,
+    )
+    if not (path / "manifest.json").is_file():
+        configured_name = dataset_name or settings.source_dataset
+        command = [
+            "python",
+            "-m",
+            "rigfl.data.generate",
+            "--dataset",
+            configured_name,
+        ]
+        if dataset_config is not None:
+            command.extend(["--dataset-config", str(dataset_config)])
+        command.extend(["--data-dir", str(data_dir)])
+        formatted_command = " ".join(shlex.quote(part) for part in command)
+        raise FileNotFoundError(
+            f"BioSilo partition for {settings.source_dataset!r} was not found at "
+            f"{path}. Run: {formatted_command}"
+        )
     return biosilo.load(
         settings.source_dataset,
-        root=settings.data_root,
-        partition=settings.partition,
+        root=_root(settings, data_dir),
+        partition=path.name,
     )
 
 

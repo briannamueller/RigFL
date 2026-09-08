@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -268,21 +268,33 @@ class FlowerDatasetSettings(BaseModel):
 
 
 class BioSiloDatasetSettings(BaseModel):
-    """One previously generated BioSilo partition used by RigFL."""
+    """One BioSilo dataset generated and consumed through RigFL."""
 
     model_config = ConfigDict(extra="forbid")
 
     backend: Literal["biosilo"] = "biosilo"
     source_dataset: str = Field(min_length=1)
-    partition: str = Field(min_length=1)
     data_root: str | None = None
+    parameters: dict[str, Any] = Field(default_factory=dict)
     validation_fraction: float = Field(0.2, gt=0, lt=1)
 
-    @field_validator("source_dataset", "partition")
+    @field_validator("source_dataset")
     @classmethod
     def _value_is_not_blank(cls, value):
         if not value.strip():
             raise ValueError("must not be blank")
+        return value
+
+    @field_validator("parameters")
+    @classmethod
+    def _parameters_do_not_override_rigfl_controls(cls, value):
+        reserved = {"dataset", "params", "root", "overwrite", "version"}
+        overlap = sorted(reserved & set(value))
+        if overlap:
+            raise ValueError(
+                "parameters cannot contain RigFL-controlled BioSilo arguments: "
+                + ", ".join(overlap)
+            )
         return value
 
 

@@ -7,13 +7,18 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import torch
+import yaml
 
 biosilo = pytest.importorskip("biosilo")
 
-from rigfl.data.biosilo import (biosilo_input_spec, build_biosilo_clients,
-                                load_biosilo_partition)
+from rigfl.data.biosilo import (
+    biosilo_input_spec,
+    build_biosilo_clients,
+    generate_biosilo_partition,
+    load_biosilo_partition,
+)
 from rigfl.data.builder import MultiTensor
-from rigfl.data.config import BioSiloDatasetSettings
+from rigfl.data.config import BioSiloDatasetSettings, dataset_settings
 from rigfl.experiment.artifacts import validate_run_record
 from rigfl.experiment.config import ExperimentConfig
 from rigfl.experiment.registry import config_class
@@ -37,32 +42,105 @@ def _generate(root, *, n_inputs=1, with_groups=False):
     return biosilo.load("synthetic", root=root, partition=path.name)
 
 
-def _dataset_config(tmp_path, handle, validation_fraction=0.25):
+def _parameters(*, n_inputs=1, with_groups=False):
+    return {
+        "n_clients": 3,
+        "n_per_client": 32,
+        "n_classes": 3,
+        "n_features": 5,
+        "n_inputs": n_inputs,
+        "with_groups": with_groups,
+        "group_size": 4,
+        "seed": 7,
+    }
+
+
+def _dataset_config(
+    tmp_path, *, n_inputs=1, with_groups=False, validation_fraction=0.25
+):
     path = tmp_path / "datasets.yaml"
-    path.write_text(
-        "datasets:\n"
-        "  biomedical:\n"
-        "    backend: biosilo\n"
-        "    source_dataset: synthetic\n"
-        f"    partition: {handle.partition_id}\n"
-        f"    data_root: {tmp_path}\n"
-        f"    validation_fraction: {validation_fraction}\n"
-    )
+    config = {
+        "datasets": {
+            "biomedical": {
+                "backend": "biosilo",
+                "source_dataset": "synthetic",
+                "parameters": _parameters(
+                    n_inputs=n_inputs, with_groups=with_groups
+                ),
+                "validation_fraction": validation_fraction,
+            }
+        }
+    }
+    path.write_text(yaml.safe_dump(config))
     return path
 
 
-def test_biosilo_configuration_loads_an_exact_partition(tmp_path):
-    handle = _generate(tmp_path)
-    settings = BioSiloDatasetSettings(
-        source_dataset="synthetic",
-        partition=handle.partition_id,
-        data_root=str(tmp_path),
+def _generate_configured(tmp_path, *, n_inputs=1, with_groups=False):
+    config_path = _dataset_config(
+        tmp_path, n_inputs=n_inputs, with_groups=with_groups
+    )
+    settings = dataset_settings("biomedical", config_path)
+    handle, created = generate_biosilo_partition(settings, data_dir=tmp_path)
+    return config_path, handle, created
+
+
+def test_biosilo_configuration_generates_and_loads_without_partition_id(tmp_path):
+    config_path, handle, created = _generate_configured(tmp_path)
+    settings = dataset_settings("biomedical", config_path)
+
+    loaded = load_biosilo_partition(
+        settings, data_dir=tmp_path, dataset_name="biomedical"
+    )
+    repeated, repeated_created = generate_biosilo_partition(
+        settings, data_dir=tmp_path
     )
 
-    loaded = load_biosilo_partition(settings)
-
+    assert isinstance(settings, BioSiloDatasetSettings)
+    assert created is True
+    assert repeated_created is False
     assert loaded.partition_id == handle.partition_id
+    assert repeated.partition_id == handle.partition_id
     assert loaded.client_ids == ["site-0", "site-1", "site-2"]
+
+
+def test_missing_biosilo_partition_reports_the_generate_command(tmp_path):
+    config_path = _dataset_config(tmp_path)
+    settings = dataset_settings("biomedical", config_path)
+
+    with pytest.raises(
+        FileNotFoundError,
+        match=r"python -m rigfl\.data\.generate --dataset biomedical",
+    ):
+        load_biosilo_partition(
+            settings, data_dir=tmp_path, dataset_name="biomedical"
+        )
+
+
+def test_generate_command_dispatches_to_biosilo(tmp_path, monkeypatch, capsys):
+    from rigfl.data.generate import main
+
+    config_path = _dataset_config(tmp_path)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "rigfl.data.generate",
+            "--dataset",
+            "biomedical",
+            "--dataset-config",
+            str(config_path),
+            "--data-dir",
+            str(tmp_path),
+        ],
+    )
+
+    main()
+
+    settings = dataset_settings("biomedical", config_path)
+    expected = biosilo.expected_partition(
+        "synthetic", root=tmp_path, **settings.parameters
+    )
+    assert (expected / "manifest.json").is_file()
+    assert "generated:" in capsys.readouterr().out
 
 
 def test_biosilo_input_forms_map_to_model_families(tmp_path):
@@ -170,11 +248,13 @@ def test_biosilo_memmap_inputs_remain_lazy(tmp_path):
 def test_biosilo_runs_through_experiment_infrastructure(
     tmp_path, n_inputs, architectures
 ):
-    handle = _generate(tmp_path, n_inputs=n_inputs, with_groups=n_inputs == 2)
-    config_path = _dataset_config(tmp_path, handle)
+    config_path, handle, _ = _generate_configured(
+        tmp_path, n_inputs=n_inputs, with_groups=n_inputs == 2
+    )
     experiment = ExperimentConfig(
         dataset="biomedical",
         dataset_config=str(config_path),
+        data_dir=str(tmp_path),
         model_architectures=architectures,
         rounds=1,
         shared_dim=8,
@@ -203,10 +283,13 @@ def test_biosilo_runs_through_experiment_infrastructure(
 
 def test_feddes_accepts_a_biosilo_multi_input_partition(tmp_path):
     pytest.importorskip("graphroute")
-    handle = _generate(tmp_path, n_inputs=2, with_groups=True)
+    config_path, _, _ = _generate_configured(
+        tmp_path, n_inputs=2, with_groups=True
+    )
     experiment = ExperimentConfig(
         dataset="biomedical",
-        dataset_config=str(_dataset_config(tmp_path, handle)),
+        dataset_config=str(config_path),
+        data_dir=str(tmp_path),
         model_architectures=["temporal_gru"],
         rounds=1,
         shared_dim=8,
