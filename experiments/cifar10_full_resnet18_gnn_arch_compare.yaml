@@ -1,4 +1,4 @@
-name: cifar10_full_resnet18_edgeattr_wacc_compare
+name: cifar10_full_resnet18_native_residual_compare
 algorithms: [feddes]
 
 base:
@@ -22,10 +22,11 @@ base:
     calibrate: true
     base_weighted_by_class: false
     use_edge_attr: true
+    use_sample_residual: true
     fallback: wacc
     base_split_mode: oof_stacking
     base_oof_folds: 3
-    cache_dir: pool_cache/cifar10_full_10_clients_resnet18_unweighted_edgeattr_wacc
+    cache_dir: pool_cache/cifar10_full_10_clients_resnet18_native_unweighted
 
 sweep:
   seed: [0, 1, 2]

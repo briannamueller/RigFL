@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rigfl"
-version = "0.1.0"
+version = "0.1.1"
 description = "A modular research framework for rigorous federated learning experimentation"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
@@ -23,7 +23,7 @@ dependencies = [
     "pyarrow<15",
     "pillow<11",
     "pandas<2.3",
-    "graphroute>=0.1.0,<0.2",
+    "graphroute>=0.1.1,<0.2",
 ]
 
 [project.urls]

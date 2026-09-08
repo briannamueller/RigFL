@@ -46,6 +46,7 @@ class FedDESConfig(AlgorithmConfig):
     calibrate: bool = True
     base_weighted_by_class: bool = True
     use_edge_attr: bool = False
+    use_sample_residual: bool = False
     fallback: Literal["uniform", "wacc", "acc", "bacc"] = "uniform"
     # OOF stacking produces training meta-labels from models that did not see the
     # corresponding rows. In-sample mode is cheaper but measures training fit.
@@ -80,6 +81,7 @@ class FedDES(Algorithm):
         self.calibrate = config.calibrate
         self.base_weighted_by_class = config.base_weighted_by_class
         self.use_edge_attr = config.use_edge_attr
+        self.use_sample_residual = config.use_sample_residual
         self.fallback = config.fallback
         self.base_split_mode = config.base_split_mode
         self.base_oof_folds = config.base_oof_folds
@@ -260,6 +262,7 @@ class FedDES(Algorithm):
                  "epochs": self.gnn_epochs, "patience": self.gnn_patience,
                  "es_metric": "val_acc",
                  "use_edge_attr": self.use_edge_attr,
+                 "use_sample_residual": self.use_sample_residual,
                  "fallback": self.fallback,
                  "ens_combination_mode": "hard_weighted_voting",
                  "voting_weight_space": "sig"})
