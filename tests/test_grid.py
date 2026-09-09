@@ -139,7 +139,7 @@ def test_fixed_algorithm_settings_are_scoped_across_mixed_algorithms():
     grid = build_grid({
         "algorithms": ["fedprox", "feddes"],
         "base": {
-            "experiment": {"model_architectures": ["fedavg_cnn"]},
+            "experiment": {"model": "fedavg_cnn"},
             "algorithm": {"mu": 0.2, "graph_k": 7},
         },
     })
@@ -147,12 +147,12 @@ def test_fixed_algorithm_settings_are_scoped_across_mixed_algorithms():
     assert grid == [
         {
             "algorithm": "fedprox",
-            "experiment": {"model_architectures": ["fedavg_cnn"]},
+            "experiment": {"model": "fedavg_cnn"},
             "algorithm_config": {"mu": 0.2},
         },
         {
             "algorithm": "feddes",
-            "experiment": {"model_architectures": ["fedavg_cnn"]},
+            "experiment": {"model": "fedavg_cnn"},
             "algorithm_config": {"graph_k": 7},
         },
     ]
@@ -161,7 +161,7 @@ def test_fixed_algorithm_settings_are_scoped_across_mixed_algorithms():
 def test_two_exclusive_algorithm_axes_do_not_form_a_cross_product():
     grid = build_grid({
         "algorithms": ["fedprox", "feddes"],
-        "base": {"experiment": {"model_architectures": ["fedavg_cnn"]}},
+        "base": {"experiment": {"model": "fedavg_cnn"}},
         "sweep": {
             "algorithm.mu": [0.0, 0.1, 0.2],
             "algorithm.graph_k": [3, 5, 7],

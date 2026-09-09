@@ -22,13 +22,13 @@ from rigfl.experiment.config import ExperimentConfig, result_filename
 from rigfl.experiment.device import resolve_device
 from rigfl.experiment.registry import (ALL_ALGORITHMS, BASELINES,
                                        algorithm_run_fingerprint, algorithm_spec,
-                                       config_class, resolve_algorithm_config)
+                                       config_class, resolve_algorithm_config,
+                                       resolve_algorithm_models)
 from rigfl.experiment.run import resolve_experiment_data, run_one
 from rigfl.experiment.tuning import (applicable_parameters, build_candidates,
                                      build_manifest,
                                      candidate_index, canonical_axis, parse_tuning,
                                      write_manifest, _norm)
-from rigfl.models.registry import MODEL_ARCHITECTURE_FAMILIES
 
 
 def _values(spec) -> list:
@@ -125,66 +125,17 @@ def _validate_tasks(grid: list[dict]) -> None:
                 f"node, once per task.")
 
 
-_FAMILY_AXES = {
-    "exp.model_architecture_family": (
-        "exp.model_architectures", MODEL_ARCHITECTURE_FAMILIES,
-        "model_architecture_family"),
-}
-
-
-def _family_target(path: str) -> str:
-    """The recorded list field corresponding to a family shorthand, if any."""
-    canonical = canonical_axis(path)
-    return _FAMILY_AXES[canonical][0] if canonical in _FAMILY_AXES else path
-
-
-def _resolved_family_values(path: str, values: list) -> tuple[str, list]:
-    """Resolve a family-valued sweep axis to its ordered model lists."""
-    canonical = canonical_axis(path)
-    if canonical not in _FAMILY_AXES:
-        return canonical, values
-    target, registry, label = _FAMILY_AXES[canonical]
-    resolved = []
-    for name in values:
-        try:
-            resolved.append(list(registry[name]))
-        except (KeyError, TypeError) as exc:
-            known = ", ".join(sorted(registry))
-            raise SystemExit(
-                f"Unknown {label} {name!r}; known: {known}.") from exc
-    return target, resolved
-
-
-def _resolve_fixed_family(config: dict, *, family_field: str,
-                          models_field: str, registry: dict,
-                          section: str) -> None:
-    """Replace one fixed family shorthand with its canonical ordered list."""
-    family = config.get(family_field)
-    if family is None:
-        return
-    if config.get(models_field) is not None:
-        raise SystemExit(
-            f"Set {section}.{family_field} or {section}.{models_field}, not both.")
-    try:
-        config[models_field] = list(registry[family])
-    except (KeyError, TypeError) as exc:
-        known = ", ".join(sorted(registry))
-        raise SystemExit(
-            f"Unknown {family_field} {family!r}; known: {known}.") from exc
-    config.pop(family_field, None)
-
-
 def _canonical_tuning_block(block: dict | None) -> tuple[dict | None, list[str] | None]:
-    """Map family aliases in a tuning declaration to recorded list fields."""
+    """Normalize tuning parameter paths."""
     if not block or not isinstance(block, dict):
         return block, None
     normalized = dict(block)
     raw = block.get("parameters") or []
     raw = [raw] if isinstance(raw, str) else list(raw)
     declared = [canonical_axis(path) for path in raw]
-    normalized["parameters"] = [_family_target(path) for path in raw]
+    normalized["parameters"] = declared
     if "replicate_axis" in normalized:
-        normalized["replicate_axis"] = _family_target(normalized["replicate_axis"])
+        normalized["replicate_axis"] = canonical_axis(normalized["replicate_axis"])
     return normalized, declared
 
 
@@ -217,13 +168,6 @@ def expand(spec: dict) -> tuple[list[dict], dict | None]:
     base_exp.pop("algorithm", None)
     base_algorithm = dict(base.get("algorithm", {}))
 
-    # A family name is input shorthand. Grids, manifests and completed records
-    # all use the resolved ordered list as the model identity.
-    _resolve_fixed_family(
-        base_exp, family_field="model_architecture_family",
-        models_field="model_architectures",
-        registry=MODEL_ARCHITECTURE_FAMILIES, section="exp")
-
     sweep = {k: _values(v) for k, v in spec.get("sweep", {}).items()}
     algorithms = sweep.pop("algorithm", None) or _values(spec.get("algorithms", BASELINES))
 
@@ -232,7 +176,7 @@ def expand(spec: dict) -> tuple[list[dict], dict | None]:
     axis_values: dict[str, list] = {}
     declared_axes: list[dict] = []
     for path, vals in sweep.items():
-        axis, resolved_values = _resolved_family_values(path, vals)
+        axis, resolved_values = canonical_axis(path), vals
         if axis in axis_values:
             raise SystemExit(
                 f"Sweep axes {path!r} and an earlier declaration both resolve to "
@@ -353,6 +297,7 @@ def run_task(grid_path: str, task_id: int, out_dir: Path,
     if not dry_run:
         try:
             exp, data = resolve_experiment_data(exp)
+            exp = resolve_algorithm_models(name, exp)
         except (FileNotFoundError, KeyError, ValueError) as exc:
             raise SystemExit(f"task {task_id}: {exc}") from exc
     Cfg = config_class(name)

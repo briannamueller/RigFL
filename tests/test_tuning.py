@@ -21,12 +21,11 @@ from rigfl.eval.metrics import register, unregister
 from rigfl.experiment.config import ExperimentConfig
 from rigfl.experiment.launch import expand
 from rigfl.experiment.registry import algorithm_run_fingerprint, config_class
-from rigfl.experiment.run import resolve_experiment_architectures
 from rigfl.experiment.tuning import (TuningError, candidate_index, candidate_of,
                                      load_manifest, manifest_candidates,
                                      place_records, rank, write_manifest,
                                      write_selection)
-from rigfl.models.registry import MODEL_ARCHITECTURE_FAMILIES
+from rigfl.models.registry import MODEL_FAMILIES
 from tests.helpers import resolved_experiment
 
 VIEWS = ["global", "per-client"]
@@ -168,20 +167,20 @@ def test_seed_is_excluded_from_candidate_identity():
     assert all(v == {0, 1, 2} for v in by_candidate.values())
 
 
-def test_architecture_family_candidates_match_recorded_lists(monkeypatch):
+def test_model_family_candidates_match_recorded_configuration(monkeypatch):
     monkeypatch.setitem(
-        MODEL_ARCHITECTURE_FAMILIES, "image_pair",
+        MODEL_FAMILIES, "image_pair",
         ["fedavg_cnn", "cifar_resnet18"])
     spec = {
         "algorithms": ["local"],
         "base": {"experiment": {"rounds": 1}},
         "sweep": {
             "seed": [0, 1],
-            "model_architecture_family": [
+            "model_family": [
                 "image_heterogeneous_3", "image_pair"],
         },
         "tuning": {
-            "parameters": ["model_architecture_family"],
+            "parameters": ["model_family"],
             "replicate_axis": "seed",
         },
     }
@@ -192,8 +191,7 @@ def test_architecture_family_candidates_match_recorded_lists(monkeypatch):
     observed = set()
 
     for task_id, task in enumerate(grid, 1):
-        exp = resolve_experiment_architectures(
-            ExperimentConfig(**task["experiment"]), input_kind="image")
+        exp = ExperimentConfig(**task["experiment"])
         record = {
             "algorithm": "local",
             "config": {
@@ -205,62 +203,23 @@ def test_architecture_family_candidates_match_recorded_lists(monkeypatch):
         assert candidate == expected[task_id]
         observed.add(candidate)
 
-    assert all("model_architecture_family" not in task["experiment"]
-               for task in grid)
-    assert manifest["tuning_parameters"] == ["exp.model_architectures"]
+    assert all("model_family" in task["experiment"] for task in grid)
+    assert manifest["tuning_parameters"] == ["exp.model_family"]
     assert manifest["declared_tuning_parameters"] == [
-        "exp.model_architecture_family"]
+        "exp.model_family"]
     assert observed == {0, 1}
 
 
-def test_architecture_family_and_explicit_lists_make_same_candidates(monkeypatch):
-    pair = ["fedavg_cnn", "cifar_resnet18"]
-    monkeypatch.setitem(MODEL_ARCHITECTURE_FAMILIES, "image_pair", pair)
-    common = {
-        "algorithms": ["local"],
-        "base": {"experiment": {"rounds": 1}},
-    }
-    family_grid, family_manifest = expand({
-        **common,
-        "sweep": {
-            "seed": [0, 1],
-            "model_architecture_family": [
-                "image_heterogeneous_3", "image_pair"],
-        },
-        "tuning": {
-            "parameters": ["model_architecture_family"],
-            "replicate_axis": "seed",
-        },
-    })
-    list_grid, list_manifest = expand({
-        **common,
-        "sweep": {
-            "seed": [0, 1],
-            "model_architectures": [
-                list(MODEL_ARCHITECTURE_FAMILIES["image_heterogeneous_3"]),
-                pair],
-        },
-        "tuning": {
-            "parameters": ["model_architectures"],
-            "replicate_axis": "seed",
-        },
-    })
-
-    assert family_grid == list_grid
-    assert family_manifest["candidates"] == list_manifest["candidates"]
-    assert family_manifest["tasks"] == list_manifest["tasks"]
-
-
-def test_untuned_architecture_axis_remains_a_separate_condition(monkeypatch):
+def test_untuned_model_family_axis_remains_a_separate_condition(monkeypatch):
     monkeypatch.setitem(
-        MODEL_ARCHITECTURE_FAMILIES, "image_pair",
+        MODEL_FAMILIES, "image_pair",
         ["fedavg_cnn", "cifar_resnet18"])
     _, manifest = expand({
         "algorithms": ["feddes"],
         "base": {"experiment": {"rounds": 1}},
         "sweep": {
             "seed": [0, 1],
-            "model_architecture_family": [
+            "model_family": [
                 "image_heterogeneous_3", "image_pair"],
             "algorithm.graph_k": [3, 5],
         },
@@ -270,14 +229,14 @@ def test_untuned_architecture_axis_remains_a_separate_condition(monkeypatch):
         },
     })
 
-    assert "exp.model_architectures" in manifest["condition_axes"]
+    assert "exp.model_family" in manifest["condition_axes"]
     conditions = {
-        tuple(task["condition"]["exp.model_architectures"])
+        task["condition"]["exp.model_family"]
         for task in manifest["tasks"]
     }
     assert conditions == {
-        tuple(MODEL_ARCHITECTURE_FAMILIES["image_heterogeneous_3"]),
-        tuple(MODEL_ARCHITECTURE_FAMILIES["image_pair"]),
+        "image_heterogeneous_3",
+        "image_pair",
     }
 
 
@@ -660,7 +619,7 @@ def test_invalid_replicate_axis_fails_clearly():
     with pytest.raises(SystemExit) as e:
         expand(_spec(tuning={"strategy": "grid", "parameters": ["algorithm.base_lr"],
                              "replicate_axis": "repetition"}))
-    assert "Unknown replicate axis: repetition" in str(e.value)
+    assert "Unknown replicate axis: exp.repetition" in str(e.value)
 
 
 def test_missing_replicate_axis_fails_clearly():

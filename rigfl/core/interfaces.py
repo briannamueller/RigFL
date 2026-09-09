@@ -41,6 +41,7 @@ class OneShotContext:
     client_id: int
     client_state: dict
     validation_loader: Any = None
+    resource_monitor: Any = None
 
 
 @dataclass(frozen=True)
@@ -73,7 +74,12 @@ class IterativeAlgorithm(Protocol):
 
 
 class P2POneShotAlgorithm(Protocol):
-    """Operations required by the ``p2p_one_shot`` runner."""
+    """Operations required by the all-to-all ``p2p_one_shot`` runner.
+
+    Each payload returned by ``prepare`` is delivered once to every other
+    client. An algorithm with another communication topology needs a different
+    runner.
+    """
 
     def prepare(self, model, train_loader, ctx: OneShotContext) -> Any: ...
 
@@ -113,3 +119,8 @@ class Algorithm:
 
     def predict(self, client, x, shared) -> Predictions:
         raise NotImplementedError
+
+    def communication_payload_bytes(self, payload, *, kind: str) -> int:
+        """Logical bytes carried by one algorithm payload."""
+        from rigfl.eval.resources import payload_bytes
+        return payload_bytes(payload)

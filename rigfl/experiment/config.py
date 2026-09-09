@@ -72,8 +72,8 @@ class ExperimentConfig(BaseModel):
     rounds: int = Field(100, ge=1)
     seed: int = Field(0, ge=0)
     shared_dim: int = Field(512, ge=1)  # width for algorithms that align representations
-    model_architecture_family: Optional[str] = None
-    model_architectures: Optional[list[str]] = None
+    model: str = "fedavg_cnn"
+    model_family: Optional[str] = None
     batch: int = Field(32, ge=1)
     eval_gap: int = Field(1, ge=1)
     device: Literal["auto", "cpu", "mps", "cuda"] = "auto"
@@ -81,19 +81,10 @@ class ExperimentConfig(BaseModel):
     quiet: bool = True
     wandb: bool = False                             # log to Weights & Biases (needs rigfl[wandb])
     wandb_project: str = "rigfl"
+    estimate_flops: bool = False
 
     #: When to stop early. Off by default: every round is recorded either way.
     early_stopping: EarlyStoppingConfig = Field(default_factory=EarlyStoppingConfig)
-
-    @model_validator(mode="after")
-    def _validate_data_and_models(self):
-        """Validate client-model selection."""
-        if (self.model_architecture_family is not None
-                and self.model_architectures is not None):
-            raise ValueError(
-                "Set model_architecture_family or model_architectures, not both.")
-        return self
-
 
 class ResolvedExperimentConfig(ExperimentConfig):
     """An experiment plus facts read from its selected dataset partition.
@@ -111,6 +102,7 @@ class ResolvedExperimentConfig(ExperimentConfig):
     validation_fraction: float = Field(gt=0, lt=1)
     input_kind: str
     input_spec: dict[str, Any]
+    resolved_models: list[str] = Field(min_length=1)
 
 
 # ── Run identity ─────────────────────────────────────────────────────────────
@@ -143,9 +135,13 @@ def run_fingerprint(
         e.pop(k, None)
     for k in ignored_experiment_fields:
         e.pop(k, None)
+    e.pop("model", None)
+    e.pop("model_family", None)
     # Disabled stopping governs nothing, so its other settings must not mint a
     # second identity for the same run.
     e["early_stopping"] = normalize_early_stopping(e.get("early_stopping"))
+    if not e.get("estimate_flops"):
+        e.pop("estimate_flops", None)
     return fingerprint({"experiment": e,
                         "algorithm": algorithm_identity(algorithm_dump)})
 

@@ -21,6 +21,7 @@ def resolved_experiment(**overrides) -> ResolvedExperimentConfig:
         "validation_fraction": 0.2,
         "input_kind": "image",
         "input_spec": {"input_kind": "image", "shape": [3, 32, 32]},
+        "resolved_models": [overrides.get("model", "fedavg_cnn")],
     }
     resolved.update({
         key: value

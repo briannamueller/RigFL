@@ -5,7 +5,10 @@ from __future__ import annotations
 import json
 
 import pytest
+import torch
 
+from rigfl.algorithms.local import LocalConfig
+from rigfl.eval.resources import ResourceMonitor
 from rigfl.experiment.artifacts import (
     ResultValidationError,
     atomic_write_json,
@@ -16,7 +19,6 @@ from rigfl.experiment.artifacts import (
     write_run_record,
 )
 from rigfl.experiment.config import run_fingerprint
-from rigfl.algorithms.local import LocalConfig
 from tests.helpers import resolved_experiment
 
 
@@ -221,3 +223,82 @@ def test_written_record_round_trips_through_strict_validation(tmp_path):
     write_run_record(path, record, expected_algorithm="local", expected_fingerprint=fp)
     parsed = json.loads(path.read_text())
     validate_run_record(parsed, expected_algorithm="local", expected_fingerprint=fp)
+
+
+def test_resource_record_round_trips_through_strict_validation(tmp_path):
+    _, _, fp, record = _record()
+    monitor = ResourceMonitor(torch.device("cpu"))
+    with monitor:
+        for client_id in range(2):
+            with monitor.measure(
+                    "local_train", category="algorithm", client_id=client_id):
+                pass
+        monitor.checkpoint(0)
+        monitor.checkpoint(1)
+    resources = monitor.to_dict()
+    record.update(
+        record_schema_version=4,
+        wall_seconds=round(resources["observed"]["wall_seconds"]["total"], 1),
+        resources=resources,
+    )
+
+    path = tmp_path / "run.json"
+    write_run_record(path, record, expected_algorithm="local",
+                     expected_fingerprint=fp)
+    validate_run_record(read_json(path))
+
+
+def test_resource_record_rejects_an_inconsistent_communication_total():
+    _, _, _, record = _record()
+    monitor = ResourceMonitor(torch.device("cpu"))
+    monitor.checkpoint(0)
+    monitor.checkpoint(1)
+    resources = monitor.to_dict()
+    resources["observed"]["communication_bytes"]["total"] = 1
+    record.update(
+        record_schema_version=4,
+        wall_seconds=0.0,
+        resources=resources,
+    )
+
+    with pytest.raises(ResultValidationError, match="communication total"):
+        validate_run_record(record)
+
+
+def test_resource_record_requires_timing_hardware_metadata():
+    _, _, _, record = _record()
+    monitor = ResourceMonitor(torch.device("cpu"))
+    monitor.checkpoint(0)
+    monitor.checkpoint(1)
+    resources = monitor.to_dict()
+    del resources["measurement"]["timing"]["hardware"]
+    record.update(
+        record_schema_version=4,
+        wall_seconds=0.0,
+        resources=resources,
+    )
+
+    with pytest.raises(ResultValidationError, match="timing hardware"):
+        validate_run_record(record)
+
+
+def test_resource_record_rejects_inconsistent_operation_totals():
+    _, _, _, record = _record()
+    monitor = ResourceMonitor(torch.device("cpu"))
+    with monitor:
+        for client_id in range(2):
+            with monitor.measure(
+                    "local_train", category="algorithm", client_id=client_id):
+                pass
+        monitor.checkpoint(0)
+        monitor.checkpoint(1)
+    resources = monitor.to_dict()
+    resources["operations"]["local_train"]["wall_seconds"] += 1.0
+    record.update(
+        record_schema_version=4,
+        wall_seconds=round(resources["observed"]["wall_seconds"]["total"], 1),
+        resources=resources,
+    )
+
+    with pytest.raises(ResultValidationError, match="wall time is inconsistent"):
+        validate_run_record(record)

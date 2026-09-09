@@ -14,14 +14,14 @@ from __future__ import annotations
 from collections import defaultdict
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-
 from pydantic import Field
+from torch import nn
 
+from rigfl.algorithms.fedproto import prototype_prediction
 from rigfl.core.config import AlgorithmConfig
 from rigfl.core.interfaces import Algorithm
-from rigfl.algorithms.fedproto import prototype_prediction
+from rigfl.eval.resources import payload_bytes
 from rigfl.prediction import Predictions
 
 Prototypes = dict[int, torch.Tensor]
@@ -90,6 +90,11 @@ class FedTGP(Algorithm):
                 optimizer.step()
 
         return self._local_prototypes(model, loader, device)
+
+    def communication_payload_bytes(self, payload, *, kind: str) -> int:
+        if kind == "server_to_client":
+            return payload_bytes(payload["protos"])
+        return super().communication_payload_bytes(payload, kind=kind)
 
     @torch.no_grad()
     def _local_prototypes(self, model, loader, device) -> Prototypes:

@@ -61,6 +61,15 @@ def test_field_reads_algorithm_and_experiment_and_name():
     assert _field(rec, "batch") == 32          # bare -> experiment field
 
 
+def test_missing_flop_setting_matches_the_disabled_default():
+    from rigfl.experiment.collect import experiment_condition
+
+    old = _rec("local", 0, 0.7)
+    current = _rec("local", 0, 0.7)
+    current["config"]["experiment"]["estimate_flops"] = False
+    assert experiment_condition(old) == experiment_condition(current)
+
+
 def test_both_omits_an_unsupported_view_instead_of_duplicating_fallback():
     feddes = _rec("feddes", 0, 0.7)
     feddes["result"]["selection_views_supported"] = ["per-client"]
@@ -150,8 +159,8 @@ def test_client_model_pool_is_part_of_the_experiment_condition():
 
     local = _cond_rec("local", 0)
     feddes = _cond_rec("feddes", 0)
-    local["config"]["experiment"]["model_architectures"] = ["fedavg_cnn"]
-    feddes["config"]["experiment"]["model_architectures"] = ["cifar_resnet18"]
+    local["config"]["experiment"]["model"] = "fedavg_cnn"
+    feddes["config"]["experiment"]["model"] = "cifar_resnet18"
 
     assert experiment_condition(local) != experiment_condition(feddes)
     rows = _rows({"local": [local], "feddes": [feddes]})
@@ -160,20 +169,19 @@ def test_client_model_pool_is_part_of_the_experiment_condition():
     assert "win" not in feddes_row
 
 
-def test_equivalent_client_family_and_list_share_an_experiment_condition():
+def test_mixed_model_capabilities_share_the_requested_experiment_condition():
     from rigfl.experiment.collect import experiment_condition
-    from rigfl.experiment.run import resolve_experiment_architectures
+    from rigfl.experiment.registry import resolve_algorithm_models
 
-    family = resolve_experiment_architectures(
-        resolved_experiment(model_architecture_family="image_heterogeneous_3"),
-        input_kind="image")
-    explicit = resolve_experiment_architectures(
-        resolved_experiment(model_architectures=list(family.model_architectures)),
-        input_kind="image")
+    exp = resolved_experiment(
+        model="fedavg_cnn", model_family="image_heterogeneous_3"
+    )
+    homogeneous = resolve_algorithm_models("fedavg", exp)
+    heterogeneous = resolve_algorithm_models("feddes", exp)
     a = _cond_rec("local", 0)
     b = _cond_rec("feddes", 0)
-    a["config"]["experiment"] = family.model_dump(mode="json")
-    b["config"]["experiment"] = explicit.model_dump(mode="json")
+    a["config"]["experiment"] = homogeneous.model_dump(mode="json")
+    b["config"]["experiment"] = heterogeneous.model_dump(mode="json")
 
     assert experiment_condition(a) == experiment_condition(b)
 

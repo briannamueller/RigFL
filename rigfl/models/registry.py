@@ -35,7 +35,7 @@ MODEL_ARCHITECTURE_REGISTRY: dict[str, tuple[str, type[nn.Module]]] = {
     "temporal_lstm": ("temporal", TemporalLSTM),
 }
 
-MODEL_ARCHITECTURE_FAMILIES = {
+MODEL_FAMILIES = {
     "mnist_heterogeneous_3": [
         "lenet5", "fedavg_mnist_cnn", "small_cnn"
     ],
@@ -52,48 +52,37 @@ MODEL_ARCHITECTURE_FAMILIES = {
 }
 
 
-DEFAULT_ARCHITECTURE_FAMILY = {
-    "image": "image_heterogeneous_3",
-    "numeric": "tabular_heterogeneous_3",
-    "token_sequence": "phishing_byte_cnn",
-    "temporal": "temporal_heterogeneous_3",
-}
+def validate_model(name: str, input_kind: str | None) -> str:
+    """Validate one registered model against the dataset input type."""
+    if name not in MODEL_ARCHITECTURE_REGISTRY:
+        known = ", ".join(sorted(MODEL_ARCHITECTURE_REGISTRY))
+        raise ValueError(f"Unknown model {name!r}; known: {known}.")
+    kind = MODEL_ARCHITECTURE_REGISTRY[name][0]
+    if input_kind is not None and kind != input_kind:
+        raise ValueError(f"Model {name!r} does not accept {input_kind} inputs.")
+    return name
 
 
-def resolve_model_architectures(*, architecture_family: str | None,
-                                architectures: list[str] | None,
-                                input_kind: str | None) -> list[str]:
-    """Resolve one family or explicit architecture list and validate it."""
-    if architecture_family is not None and architectures is not None:
-        raise ValueError(
-            "Set model_architecture_family or model_architectures, not both.")
-    if architecture_family is not None:
-        if architecture_family not in MODEL_ARCHITECTURE_FAMILIES:
-            known = ", ".join(sorted(MODEL_ARCHITECTURE_FAMILIES))
-            raise ValueError(
-                f"Unknown model_architecture_family {architecture_family!r}; "
-                f"known: {known}.")
-        names = list(MODEL_ARCHITECTURE_FAMILIES[architecture_family])
-    elif architectures is not None:
-        names = list(architectures)
-    else:
-        try:
-            family = DEFAULT_ARCHITECTURE_FAMILY[input_kind]
-            names = list(MODEL_ARCHITECTURE_FAMILIES[family])
-        except KeyError as exc:
-            raise ValueError(
-                f"No default model architectures support {input_kind!r} inputs; "
-                "set experiment.model_architectures"
-            ) from exc
+def resolve_models(*, model: str, model_family: str | None,
+                   input_kind: str | None, use_family: bool = True) -> list[str]:
+    """Resolve the model selection used by one algorithm."""
+    validate_model(model, input_kind)
+    if model_family is None:
+        return [model]
+    if model_family not in MODEL_FAMILIES:
+        known = ", ".join(sorted(MODEL_FAMILIES))
+        raise ValueError(f"Unknown model_family {model_family!r}; known: {known}.")
+    names = list(MODEL_FAMILIES[model_family])
     if not names:
-        raise ValueError(
-            "model_architectures must contain at least one registered name.")
+        raise ValueError(f"Model family {model_family!r} is empty.")
     unknown = [name for name in names if name not in MODEL_ARCHITECTURE_REGISTRY]
     if unknown:
         raise ValueError(
             f"Unknown model architecture(s): {', '.join(unknown)}; known: "
             f"{', '.join(sorted(MODEL_ARCHITECTURE_REGISTRY))}."
         )
+    if not use_family:
+        return [model]
     incompatible = [] if input_kind is None else [
         name for name in names
         if MODEL_ARCHITECTURE_REGISTRY[name][0] != input_kind

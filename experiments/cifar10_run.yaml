@@ -1,6 +1,6 @@
 experiment:
   dataset: cifar10
-  model_architectures: [fedavg_cnn]
+  model: fedavg_cnn
   rounds: 2
   seed: 0
   shared_dim: 128

@@ -19,9 +19,10 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
+from rigfl.algorithms.feddes import FedDES, FedDESConfig, _MeasuredPoolOutputs
 from rigfl.core.interfaces import OneShotContext
 from rigfl.core.round import Client, p2p_one_shot
-from rigfl.algorithms.feddes import FedDES, FedDESConfig
+from rigfl.eval.resources import ResourceMonitor, load_cached_measurement
 from tests.helpers import resolved_experiment
 
 DATA_ID = "cifar10-partition-a"
@@ -106,6 +107,7 @@ def test_validation_fraction_reaches_the_pool_identity():
     common = dict(
         dataset="cifar10", partition_scheme="dirichlet",
         partition_id=partition_id, num_classes=3,
+        model_family="image_heterogeneous_3",
     )
     a = build_algorithm("feddes", resolved_experiment(
         **common, validation_fraction=0.2), cfg,
@@ -127,6 +129,7 @@ def test_generated_partition_identity_reaches_feddes_cache():
         partition_scheme="dirichlet",
         num_clients=3,
         num_classes=3,
+        model_family="image_heterogeneous_3",
     )
     algorithm = build_algorithm(
         "feddes",
@@ -164,6 +167,82 @@ def test_train_or_load_reuses_pool():
         expected = (Path(tmp) / DATA_ID / f"pool_{m._pool_fp()}"
                     / "clients" / "client_0" / "models" / "model_0.pt")
         assert expected.exists()
+
+
+def test_reused_pool_carries_its_training_measurement(tmp_path):
+    model = _feddes(str(tmp_path), base_split_mode="in_sample")
+    model._train = lambda tr, va, dev, cid: (
+        [factory() for factory in model.base_factories], None)
+    device = torch.device("cpu")
+
+    created = ResourceMonitor(device)
+    model._train_or_load_pool(None, None, device, 0, created)
+    resource_path = (tmp_path / DATA_ID / f"pool_{model._pool_fp()}" /
+                     "clients" / "client_0" / "pool_resources.json")
+    assert resource_path.exists()
+    assert created.to_dict()["cache_reuse"]["base_pools"] == "none"
+
+    reused = ResourceMonitor(device)
+    model._train_or_load_pool(None, None, device, 0, reused)
+    resources = reused.to_dict()
+    assert resources["cache_reuse"]["base_pools"] == "complete"
+    assert resources["reused"][0]["name"] == "base_pool/client_0"
+    assert resources["attributed_training"]["wall_seconds"] is not None
+
+
+def test_pool_measurement_includes_cache_publication(tmp_path, monkeypatch):
+    from graphroute import pool_cache
+
+    model = _feddes(str(tmp_path), base_split_mode="in_sample")
+    timeline = {"now": 0.0}
+
+    def train(tr, va, dev, cid):
+        timeline["now"] = 2.0
+        return [factory() for factory in model.base_factories], None
+
+    original_save = pool_cache.save_pool
+
+    def save(*args, **kwargs):
+        artifact = original_save(*args, **kwargs)
+        timeline["now"] = 5.0
+        return artifact
+
+    model._train = train
+    monkeypatch.setattr(pool_cache, "save_pool", save)
+    monitor = ResourceMonitor(
+        torch.device("cpu"), clock=lambda: timeline["now"])
+    model._train_or_load_pool(None, None, torch.device("cpu"), 0, monitor)
+
+    resource_path = (tmp_path / DATA_ID / f"pool_{model._pool_fp()}" /
+                     "clients" / "client_0" / "pool_resources.json")
+    saved = load_cached_measurement(
+        resource_path, fingerprint=model._pool_fp())
+    assert saved["wall_seconds"] == 5.0
+
+
+def test_reused_pool_outputs_carry_their_measurement(tmp_path):
+    from graphroute.pool_cache import in_memory_pool
+
+    dataset = TensorDataset(torch.randn(6, 4), torch.arange(6) % 3)
+    loader = DataLoader(dataset, batch_size=3)
+    pool = in_memory_pool(
+        [nn.Linear(4, 3)], model_ids=["linear"],
+        fingerprint_value="pool-a",
+    ).for_data(output_directory=tmp_path)
+    device = torch.device("cpu")
+
+    created = ResourceMonitor(device)
+    _MeasuredPoolOutputs(pool, created).cached_outputs(
+        "train_logits", loader, device, task="classification")
+    assert created.to_dict()["cache_reuse"]["pool_outputs"] == "none"
+    assert (tmp_path / "train_logits.resources.json").exists()
+
+    reused = ResourceMonitor(device)
+    _MeasuredPoolOutputs(pool, reused).cached_outputs(
+        "train_logits", loader, device, task="classification")
+    resources = reused.to_dict()
+    assert resources["cache_reuse"]["pool_outputs"] == "complete"
+    assert resources["reused"][0]["name"].endswith("/train_logits")
 
 
 def test_feddes_uses_rigfls_official_validation_split():

@@ -7,3 +7,4 @@ recursive-include experiments *.yaml
 recursive-include scripts *.sh
 recursive-include tests *.py
 include rigfl/data/README.md
+include rigfl/models/README.md

@@ -18,8 +18,8 @@ from rigfl.core.adapters import AdaptivePool
 from rigfl.core.config import AlgorithmConfig
 from rigfl.experiment.config import (ExperimentConfig, ResolvedExperimentConfig,
                                      run_fingerprint)
-from rigfl.models.cifar import SmallCNN
-from rigfl.models.registry import resolve_model_architectures
+from rigfl.models.registry import (instantiate_backbones, resolve_models,
+                                   validate_model)
 from rigfl.algorithms.fedavg import FedAvg, FedAvgConfig
 from rigfl.algorithms.fedprox import FedProx, FedProxConfig
 from rigfl.algorithms.local import Local, LocalConfig
@@ -41,13 +41,24 @@ class AlgorithmSpec:
     config: type[AlgorithmConfig]
     runner: Callable = iterative
     requires_client_model: bool = True
+    supports_model_heterogeneity: bool = True
     ignored_experiment_fields: tuple[str, ...] = ()
 
 
 REGISTRY = {
     "local":    AlgorithmSpec(Local, LocalConfig),
-    "fedavg":   AlgorithmSpec(FedAvg, FedAvgConfig),
-    "fedprox":  AlgorithmSpec(FedProx, FedProxConfig),
+    "fedavg":   AlgorithmSpec(
+        FedAvg,
+        FedAvgConfig,
+        supports_model_heterogeneity=False,
+        ignored_experiment_fields=("model_family",),
+    ),
+    "fedprox":  AlgorithmSpec(
+        FedProx,
+        FedProxConfig,
+        supports_model_heterogeneity=False,
+        ignored_experiment_fields=("model_family",),
+    ),
     "global":   AlgorithmSpec(GlobalEnsemble, GlobalEnsembleConfig),
     "fedproto": AlgorithmSpec(FedProto, FedProtoConfig),
     "fedgh":    AlgorithmSpec(FedGH, FedGHConfig),
@@ -101,41 +112,32 @@ def resolve_algorithm_config(name: str, exp: ExperimentConfig,
     input_kind = (
         exp.input_kind if isinstance(exp, ResolvedExperimentConfig) else None
     )
-    has_model_selection = (
-        exp.model_architecture_family is not None
-        or exp.model_architectures is not None
-        or input_kind is not None
+    names = resolve_models(
+        model=exp.model,
+        model_family=exp.model_family,
+        input_kind=input_kind,
+        use_family=algorithm_spec(name).supports_model_heterogeneity,
     )
-    names = None
-    if has_model_selection:
-        names = resolve_model_architectures(
-            architecture_family=exp.model_architecture_family,
-            architectures=exp.model_architectures,
-            input_kind=input_kind,
+    if name in {"fml", "fedkd"}:
+        selected = getattr(cfg, "aux_model") or (
+            names[0] if exp.model_family is not None else exp.model
         )
-    if name in {"fedavg", "fedprox"} and names is not None:
-        _validate_homogeneous_model_architecture(name, exp, names)
+        validate_model(selected, input_kind)
+        cfg = cfg.model_copy(update={"aux_model": selected})
     return cfg
 
 
-def _validate_homogeneous_model_architecture(
-    name: str, exp: ExperimentConfig, names: list[str]
-) -> None:
-    """Traditional full-model aggregation needs one resolved architecture."""
-    label = "FedAvg" if name == "fedavg" else "FedProx"
-    source = (
-        f"model_architecture_family={exp.model_architecture_family!r} resolves "
-        f"to {len(names)} architectures"
-        if exp.model_architecture_family is not None
-        else f"model_architectures contains {len(names)} architectures"
+def resolve_algorithm_models(
+    name: str, exp: ResolvedExperimentConfig
+) -> ResolvedExperimentConfig:
+    """Record the model list actually used by one algorithm."""
+    names = resolve_models(
+        model=exp.model,
+        model_family=exp.model_family,
+        input_kind=exp.input_kind,
+        use_family=algorithm_spec(name).supports_model_heterogeneity,
     )
-
-    if len(names) != 1:
-        raise ValueError(
-            f"{label} requires exactly one model architecture, but {source}. "
-            "Set experiment.model_architectures to a one-item list; RigFL will "
-            "construct a separate fresh model for every client."
-        )
+    return exp.model_copy(update={"resolved_models": names})
 
 
 # Standard client-model algorithms that align representation widths by pooling.
@@ -149,11 +151,6 @@ def adapter_factory(name: str):
     if name in _POOLING_ALGORITHMS:
         return lambda native, shared: AdaptivePool(shared)
     return lambda native, shared: LearnedProjection(native, shared)
-
-
-def _default_aux_backbone(shared_dim: int, input_spec: dict):
-    """The shared auxiliary backbone when the caller does not supply one."""
-    return lambda: SmallCNN((16, 32), shared_dim, input_spec=input_spec)
 
 
 def _aux_model(backbone, shared_dim: int, num_classes: int):
@@ -170,14 +167,22 @@ def build_algorithm(name: str, exp: ResolvedExperimentConfig, cfg: AlgorithmConf
     """Construct a registered algorithm through its standard factory hook.
 
     ``aux_backbone`` is the backbone factory for the shared meme or mentee model
-    used by FML and FedKD. It defaults to a small CIFAR CNN."""
+    used by FML and FedKD."""
+    exp = resolve_algorithm_models(name, exp)
     cfg = resolve_algorithm_config(name, exp, cfg)
     sd, nc = exp.shared_dim, exp.num_classes
-    aux = aux_backbone or _default_aux_backbone(sd, model_input_spec or exp.input_spec)
+    if name in {"fml", "fedkd"} and aux_backbone is None:
+        aux_backbone = instantiate_backbones(
+            [cfg.aux_model],
+            input_spec=model_input_spec or exp.input_spec,
+        )[0]
+    aux_factory = (
+        _aux_model(aux_backbone, sd, nc) if aux_backbone is not None else None
+    )
     return algorithm_spec(name).algorithm.from_config(
         cfg,
         experiment=exp,
-        aux_model_factory=_aux_model(aux, sd, nc),
+        aux_model_factory=aux_factory,
         base_pool=base_pool,
         model_input_spec=model_input_spec,
         model_template=model_template,

@@ -14,37 +14,34 @@ from rigfl.experiment.artifacts import validate_run_record
 from rigfl.experiment.config import ExperimentConfig, run_fingerprint
 from rigfl.experiment.launch import build_grid
 from rigfl.experiment.registry import (algorithm_run_fingerprint, build_algorithm,
-                                       config_class,
-                                       resolve_algorithm_config)
-from rigfl.experiment.run import (ResolvedData, resolve_experiment_architectures,
-                                  resolve_experiment_data, run_one)
+                                       config_class, resolve_algorithm_config,
+                                       resolve_algorithm_models)
+from rigfl.experiment.run import ResolvedData, resolve_experiment_data, run_one
 from rigfl.models.registry import (
-    MODEL_ARCHITECTURE_FAMILIES,
+    MODEL_FAMILIES,
     MODEL_ARCHITECTURE_REGISTRY,
     instantiate_backbones,
-    resolve_model_architectures,
+    resolve_models,
 )
 from tests.helpers import resolved_experiment
 
 
-def test_model_architectures_are_configured_independently_of_dataset_name():
-    names = resolve_model_architectures(
-        architecture_family=None,
-        architectures=["fedavg_cnn", "cifar_resnet18"],
-        input_kind="image",
+def test_model_is_configured_independently_of_dataset_name():
+    names = resolve_models(
+        model="fedavg_cnn", model_family=None, input_kind="image"
     )
     factories = instantiate_backbones(
         names, input_spec={"input_kind": "image", "shape": (1, 28, 28)}
     )
-    assert names == ["fedavg_cnn", "cifar_resnet18"]
+    assert names == ["fedavg_cnn"]
     assert factories[0]() is not factories[0]()
     assert factories[0]()(torch.randn(2, 1, 28, 28)).shape == (2, 512)
 
 
 def test_mnist_architecture_family_constructs_distinct_backbones():
-    names = resolve_model_architectures(
-        architecture_family="mnist_heterogeneous_3",
-        architectures=None,
+    names = resolve_models(
+        model="lenet5",
+        model_family="mnist_heterogeneous_3",
         input_kind="image",
     )
     factories = instantiate_backbones(
@@ -68,9 +65,9 @@ def test_mnist_architectures_reject_other_image_sizes(name):
 
 
 def test_tabular_architecture_family_constructs_distinct_backbones():
-    names = resolve_model_architectures(
-        architecture_family="tabular_heterogeneous_3",
-        architectures=None,
+    names = resolve_models(
+        model="tabular_mlp",
+        model_family="tabular_heterogeneous_3",
         input_kind="numeric",
     )
     factories = instantiate_backbones(
@@ -85,18 +82,18 @@ def test_tabular_architecture_family_constructs_distinct_backbones():
     ]
 
 
-def test_numeric_inputs_use_the_tabular_family_by_default():
-    assert resolve_model_architectures(
-        architecture_family=None,
-        architectures=None,
+def test_omitting_a_family_uses_the_model():
+    assert resolve_models(
+        model="tabular_mlp",
+        model_family=None,
         input_kind="numeric",
-    ) == ["tabular_linear", "tabular_mlp", "tabular_residual_mlp"]
+    ) == ["tabular_mlp"]
 
 
-def test_token_sequences_use_the_phishing_byte_cnn_by_default():
-    names = resolve_model_architectures(
-        architecture_family=None,
-        architectures=None,
+def test_token_sequence_model_constructs():
+    names = resolve_models(
+        model="phishing_byte_cnn",
+        model_family=None,
         input_kind="token_sequence",
     )
     factory = instantiate_backbones(
@@ -111,43 +108,129 @@ def test_token_sequences_use_the_phishing_byte_cnn_by_default():
 def test_model_families_only_contain_registered_architectures():
     assert all(
         name in MODEL_ARCHITECTURE_REGISTRY
-        for family in MODEL_ARCHITECTURE_FAMILIES.values()
+        for family in MODEL_FAMILIES.values()
         for name in family
     )
 
 
-def test_model_architecture_family_and_list_are_mutually_exclusive():
-    with pytest.raises(
-        Exception, match="model_architecture_family or model_architectures"
-    ):
-        ExperimentConfig(
-            model_architecture_family="image_heterogeneous_3",
-            model_architectures=["fedavg_cnn"],
-        )
-
-
-def test_family_and_explicit_architectures_have_one_resolved_identity():
-    family = resolve_experiment_architectures(
-        resolved_experiment(model_architecture_family="image_heterogeneous_3"),
+def test_family_order_is_preserved():
+    names = resolve_models(
+        model="fedavg_cnn",
+        model_family="image_heterogeneous_3",
         input_kind="image",
     )
-    explicit = resolve_experiment_architectures(
-        resolved_experiment(model_architectures=[
-            "fedavg_cnn", "cifar_resnet18", "cifar_mobilenet_v2"
-        ]),
-        input_kind="image",
-    )
-
-    assert family.model_dump() == explicit.model_dump()
-    assert family.model_architecture_family is None
-    assert explicit.model_architecture_family is None
-    assert family.model_architectures == [
+    assert names == [
         "fedavg_cnn", "cifar_resnet18", "cifar_mobilenet_v2"
     ]
-    assert run_fingerprint(family, {}) == run_fingerprint(explicit, {})
 
 
-def test_default_model_architectures_are_recorded_explicitly(monkeypatch):
+def test_mixed_sweep_resolves_models_by_algorithm_capability():
+    exp = resolved_experiment(
+        model="fedavg_cnn", model_family="image_heterogeneous_3"
+    )
+
+    assert resolve_algorithm_models("fedavg", exp).resolved_models == [
+        "fedavg_cnn"
+    ]
+    expected_family = [
+        "fedavg_cnn", "cifar_resnet18", "cifar_mobilenet_v2"
+    ]
+    assert resolve_algorithm_models("fedproto", exp).resolved_models == expected_family
+    assert resolve_algorithm_models("feddes", exp).resolved_models == expected_family
+
+    grid = build_grid({
+        "algorithms": ["fedavg", "fedproto", "feddes"],
+        "base": {"experiment": {
+            "model": "fedavg_cnn",
+            "model_family": "image_heterogeneous_3",
+        }},
+    })
+    assert [task["algorithm"] for task in grid] == [
+        "fedavg", "fedproto", "feddes"
+    ]
+
+
+def test_model_family_sweep_does_not_duplicate_homogeneous_algorithms(monkeypatch):
+    monkeypatch.setitem(
+        MODEL_FAMILIES, "image_pair", ["fedavg_cnn", "cifar_resnet18"]
+    )
+    grid = build_grid({
+        "algorithms": ["fedavg", "fedproto"],
+        "base": {"experiment": {"model": "fedavg_cnn"}},
+        "sweep": {"model_family": [
+            "image_pair", "image_heterogeneous_3"
+        ]},
+    })
+
+    assert sum(task["algorithm"] == "fedavg" for task in grid) == 1
+    assert sum(task["algorithm"] == "fedproto" for task in grid) == 2
+
+
+@pytest.mark.parametrize("algorithm", ["fml", "fedkd"])
+def test_aux_model_defaults_to_first_family_member(algorithm):
+    exp = resolved_experiment(
+        model="cifar_resnet18", model_family="image_heterogeneous_3"
+    )
+    default = resolve_algorithm_config(algorithm, exp, config_class(algorithm)())
+    explicit = resolve_algorithm_config(
+        algorithm, exp, config_class(algorithm)(aux_model="fedavg_cnn")
+    )
+    changed = resolve_algorithm_config(
+        algorithm, exp, config_class(algorithm)(aux_model="cifar_resnet18")
+    )
+
+    assert default.aux_model == "fedavg_cnn"
+    default_fingerprint = algorithm_run_fingerprint(
+        algorithm, resolve_algorithm_models(algorithm, exp), default.model_dump()
+    )
+    assert default_fingerprint == algorithm_run_fingerprint(
+        algorithm, resolve_algorithm_models(algorithm, exp), explicit.model_dump()
+    )
+    assert default_fingerprint != algorithm_run_fingerprint(
+        algorithm, resolve_algorithm_models(algorithm, exp), changed.model_dump()
+    )
+
+
+@pytest.mark.parametrize("algorithm", ["fml", "fedkd"])
+def test_aux_model_defaults_to_model_without_a_family(algorithm):
+    exp = resolved_experiment(model="cifar_resnet18", model_family=None)
+    cfg = resolve_algorithm_config(algorithm, exp, config_class(algorithm)())
+
+    assert cfg.aux_model == "cifar_resnet18"
+
+
+def test_run_identity_uses_resolved_family_members(monkeypatch):
+    exp = resolved_experiment(
+        model="fedavg_cnn", model_family="image_heterogeneous_3"
+    )
+    original = resolve_algorithm_models("fedproto", exp)
+    monkeypatch.setitem(
+        MODEL_ARCHITECTURE_REGISTRY, "unrelated", ("image", nn.Identity)
+    )
+    unchanged = resolve_algorithm_models("fedproto", exp)
+    monkeypatch.setitem(
+        MODEL_FAMILIES,
+        "same_members",
+        list(MODEL_FAMILIES["image_heterogeneous_3"]),
+    )
+    alias = resolve_algorithm_models(
+        "fedproto", exp.model_copy(update={"model_family": "same_members"})
+    )
+    monkeypatch.setitem(
+        MODEL_FAMILIES,
+        "reordered",
+        list(reversed(MODEL_FAMILIES["image_heterogeneous_3"])),
+    )
+    reordered = resolve_algorithm_models(
+        "fedproto", exp.model_copy(update={"model_family": "reordered"})
+    )
+
+    assert run_fingerprint(original, {}) == run_fingerprint(unchanged, {})
+    assert run_fingerprint(original, {}) == run_fingerprint(alias, {})
+    assert run_fingerprint(original, {}) != run_fingerprint(reordered, {})
+
+
+def test_requested_models_are_recorded_explicitly(monkeypatch):
     from rigfl.data.config import FlowerDatasetSettings
 
     settings = FlowerDatasetSettings(
@@ -176,12 +259,17 @@ def test_default_model_architectures_are_recorded_explicitly(monkeypatch):
     )
 
     resolved, loaded = resolve_experiment_data(
-        ExperimentConfig(dataset="generated")
+        ExperimentConfig(
+            dataset="generated",
+            model="fedavg_cnn",
+            model_family="image_heterogeneous_3",
+        )
     )
 
     assert loaded.artifact is artifact
-    assert resolved.model_architecture_family is None
-    assert resolved.model_architectures == [
+    assert resolved.model == "fedavg_cnn"
+    assert resolved.model_family == "image_heterogeneous_3"
+    assert resolved.resolved_models == [
         "fedavg_cnn", "cifar_resnet18", "cifar_mobilenet_v2"
     ]
 
@@ -190,10 +278,10 @@ def test_registered_architecture_compatibility_is_validated(monkeypatch):
     monkeypatch.setitem(
         MODEL_ARCHITECTURE_REGISTRY, "custom_numeric", ("numeric", nn.Identity)
     )
-    with pytest.raises(ValueError, match="do not accept image inputs"):
-        resolve_model_architectures(
-            architecture_family=None,
-            architectures=["custom_numeric"],
+    with pytest.raises(ValueError, match="does not accept image inputs"):
+        resolve_models(
+            model="custom_numeric",
+            model_family=None,
             input_kind="image",
         )
 
@@ -234,7 +322,7 @@ def test_unresolved_dataset_does_not_assume_image_inputs(monkeypatch):
         "custom_numeric",
         ("numeric", NumericBackbone),
     )
-    exp = ExperimentConfig(model_architectures=["custom_numeric"])
+    exp = ExperimentConfig(model="custom_numeric")
 
     assert resolve_algorithm_config(
         "feddes", exp, config_class("feddes")()
@@ -242,9 +330,9 @@ def test_unresolved_dataset_does_not_assume_image_inputs(monkeypatch):
 
     grid = build_grid({
         "algorithms": ["local"],
-        "base": {"experiment": {"model_architectures": ["custom_numeric"]}},
+        "base": {"experiment": {"model": "custom_numeric"}},
     })
-    assert grid[0]["experiment"]["model_architectures"] == ["custom_numeric"]
+    assert grid[0]["experiment"]["model"] == "custom_numeric"
 
 
 def test_numeric_partition_runs_through_experiment_infrastructure(
@@ -294,7 +382,8 @@ def test_numeric_partition_runs_through_experiment_infrastructure(
         input_kind="numeric",
         input_spec={"input_kind": "numeric", "shape": [10]},
         num_classes=2,
-        model_architectures=["custom_numeric"],
+        model="custom_numeric",
+        resolved_models=["custom_numeric"],
         rounds=1,
         shared_dim=3,
         batch=2,
@@ -314,8 +403,8 @@ def test_numeric_partition_runs_through_experiment_infrastructure(
 
 
 def test_unknown_architecture_fails_during_algorithm_validation():
-    exp = ExperimentConfig(model_architectures=["does_not_exist"])
-    with pytest.raises(ValueError, match="Unknown model architecture"):
+    exp = ExperimentConfig(model="does_not_exist")
+    with pytest.raises(ValueError, match="Unknown model"):
         resolve_algorithm_config("feddes", exp, config_class("feddes")())
 
 
@@ -323,9 +412,10 @@ def test_dataset_supplies_architecture_compatibility_context():
     exp = resolved_experiment(
         input_kind="numeric",
         input_spec={"input_kind": "numeric", "shape": [10]},
-        model_architectures=["fedavg_cnn"],
+        model="fedavg_cnn",
+        resolved_models=["fedavg_cnn"],
     )
-    with pytest.raises(ValueError, match="do not accept numeric inputs"):
+    with pytest.raises(ValueError, match="does not accept numeric inputs"):
         resolve_algorithm_config("feddes", exp, config_class("feddes")())
 
 
@@ -405,7 +495,8 @@ def test_feddes_builds_its_pool_from_the_experiment_architectures(monkeypatch):
         MODEL_ARCHITECTURE_REGISTRY, "custom", ("image", TinyBackbone)
     )
     exp = resolved_experiment(
-        num_classes=3, shared_dim=5, model_architectures=["custom"],
+        num_classes=3, shared_dim=5, model="custom",
+        resolved_models=["custom"],
         input_spec={"input_kind": "image", "shape": [4]},
     )
     algorithm = build_algorithm(

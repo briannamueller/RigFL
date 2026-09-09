@@ -28,6 +28,7 @@ class FMLConfig(AlgorithmConfig):
     lr: float = Field(0.01, gt=0)
     alpha: float = Field(0.5, ge=0, le=1)    # private-model CE vs. distillation weight (official 0.5)
     beta: float = Field(0.5, ge=0, le=1)     # meme CE vs. distillation weight (official 0.5)
+    aux_model: str | None = None
 
 
 class FML(Algorithm):

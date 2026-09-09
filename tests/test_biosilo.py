@@ -23,7 +23,7 @@ from rigfl.experiment.artifacts import validate_run_record
 from rigfl.experiment.config import ExperimentConfig
 from rigfl.experiment.registry import config_class
 from rigfl.experiment.run import resolve_experiment_data, run_one
-from rigfl.models.registry import instantiate_backbones, resolve_model_architectures
+from rigfl.models.registry import instantiate_backbones, resolve_models
 
 
 def _generate(root, *, n_inputs=1, with_groups=False):
@@ -164,9 +164,9 @@ def test_biosilo_input_forms_map_to_model_families(tmp_path):
 def test_temporal_models_accept_biosilo_multi_input_batches(tmp_path):
     handle = _generate(tmp_path, n_inputs=2, with_groups=True)
     input_kind, input_spec = biosilo_input_spec(handle)
-    names = resolve_model_architectures(
-        architecture_family=None,
-        architectures=None,
+    names = resolve_models(
+        model="temporal_gru",
+        model_family="temporal_heterogeneous_3",
         input_kind=input_kind,
     )
     backbones = instantiate_backbones(names, input_spec=input_spec)
@@ -255,7 +255,7 @@ def test_biosilo_runs_through_experiment_infrastructure(
         dataset="biomedical",
         dataset_config=str(config_path),
         data_dir=str(tmp_path),
-        model_architectures=architectures,
+        model=architectures[0],
         rounds=1,
         shared_dim=8,
         batch=8,
@@ -290,7 +290,7 @@ def test_feddes_accepts_a_biosilo_multi_input_partition(tmp_path):
         dataset="biomedical",
         dataset_config=str(config_path),
         data_dir=str(tmp_path),
-        model_architectures=["temporal_gru"],
+        model="temporal_gru",
         rounds=1,
         shared_dim=8,
         batch=8,

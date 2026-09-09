@@ -12,8 +12,9 @@ def _resolved(exp):
     values = exp.model_dump()
     values.update(
         partition_id="partition_12345678",
-        model_architecture_family=None,
-        model_architectures=["fedavg_cnn"],
+        model_family=None,
+        model="fedavg_cnn",
+        resolved_models=["fedavg_cnn"],
     )
     return resolved_experiment(
         **values,
@@ -45,7 +46,7 @@ def test_run_experiment_loads_the_yaml_configuration(monkeypatch, tmp_path):
     config.write_text(
         "experiment:\n"
         "  dataset: cifar10\n"
-        "  model_architectures: [fedavg_cnn]\n"
+        "  model: fedavg_cnn\n"
         f"  out_dir: {tmp_path}\n"
         "algorithm:\n"
         "  local_epochs: 2\n"
@@ -72,7 +73,7 @@ def test_run_experiment_rejects_settings_not_used_by_the_algorithm(monkeypatch,
     config.write_text(
         "experiment:\n"
         "  dataset: cifar10\n"
-        "  model_architectures: [fedavg_cnn]\n"
+        "  model: fedavg_cnn\n"
         "algorithm:\n"
         "  mu: 0.1\n"
     )

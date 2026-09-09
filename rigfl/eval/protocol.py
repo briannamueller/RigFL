@@ -5,9 +5,10 @@ from __future__ import annotations
 import contextlib
 
 import torch
-import torch.nn as nn
+from torch import nn
 
 from rigfl.eval.metrics import canonical, compute_all
+from rigfl.eval.resources import measured
 from rigfl.prediction import Predictions, as_predictions
 
 
@@ -48,7 +49,8 @@ def _eval_mode(*objects):
 
 @torch.no_grad()
 def evaluate_split(algorithm, clients, shared, device, split: str, num_classes: int,
-                   shared_by_client: list | None = None) -> dict:
+                   shared_by_client: list | None = None,
+                   resource_monitor=None) -> dict:
     """Every computed metric for every client on one split, keyed by client id.
 
     A client with no data is recorded as ``None``. Sample counts accompany the
@@ -66,7 +68,12 @@ def evaluate_split(algorithm, clients, shared, device, split: str, num_classes: 
         client_shared = (shared_by_client[cid]
                          if shared_by_client is not None else shared)
         outputs, labels = [], []
-        with _eval_mode(client.model, client_shared, client.state):
+        operation = "validation" if split == "val" else "test"
+        with (
+            measured(resource_monitor, operation, category="evaluation",
+                     client_id=cid),
+            _eval_mode(client.model, client_shared, client.state),
+        ):
             for x, y in loader:
                 out = as_predictions(
                     algorithm.predict(client, x.to(device), client_shared))

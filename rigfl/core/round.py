@@ -20,6 +20,7 @@ from rigfl.core.model import ClientModel
 from rigfl.eval.metrics import (COMPUTED_METRICS, direction_of, require_computable,
                                 unavailable_reason)
 from rigfl.eval.protocol import evaluate_split
+from rigfl.eval.resources import measured, payload_bytes
 from rigfl.eval.selection import aggregate
 
 
@@ -41,7 +42,8 @@ class Client:
 
 def iterative(algorithm: IterativeAlgorithm, clients: list[Client], num_rounds: int,
               device: torch.device, num_classes: int, eval_gap: int = 1,
-              verbose: bool = True, tracker=None, early_stopping=None) -> dict:
+              verbose: bool = True, tracker=None, early_stopping=None,
+              resource_monitor=None) -> dict:
     """Train, recording every metric for every client at every evaluation round.
 
     Returns the canonical history. No round in it is marked selected; use
@@ -51,7 +53,8 @@ def iterative(algorithm: IterativeAlgorithm, clients: list[Client], num_rounds: 
                         ("init_globals", "local_train", "aggregate", "predict"))
     _start_run(algorithm, clients, device, num_rounds)
     es = _EarlyStopping(early_stopping)
-    shared = algorithm.init_globals()
+    with measured(resource_monitor, "init_globals", category="algorithm"):
+        shared = algorithm.init_globals()
 
     rounds_evaluated: list[int] = []
     per_client: dict[str, dict[str, dict[str, list]]] = {}
@@ -61,22 +64,44 @@ def iterative(algorithm: IterativeAlgorithm, clients: list[Client], num_rounds: 
 
     for rnd in range(num_rounds):
         algorithm.round_idx = rnd
-        uploads = [algorithm.local_train(client, shared) for client in clients]
-        shared = algorithm.aggregate(uploads, shared)
+        shared_size = _payload_size(algorithm, shared, kind="server_to_client")
+        uploads = []
+        for cid, client in enumerate(clients):
+            if resource_monitor is not None:
+                resource_monitor.record_transfer(
+                    "server_to_client", shared_size, receiver=cid)
+            with measured(resource_monitor, "local_train", category="algorithm",
+                          client_id=cid):
+                upload = algorithm.local_train(client, shared)
+            uploads.append(upload)
+            if resource_monitor is not None:
+                resource_monitor.record_transfer(
+                    "client_to_server", _payload_size(
+                        algorithm, upload, kind="client_to_server"),
+                    sender=cid)
+        with measured(resource_monitor, "aggregate", category="algorithm"):
+            shared = algorithm.aggregate(uploads, shared)
         last_round = rnd
+
+        if resource_monitor is not None:
+            resource_monitor.checkpoint(rnd)
 
         if rnd % eval_gap == 0 or rnd == num_rounds - 1:
             evaluated = {
                 "validation": evaluate_split(algorithm, clients, shared, device, "val",
-                                             num_classes),
+                                             num_classes,
+                                             resource_monitor=resource_monitor),
                 "test": evaluate_split(algorithm, clients, shared, device, "test",
-                                       num_classes),
+                                       num_classes,
+                                       resource_monitor=resource_monitor),
             }
             rounds_evaluated.append(rnd)
             _append(per_client, counts, evaluated, len(rounds_evaluated))
 
             if tracker is not None:
-                tracker.log_round(rnd, evaluated["validation"], evaluated["test"])
+                _update_tracker_resources(tracker, resource_monitor)
+                tracker.log_round(
+                    rnd, evaluated["validation"], evaluated["test"])
             if verbose:
                 _print_round(rnd, evaluated)
 
@@ -105,8 +130,8 @@ def iterative(algorithm: IterativeAlgorithm, clients: list[Client], num_rounds: 
 def p2p_one_shot(algorithm: P2POneShotAlgorithm, clients: list[Client],
                  num_rounds: int, device: torch.device, num_classes: int,
                  eval_gap: int = 1, verbose: bool = True, tracker=None,
-                 early_stopping=None) -> dict:
-    """Execute local preparation, one P2P exchange, and local computation once.
+                 early_stopping=None, resource_monitor=None) -> dict:
+    """Execute local preparation, one all-to-all exchange, and computation once.
 
     ``num_rounds`` and ``eval_gap`` are accepted so registry runners share one
     invocation shape. They do not control this runner: its algorithm-specific
@@ -131,10 +156,25 @@ def p2p_one_shot(algorithm: P2POneShotAlgorithm, clients: list[Client],
     for cid, client in enumerate(clients):
         ctx = OneShotContext(device=device, client_id=cid,
                              client_state=client.state,
-                             validation_loader=client.val_loader)
-        outgoing.append(algorithm.prepare(client.model, client.train_loader, ctx))
+                             validation_loader=client.val_loader,
+                             resource_monitor=resource_monitor)
+        with measured(resource_monitor, "prepare", category="algorithm",
+                      client_id=cid):
+            outgoing.append(
+                algorithm.prepare(client.model, client.train_loader, ctx))
 
-    incoming = algorithm.one_shot_communication(outgoing)
+    if resource_monitor is not None:
+        sizes = [_payload_size(algorithm, payload, kind="peer_to_peer")
+                 for payload in outgoing]
+        for sender, size in enumerate(sizes):
+            for receiver in range(len(clients)):
+                if sender != receiver:
+                    resource_monitor.record_transfer(
+                        "peer_to_peer", size, sender=sender, receiver=receiver)
+
+    with measured(resource_monitor, "one_shot_communication",
+                  category="algorithm"):
+        incoming = algorithm.one_shot_communication(outgoing)
     if not isinstance(incoming, list) or len(incoming) != len(clients):
         raise ValueError(
             "p2p_one_shot one_shot_communication must return one incoming "
@@ -145,14 +185,20 @@ def p2p_one_shot(algorithm: P2POneShotAlgorithm, clients: list[Client],
     for cid, (client, payload) in enumerate(zip(clients, incoming)):
         ctx = OneShotContext(device=device, client_id=cid,
                              client_state=client.state,
-                             validation_loader=client.val_loader)
-        selected = algorithm.local_computation(
-            client.model, payload, client.train_loader, ctx)
+                             validation_loader=client.val_loader,
+                             resource_monitor=resource_monitor)
+        with measured(resource_monitor, "local_computation",
+                      category="algorithm", client_id=cid):
+            selected = algorithm.local_computation(
+                client.model, payload, client.train_loader, ctx)
         if not isinstance(selected, LocalSelection):
             raise TypeError(
                 "p2p_one_shot local_computation must return LocalSelection."
             )
         local_selections[str(cid)] = selected
+
+    if resource_monitor is not None:
+        resource_monitor.checkpoint(0)
 
     metrics = {require_computable(selection.metric)
                for selection in local_selections.values()}
@@ -165,10 +211,10 @@ def p2p_one_shot(algorithm: P2POneShotAlgorithm, clients: list[Client],
     evaluated = {
         "validation": evaluate_split(
             algorithm, clients, None, device, "val", num_classes,
-            shared_by_client=incoming),
+            shared_by_client=incoming, resource_monitor=resource_monitor),
         "test": evaluate_split(
             algorithm, clients, None, device, "test", num_classes,
-            shared_by_client=incoming),
+            shared_by_client=incoming, resource_monitor=resource_monitor),
     }
     per_client: dict[str, dict[str, dict[str, list]]] = {}
     counts: dict[str, dict[str, list]] = {"validation": {}, "test": {}}
@@ -181,6 +227,7 @@ def p2p_one_shot(algorithm: P2POneShotAlgorithm, clients: list[Client],
     _check_alignment(history)
 
     if tracker is not None:
+        _update_tracker_resources(tracker, resource_monitor)
         tracker.log_round(0, evaluated["validation"], evaluated["test"])
     if verbose:
         _print_one_shot(evaluated)
@@ -235,6 +282,17 @@ def _require_operations(algorithm, runner: str, operations: tuple[str, ...]) -> 
             f"{runner} runner requires operations: {', '.join(operations)}; "
             f"{type(algorithm).__name__} is missing: {', '.join(missing)}"
         )
+
+
+def _payload_size(algorithm, payload, *, kind: str) -> int:
+    size = getattr(algorithm, "communication_payload_bytes", None)
+    return size(payload, kind=kind) if callable(size) else payload_bytes(payload)
+
+
+def _update_tracker_resources(tracker, monitor) -> None:
+    update = getattr(tracker, "update_resources", None)
+    if callable(update) and monitor is not None:
+        update(monitor.to_dict())
 
 
 def _append(per_client, counts, evaluated, n_rounds) -> None:

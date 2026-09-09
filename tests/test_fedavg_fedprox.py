@@ -23,6 +23,7 @@ from rigfl.experiment.registry import (
     algorithm_spec,
     config_class,
     resolve_algorithm_config,
+    resolve_algorithm_models,
 )
 from tests.helpers import resolved_experiment
 from rigfl.experiment.run import run_one
@@ -161,22 +162,14 @@ def test_one_selected_architecture_constructs_separate_homogeneous_models():
 
 
 @pytest.mark.parametrize("name", ["fedavg", "fedprox"])
-def test_homogeneous_algorithms_reject_multiple_architectures(name):
-    cfg = config_class(name)()
-    with pytest.raises(ValueError, match="requires exactly one model architecture"):
-        resolve_algorithm_config(
-            name,
-            ExperimentConfig(
-                model_architectures=["fedavg_cnn", "cifar_resnet18"]),
-            cfg,
-        )
-    with pytest.raises(ValueError, match="resolves to 3 architectures"):
-        resolve_algorithm_config(
-            name,
-            ExperimentConfig(
-                model_architecture_family="image_heterogeneous_3"),
-            cfg,
-        )
+def test_homogeneous_algorithms_use_model_when_a_family_is_configured(name):
+    exp = resolved_experiment(
+        model="fedavg_cnn", model_family="image_heterogeneous_3"
+    )
+
+    resolved = resolve_algorithm_models(name, exp)
+
+    assert resolved.resolved_models == ["fedavg_cnn"]
 
 
 @pytest.mark.parametrize("name", ["fedavg", "fedprox"])
@@ -184,9 +177,10 @@ def test_homogeneous_algorithms_reject_models_incompatible_with_the_input(name):
     exp = resolved_experiment(
         input_kind="numeric",
         input_spec={"input_kind": "numeric", "shape": [10]},
-        model_architectures=["fedavg_cnn"],
+        model="fedavg_cnn",
+        resolved_models=["fedavg_cnn"],
     )
-    with pytest.raises(ValueError, match="do not accept numeric inputs"):
+    with pytest.raises(ValueError, match="does not accept numeric inputs"):
         resolve_algorithm_config(name, exp, config_class(name)())
 
 
@@ -213,7 +207,7 @@ def test_algorithms_are_registered_configured_and_sweepable_without_joining_base
 
     grid = build_grid({
         "algorithms": ["fedavg", "fedprox"],
-        "base": {"experiment": {"model_architectures": ["fedavg_cnn"]}},
+        "base": {"experiment": {"model": "fedavg_cnn"}},
         "sweep": {"algorithm.mu": [0.1, 0.2]},
     })
     assert sum(task["algorithm"] == "fedavg" for task in grid) == 1
@@ -222,7 +216,7 @@ def test_algorithms_are_registered_configured_and_sweepable_without_joining_base
 
 @pytest.mark.parametrize("name", ["fedavg", "fedprox"])
 def test_algorithm_settings_change_run_fingerprints(name):
-    exp = resolved_experiment(model_architectures=["fedavg_cnn"])
+    exp = resolved_experiment(model="fedavg_cnn")
     Cfg = config_class(name)
     original = run_fingerprint(exp, Cfg().model_dump())
     assert original != run_fingerprint(exp, Cfg(lr=0.02).model_dump())
@@ -263,7 +257,7 @@ def test_algorithms_run_end_to_end_through_experiment_infrastructure(
 ):
     artifact = _artifact(tmp_path)
     exp = ExperimentConfig(
-        dataset="tiny", model_architectures=["tiny_image"],
+        dataset="tiny", model="tiny_image",
         rounds=1, shared_dim=3, batch=2, quiet=True,
     )
     monkeypatch.setitem(
@@ -271,7 +265,8 @@ def test_algorithms_run_end_to_end_through_experiment_infrastructure(
     from rigfl.experiment.run import ResolvedData
     resolved = resolved_experiment(
         dataset="tiny", partition_id=artifact.partition_id,
-        num_clients=2, num_classes=2, model_architectures=["tiny_image"],
+        num_clients=2, num_classes=2, model="tiny_image",
+        resolved_models=["tiny_image"],
         input_spec={"input_kind": "image", "shape": [4]},
         rounds=1, shared_dim=3, batch=2, quiet=True,
     )
@@ -284,7 +279,9 @@ def test_algorithms_run_end_to_end_through_experiment_infrastructure(
     record = run_one(name, exp, config_class(name)(), DEVICE)
 
     assert record["algorithm"] == name
-    assert record["config"]["experiment"]["model_architectures"] == [
-        "tiny_image"]
+    assert record["config"]["experiment"]["model"] == "tiny_image"
     assert record["result"]["evaluation_history"]["evaluation_rounds"] == [0]
+    assert record["record_schema_version"] == 4
+    assert record["resources"]["observed"]["communication_bytes"]["total"] > 0
+    assert record["resources"]["checkpoints"][0]["round"] == 0
     validate_run_record(record)

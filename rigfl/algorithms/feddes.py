@@ -21,14 +21,18 @@ from pathlib import Path
 from typing import Callable, Literal
 
 import torch
-from torch.utils.data import DataLoader, Dataset
-
 from pydantic import Field
+from torch.utils.data import DataLoader, Dataset
 
 from rigfl.core.config import AlgorithmConfig
 from rigfl.core.interfaces import Algorithm, LocalSelection, OneShotContext
-from rigfl.prediction import Predictions
 from rigfl.data.builder import _collate
+from rigfl.eval.resources import (
+    load_cached_measurement,
+    payload_bytes,
+    write_cached_measurement,
+)
+from rigfl.prediction import Predictions
 
 FEDDES_PREPROCESSING_KEY = "rigfl-feddes-multitensor-collation-v1"
 
@@ -102,17 +106,11 @@ class FedDES(Algorithm):
     @classmethod
     def from_config(cls, config, *, experiment, base_pool=None,
                     model_input_spec=None, **resources):
-        from rigfl.models.registry import (instantiate_native_models,
-                                           resolve_model_architectures)
+        from rigfl.models.registry import instantiate_native_models
 
         data_id = f"{experiment.dataset}-{experiment.partition_id}"
 
-        input_kind = model_input_spec["input_kind"] if model_input_spec else experiment.input_kind
-        model_ids = resolve_model_architectures(
-            architecture_family=experiment.model_architecture_family,
-            architectures=experiment.model_architectures,
-            input_kind=input_kind,
-        )
+        model_ids = experiment.resolved_models
         if base_pool is None:
             if model_input_spec is None:
                 model_input_spec = {
@@ -141,10 +139,19 @@ class FedDES(Algorithm):
         st = ctx.client_state
         st["train_dataset"] = train_loader.dataset
         st["validation_dataset"] = ctx.validation_loader.dataset
-        st["local_pool"] = self._train_or_load_pool(
-            st["train_dataset"], st["validation_dataset"],
-            ctx.device, ctx.client_id)
+        call = self._train_or_load_pool
+        if ctx.resource_monitor is None:
+            st["local_pool"] = call(
+                st["train_dataset"], st["validation_dataset"],
+                ctx.device, ctx.client_id)
+        else:
+            st["local_pool"] = call(
+                st["train_dataset"], st["validation_dataset"],
+                ctx.device, ctx.client_id, ctx.resource_monitor)
         return st["local_pool"]
+
+    def communication_payload_bytes(self, payload, *, kind: str) -> int:
+        return sum(payload_bytes(model) for model in self.base_models)
 
     def one_shot_communication(self, outgoing: list):
         """Share the ordered union of all local pools with every client once."""
@@ -222,14 +229,13 @@ class FedDES(Algorithm):
                           collate_fn=_collate,
                           weighted_by_class=self.base_weighted_by_class), None
 
-    def _train_or_load_pool(self, tr_ds, va_ds, device, client_id):
+    def _train_or_load_pool(self, tr_ds, va_ds, device, client_id, monitor=None):
         """Load or train this client's pool for reuse across graph/GNN sweeps."""
-        def train():
-            return self._train(tr_ds, va_ds, device, client_id)
-
         if not self.cache_dir:
+            if monitor is not None:
+                monitor.record_cache("base_pools", "disabled")
             from graphroute.pool_cache import in_memory_pool
-            models, oof = train()
+            models, oof = self._train(tr_ds, va_ds, device, client_id)
             artifact = in_memory_pool(
                 models, model_ids=self.model_ids,
                 fingerprint_value=self._pool_fp())
@@ -237,16 +243,45 @@ class FedDES(Algorithm):
             return artifact
         from pathlib import Path
 
+        from filelock import FileLock
         from graphroute.pool_cache import cached_pool
         fp = self._pool_fp()
         print(f"[FedDES] base pool {fp} (client {client_id})")
         directory = (Path(self.cache_dir) / self.data_id / f"pool_{fp}"
                      / "clients" / f"client_{client_id}")
-        return cached_pool(
-            directory, self.base_factories, train,
-            fingerprint_value=fp, model_ids=self.model_ids,
-            require_oof=self.base_split_mode == "oof_stacking",
-            data_id=self.data_id)
+        resource_path = directory / "pool_resources.json"
+        directory.mkdir(parents=True, exist_ok=True)
+        built = False
+
+        def train():
+            nonlocal built
+            built = True
+            return self._train(tr_ds, va_ds, device, client_id)
+
+        with FileLock(directory / ".resources.lock"):
+            if monitor is None:
+                artifact = cached_pool(
+                    directory, self.base_factories, train,
+                    fingerprint_value=fp, model_ids=self.model_ids,
+                    require_oof=self.base_split_mode == "oof_stacking",
+                    data_id=self.data_id)
+            else:
+                with monitor.capture() as access:
+                    artifact = cached_pool(
+                        directory, self.base_factories, train,
+                        fingerprint_value=fp, model_ids=self.model_ids,
+                        require_oof=self.base_split_mode == "oof_stacking",
+                        data_id=self.data_id)
+                monitor.record_cache("base_pools", "miss" if built else "hit")
+                if built:
+                    write_cached_measurement(
+                        resource_path, fingerprint=fp,
+                        measurement=monitor.artifact_measurement(access))
+                else:
+                    saved = load_cached_measurement(resource_path, fingerprint=fp)
+                    monitor.add_reused(
+                        f"base_pool/client_{client_id}", saved, access=access)
+        return artifact
 
     def _graphroute_config(self, client_id, device):
         from graphroute.config import GraphRouteConfig
@@ -279,6 +314,9 @@ class FedDES(Algorithm):
         output_dir = (pool.directory / "outputs" / f"client_{ctx.client_id}"
                       if pool.directory is not None else None)
         client_pool = pool.for_data(output_directory=output_dir)
+        if ctx.resource_monitor is not None:
+            client_pool = _MeasuredPoolOutputs(
+                client_pool, ctx.resource_monitor)
         train_logits = client_pool.cached_outputs(
             self._output_name("train"),
             tr_loader, device, task="classification",
@@ -286,6 +324,9 @@ class FedDES(Algorithm):
                 value, pool, st, ctx.client_id))
         client_pool = client_pool.for_data(
             output_directory=output_dir, training_outputs=train_logits)
+        if ctx.resource_monitor is not None:
+            client_pool = _MeasuredPoolOutputs(
+                client_pool, ctx.resource_monitor)
 
         from graphroute.run import fit_graphroute
         st["graphroute_model"] = fit_graphroute(
@@ -337,6 +378,48 @@ class FedDES(Algorithm):
             _BatchDataset(x), split="batch", cache_outputs=False)
         return Predictions.from_probabilities(
             predicted["probabilities"], labels=predicted["predictions"])
+
+
+class _MeasuredPoolOutputs:
+    def __init__(self, pool, monitor):
+        self._pool = pool
+        self._monitor = monitor
+
+    def __len__(self):
+        return len(self._pool)
+
+    def __getattr__(self, name):
+        return getattr(self._pool, name)
+
+    def cached_outputs(self, name, loader, device, *, task, transform=None):
+        directory = self._pool.output_directory
+        if directory is None:
+            self._monitor.record_cache("pool_outputs", "disabled")
+            return self._pool.cached_outputs(
+                name, loader, device, task=task, transform=transform)
+
+        from filelock import FileLock
+
+        output_path = Path(directory) / f"{name}.pt"
+        resource_path = output_path.with_suffix(".resources.json")
+        fingerprint = f"{self._pool.fingerprint}:{name}"
+        with FileLock(f"{output_path}.resources.lock"):
+            hit = output_path.exists()
+            with self._monitor.capture() as delta:
+                value = self._pool.cached_outputs(
+                    name, loader, device, task=task, transform=transform)
+            self._monitor.record_cache("pool_outputs", "hit" if hit else "miss")
+            if hit:
+                saved = load_cached_measurement(
+                    resource_path, fingerprint=fingerprint)
+                self._monitor.add_reused(
+                    f"pool_output/{Path(directory).name}/{name}", saved,
+                    access=delta)
+            else:
+                write_cached_measurement(
+                    resource_path, fingerprint=fingerprint,
+                    measurement=self._monitor.artifact_measurement(delta))
+        return value
 
 # ── small helpers ────────────────────────────────────────────────────────────
 class _BatchDataset(Dataset):

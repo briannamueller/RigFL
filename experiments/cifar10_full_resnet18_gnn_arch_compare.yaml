@@ -6,7 +6,7 @@ base:
     dataset: cifar10_full_10_clients
     dataset_config: configs/datasets_cifar10_full_10_clients.yaml
     data_dir: data
-    model_architectures: [cifar_resnet18]
+    model: cifar_resnet18
     rounds: 1
     batch: 32
     eval_gap: 1

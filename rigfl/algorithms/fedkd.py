@@ -33,6 +33,7 @@ class FedKDConfig(AlgorithmConfig):
     lr: float = Field(0.01, gt=0)
     t_start: float = Field(0.95, ge=0, le=1)   # SVD energy-keep schedule (start -> end)
     t_end: float = Field(0.98, ge=0, le=1)
+    aux_model: str | None = None
 
 
 class FedKD(Algorithm):

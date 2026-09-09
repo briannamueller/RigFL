@@ -14,7 +14,8 @@ import argparse
 from collections import defaultdict
 from pathlib import Path
 
-from rigfl.eval.report import format_table, summarize, win_rate
+from rigfl.eval.report import (format_resource_table, format_table, summarize,
+                               win_rate)
 from rigfl.eval.metrics import direction_of
 from rigfl.eval.selection import resolve_metric
 from rigfl.experiment.config import (algorithm_identity, hashable as _hashable,
@@ -81,13 +82,15 @@ def load_results(results_dir: Path, dataset: str | None, *, ignore_invalid: bool
 # condition. Seed is excluded because rows aggregate over seeds.
 _EXPERIMENT = ("dataset", "data_backend", "partition_id", "partition_scheme",
                "num_clients", "num_classes", "validation_fraction", "input_kind",
-               "rounds", "shared_dim", "model_architectures", "batch", "eval_gap")
+               "rounds", "shared_dim", "model", "model_family", "batch", "eval_gap",
+               "estimate_flops")
 
 
 def condition_fields(rec: dict) -> dict:
     """The flattened fields that define an experiment."""
     exp = rec.get("config", {}).get("experiment", {})
     fields = {k: _hashable(exp.get(k)) for k in _EXPERIMENT}
+    fields["estimate_flops"] = bool(exp.get("estimate_flops", False))
     for k, v in normalize_early_stopping(exp.get("early_stopping")).items():
         fields[f"early_stopping.{k}"] = v
     return fields
@@ -144,7 +147,8 @@ def _field(rec: dict, key: str):
 
 
 def _rows_by_algorithm(by_algorithm: dict[str, list[dict]], metric: str, *, view: str,
-                    aggregation: str, tie_break: str) -> dict[str, dict]:
+                    aggregation: str, tie_break: str,
+                    include_resources: bool = False) -> dict[str, dict]:
     """One row per algorithm per experiment, with win% vs Local from that experiment."""
     flat = [r for recs in by_algorithm.values() for r in recs]
     experiments = {experiment_condition(r) for r in flat}
@@ -170,7 +174,8 @@ def _rows_by_algorithm(by_algorithm: dict[str, list[dict]], metric: str, *, view
             for i, (_, vrecs) in enumerate(sorted(variants.items(), key=lambda kv: str(kv[0]))):
                 label = name + (f" (variant {i + 1})" if len(variants) > 1 else "") + exp_suffix
                 summary = summarize(vrecs, metric, view=view, aggregation=aggregation,
-                                    tie_break=tie_break)
+                                    tie_break=tie_break,
+                                    include_resources=include_resources)
                 if local_records and name != "local":
                     summary["win"] = win_rate(vrecs, local_records, metric, view=view,
                                               aggregation=aggregation, tie_break=tie_break)
@@ -179,7 +184,8 @@ def _rows_by_algorithm(by_algorithm: dict[str, list[dict]], metric: str, *, view
 
 
 def _rows_by_group(by_algorithm: dict[str, list[dict]], group_by: list[str], metric: str,
-                   *, view: str, aggregation: str, tie_break: str) -> dict[str, dict]:
+                   *, view: str, aggregation: str, tie_break: str,
+                   include_resources: bool = False) -> dict[str, dict]:
     """Grouped view: one row per (experiment + algorithm + selected fields) setting."""
     flat = [r for recs in by_algorithm.values() for r in recs]
     extra = [k for k in group_by if k != "algorithm"]
@@ -206,7 +212,7 @@ def _rows_by_group(by_algorithm: dict[str, list[dict]], group_by: list[str], met
             )
         rows[label] = summarize(
             records, metric, view=view, aggregation=aggregation,
-            tie_break=tie_break,
+            tie_break=tie_break, include_resources=include_resources,
         )
     return rows
 
@@ -272,6 +278,8 @@ def main() -> None:
     p.add_argument("--out", default=None, help="also write the markdown table here")
     p.add_argument("--out-json", default=None,
                    help="write the collection artifact (both views, full provenance)")
+    p.add_argument("--include-resources", action="store_true",
+                   help="print communication, estimated FLOPs, and training time")
     args = p.parse_args()
 
     invalid: list[tuple[str, str]] = []
@@ -315,6 +323,20 @@ def main() -> None:
                                                                direction_of(metric)), 1):
                 print(f"  {i}. {label}  val {metric}={score:.4f}")
 
+    resource_rows = None
+    if args.include_resources:
+        resource_rows = (
+            _rows_by_group(by_algorithm, args.group_by, metric, view="global",
+                           aggregation=aggregation, tie_break=tie_break,
+                           include_resources=True)
+            if args.group_by else
+            _rows_by_algorithm(by_algorithm, metric, view="global",
+                               aggregation=aggregation, tie_break=tie_break,
+                               include_resources=True)
+        )
+        print("\n### resources: attributed training")
+        print(format_resource_table(resource_rows))
+
     if manifest and (args.rank or args.select_out):
         try:
             artifact = rank_tuning(flat, manifest, metric=metric, views=views,
@@ -343,6 +365,9 @@ def main() -> None:
     if args.out:
         body = "\n\n".join(f"### selection-view: {v}\n" + format_table(rows, metric)
                             for v, rows in tables.items())
+        if resource_rows is not None:
+            body += ("\n\n### resources: attributed training\n" +
+                     format_resource_table(resource_rows))
         if ignored:
             body += ("\n\n**Ignored (--ignore-invalid):**\n"
                      + "\n".join(f"- `{i['file']}` — {i['reason']}" for i in ignored))
@@ -365,10 +390,12 @@ def main() -> None:
         for v in ("global", "per-client"):
             source = _records_supporting(by_algorithm, v)
             rows = (_rows_by_group(source, args.group_by, metric, view=v,
-                                   aggregation=aggregation, tie_break=tie_break)
+                                   aggregation=aggregation, tie_break=tie_break,
+                                   include_resources=args.include_resources)
                     if args.group_by else
                     _rows_by_algorithm(source, metric, view=v,
-                                       aggregation=aggregation, tie_break=tie_break))
+                                       aggregation=aggregation, tie_break=tie_break,
+                                       include_resources=args.include_resources))
             artifact["views"][v] = rows
         atomic_write_json(Path(args.out_json), artifact)
         print(f"wrote {args.out_json}")

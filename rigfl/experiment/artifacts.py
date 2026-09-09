@@ -6,11 +6,13 @@ import json
 import math
 import os
 import tempfile
+from itertools import pairwise
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 RECORD_KIND = "rigfl.run_result"
-RECORD_SCHEMA_VERSION = 3
+RECORD_SCHEMA_VERSION = 4
+READABLE_RECORD_SCHEMA_VERSIONS = {3, 4}
 RESULT_SCHEMA_VERSION = 3
 STATUS_COMPLETE = "complete"
 
@@ -111,9 +113,10 @@ def make_run_record(
     run_fingerprint: str,
     **extra,
 ) -> dict:
+    record_version = 4 if "resources" in extra else 3
     record = {
         "kind": RECORD_KIND,
-        "record_schema_version": RECORD_SCHEMA_VERSION,
+        "record_schema_version": record_version,
         "status": STATUS_COMPLETE,
         "run_fingerprint": run_fingerprint,
         "algorithm": algorithm,
@@ -144,10 +147,11 @@ def validate_run_record(
         fail("document root is not an object")
     if record.get("kind") != RECORD_KIND:
         fail(f"kind is {record.get('kind')!r}, expected {RECORD_KIND!r}")
-    if record.get("record_schema_version") != RECORD_SCHEMA_VERSION:
+    record_version = record.get("record_schema_version")
+    if record_version not in READABLE_RECORD_SCHEMA_VERSIONS:
         fail(
-            f"record_schema_version is {record.get('record_schema_version')!r}, "
-            f"expected {RECORD_SCHEMA_VERSION}"
+            f"record_schema_version is {record_version!r}, expected one of "
+            f"{sorted(READABLE_RECORD_SCHEMA_VERSIONS)}"
         )
     if record.get("status") != STATUS_COMPLETE:
         fail(f"status is {record.get('status')!r}, not 'complete'")
@@ -226,7 +230,331 @@ def validate_run_record(
         _validate_local_selection(result.get("selection_provenance"), experiment, fail)
     _validate_early_stopping(stopping, experiment, history, fail,
                              iterative=iterative_result)
+    if record_version >= 4:
+        _validate_resources(record.get("resources"), record.get("wall_seconds"),
+                            experiment, fail)
     return record
+
+
+def _valid_number(value, *, integer: bool = False) -> bool:
+    kind = int if integer else (int, float)
+    return (isinstance(value, kind) and not isinstance(value, bool)
+            and value >= 0 and math.isfinite(float(value)))
+
+
+def _same_number(left, right) -> bool:
+    return math.isclose(float(left), float(right), rel_tol=1e-9, abs_tol=1e-9)
+
+
+def _validate_hardware_signature(value: Any, fail) -> None:
+    if not isinstance(value, dict):
+        fail("resources timing hardware is missing")
+    required = {
+        "device_type", "torch_version", "python_version", "platform",
+        "cpu_name", "cpu_identity_source", "device_name",
+    }
+    if any(not isinstance(value.get(name), str) for name in required):
+        fail("resources timing hardware is invalid")
+
+
+def _validate_flop_settings(value: Any, fail) -> None:
+    if not isinstance(value, dict):
+        fail("resources FLOP metadata is missing")
+    enabled = value.get("enabled")
+    if not isinstance(enabled, bool) or not isinstance(
+            value.get("torch_version"), str):
+        fail("resources FLOP metadata is invalid")
+    method = value.get("method")
+    convention = value.get("convention")
+    if enabled:
+        if not isinstance(method, str) or not isinstance(convention, str):
+            fail("enabled FLOP estimation metadata is incomplete")
+    elif method is not None or convention is not None:
+        fail("disabled FLOP estimation metadata is inconsistent")
+
+
+def _validate_resources(saved: Any, wall_seconds, experiment, fail) -> None:
+    if not isinstance(saved, dict) or saved.get("schema_version") != 1:
+        fail("resources is missing or uses an unsupported schema")
+    measurement = saved.get("measurement")
+    observed = saved.get("observed")
+    if not isinstance(measurement, dict) or not isinstance(observed, dict):
+        fail("resources measurement or observed values are missing")
+
+    communication_settings = measurement.get("communication")
+    if not isinstance(communication_settings, dict):
+        fail("resources communication metadata is missing")
+    if not isinstance(communication_settings.get("basis"), str):
+        fail("resources communication basis is invalid")
+    if not isinstance(
+            communication_settings.get("includes_protocol_metadata"), bool):
+        fail("resources communication metadata is invalid")
+
+    timing_settings = measurement.get("timing")
+    if not isinstance(timing_settings, dict):
+        fail("resources timing metadata is missing")
+    if not isinstance(timing_settings.get("clock"), str):
+        fail("resources timing clock is invalid")
+    if not isinstance(timing_settings.get("accelerator_synchronized"), bool):
+        fail("resources timing synchronization metadata is invalid")
+    hardware = timing_settings.get("hardware")
+    _validate_hardware_signature(hardware, fail)
+
+    communication = observed.get("communication_bytes")
+    expected = {"client_to_server", "server_to_client", "peer_to_peer", "total"}
+    if not isinstance(communication, dict) or set(communication) != expected:
+        fail("resources communication totals are invalid")
+    if any(not _valid_number(value, integer=True)
+           for value in communication.values()):
+        fail("resources communication contains an invalid byte count")
+    if communication["total"] != sum(
+            communication[name] for name in expected - {"total"}):
+        fail("resources communication total is inconsistent")
+
+    flop_settings = measurement.get("flop_estimation")
+    flops = observed.get("flops")
+    _validate_flop_settings(flop_settings, fail)
+    resource_total_names = {"algorithm_operations", "evaluation", "total"}
+    if not isinstance(flops, dict) or set(flops) != resource_total_names:
+        fail("resources FLOP totals are missing")
+    if bool(flop_settings.get("enabled")) != bool(experiment.estimate_flops):
+        fail("resources FLOP setting disagrees with the experiment configuration")
+    for name in ("algorithm_operations", "evaluation", "total"):
+        value = flops.get(name)
+        if value is not None and not _valid_number(value, integer=True):
+            fail(f"resources flops.{name} is invalid")
+    if experiment.estimate_flops:
+        if any(flops.get(name) is None for name in
+               ("algorithm_operations", "evaluation", "total")):
+            fail("enabled FLOP estimation has a missing observed total")
+        if flops["total"] != flops["algorithm_operations"] + flops["evaluation"]:
+            fail("resources FLOP total is inconsistent")
+    elif any(flops.get(name) is not None for name in
+             ("algorithm_operations", "evaluation", "total")):
+        fail("disabled FLOP estimation has observed totals")
+
+    timing = observed.get("wall_seconds")
+    if not isinstance(timing, dict) or set(timing) != resource_total_names:
+        fail("resources wall time is missing")
+    for name in ("algorithm_operations", "evaluation", "total"):
+        if not _valid_number(timing.get(name)):
+            fail(f"resources wall_seconds.{name} is invalid")
+    if not _valid_number(wall_seconds):
+        fail("wall_seconds is invalid")
+    if round(timing["total"], 1) != wall_seconds:
+        fail("wall_seconds disagrees with resources observed total")
+
+    attributed = saved.get("attributed_training")
+    if (not isinstance(attributed, dict)
+            or set(attributed) != {
+                "flops", "wall_seconds", "wall_seconds_comparable"
+            }):
+        fail("resources attributed-training totals are missing")
+    for name in ("flops", "wall_seconds"):
+        value = attributed.get(name)
+        if value is not None and not _valid_number(
+                value, integer=name == "flops"):
+            fail(f"resources attributed_training.{name} is invalid")
+    if not isinstance(attributed.get("wall_seconds_comparable"), bool):
+        fail("resources attributed-training timing compatibility is missing")
+    if (attributed["wall_seconds_comparable"]
+            != (attributed.get("wall_seconds") is not None)):
+        fail("resources attributed-training wall time is inconsistent")
+    if not experiment.estimate_flops and attributed.get("flops") is not None:
+        fail("disabled FLOP estimation has an attributed total")
+
+    reused = saved.get("reused")
+    if not isinstance(reused, list):
+        fail("resources reused measurements are missing")
+    for item in reused:
+        access = item.get("current_access") if isinstance(item, dict) else None
+        if (not isinstance(item, dict) or not isinstance(item.get("name"), str)
+                or not isinstance(access, dict)
+                or not _valid_number(access.get("wall_seconds"))):
+            fail("resources reused measurement is invalid")
+        if not _valid_number(item.get("wall_seconds")):
+            fail("resources reused wall time is invalid")
+        reused_flops = item.get("flops")
+        if reused_flops is not None and not _valid_number(
+                reused_flops, integer=True):
+            fail("resources reused FLOPs are invalid")
+        reused_measurement = item.get("measurement")
+        if not isinstance(reused_measurement, dict):
+            fail("resources reused measurement metadata is missing")
+        _validate_hardware_signature(
+            reused_measurement.get("hardware"), fail)
+        _validate_flop_settings(
+            reused_measurement.get("flop_estimation"), fail)
+        access_flops = access.get("flops")
+        if access_flops is not None and not _valid_number(
+                access_flops, integer=True):
+            fail("resources reused access FLOPs are invalid")
+    missing_reused = saved.get("missing_reused_measurements")
+    if (not isinstance(missing_reused, list)
+            or any(not isinstance(name, str) for name in missing_reused)):
+        fail("resources missing-reuse record is invalid")
+    cache_reuse = saved.get("cache_reuse")
+    if (not isinstance(cache_reuse, dict)
+            or any(not isinstance(stage, str) for stage in cache_reuse)
+            or any(value not in {"none", "partial", "complete", "disabled"}
+                   for value in cache_reuse.values())):
+        fail("resources cache-reuse record is invalid")
+
+    operations = saved.get("operations")
+    if not isinstance(operations, dict) or not operations:
+        fail("resources operations are missing")
+    for operation, values in operations.items():
+        if (not isinstance(operation, str) or not isinstance(values, dict)
+                or values.get("category") not in {"algorithm", "evaluation"}
+                or not _valid_number(values.get("calls"), integer=True)
+                or values["calls"] < 1
+                or not _valid_number(values.get("wall_seconds"))):
+            fail(f"resources operation {operation!r} is invalid")
+        operation_flops = values.get("flops")
+        if experiment.estimate_flops:
+            if not _valid_number(operation_flops, integer=True):
+                fail(f"resources operation {operation!r} FLOPs are invalid")
+        elif operation_flops is not None:
+            fail(f"resources operation {operation!r} has unexpected FLOPs")
+    operation_seconds = {
+        category: sum(values["wall_seconds"] for values in operations.values()
+                      if values["category"] == category)
+        for category in ("algorithm", "evaluation")
+    }
+    if not _same_number(
+            operation_seconds["algorithm"], timing["algorithm_operations"]):
+        fail("resources algorithm-operation wall time is inconsistent")
+    if not _same_number(operation_seconds["evaluation"], timing["evaluation"]):
+        fail("resources evaluation wall time is inconsistent")
+    if experiment.estimate_flops:
+        operation_flops = {
+            category: sum(values["flops"] for values in operations.values()
+                          if values["category"] == category)
+            for category in ("algorithm", "evaluation")
+        }
+        if operation_flops["algorithm"] != flops["algorithm_operations"]:
+            fail("resources algorithm-operation FLOPs are inconsistent")
+        if operation_flops["evaluation"] != flops["evaluation"]:
+            fail("resources evaluation FLOPs are inconsistent")
+    clients = saved.get("clients")
+    if not isinstance(clients, dict):
+        fail("resources clients are missing")
+    expected_client_ids = {str(client_id)
+                           for client_id in range(experiment.num_clients)}
+    if set(clients) != expected_client_ids:
+        fail("resources clients do not match the configured client ids")
+    categories = {"algorithm_operations", "evaluation"}
+    for client_id, client in clients.items():
+        if not isinstance(client, dict):
+            fail(f"resources client {client_id} is invalid")
+        for field in ("wall_seconds", "flops"):
+            values = client.get(field)
+            if not isinstance(values, dict) or set(values) != categories:
+                fail(f"resources client {client_id} {field} is invalid")
+            for value in values.values():
+                if field == "wall_seconds" and not _valid_number(value):
+                    fail(f"resources client {client_id} {field} is invalid")
+                if field == "flops":
+                    if (experiment.estimate_flops
+                            and not _valid_number(value, integer=True)):
+                        fail(f"resources client {client_id} {field} is invalid")
+                    if not experiment.estimate_flops and value is not None:
+                        fail(f"resources client {client_id} {field} is invalid")
+        if (not _valid_number(client.get("sent_bytes"), integer=True)
+                or not _valid_number(client.get("received_bytes"), integer=True)):
+            fail(f"resources client {client_id} communication is invalid")
+    sent = sum(client["sent_bytes"] for client in clients.values())
+    received = sum(client["received_bytes"] for client in clients.values())
+    if sent != communication["client_to_server"] + communication["peer_to_peer"]:
+        fail("resources per-client sent bytes are inconsistent")
+    if (received
+            != communication["server_to_client"] + communication["peer_to_peer"]):
+        fail("resources per-client received bytes are inconsistent")
+    checkpoints = saved.get("checkpoints")
+    if (not isinstance(checkpoints, list) or not checkpoints
+            or any(not isinstance(checkpoint, dict)
+                   for checkpoint in checkpoints)):
+        fail("resources checkpoints are missing")
+    rounds = [checkpoint.get("round") for checkpoint in checkpoints]
+    if rounds != list(range(len(rounds))) and rounds != [0]:
+        fail("resources checkpoints are not consecutive rounds")
+    for checkpoint in checkpoints:
+        required = {
+            "round", "algorithm_wall_seconds", "algorithm_flops",
+            "communication_bytes",
+        }
+        if set(checkpoint) != required:
+            fail("resources checkpoint fields are invalid")
+        if (not _valid_number(checkpoint.get("algorithm_wall_seconds"))
+                or not _valid_number(
+                    checkpoint.get("communication_bytes"), integer=True)):
+            fail("resources checkpoint totals are invalid")
+        checkpoint_flops = checkpoint.get("algorithm_flops")
+        if experiment.estimate_flops:
+            if not _valid_number(checkpoint_flops, integer=True):
+                fail("resources checkpoint FLOPs are invalid")
+        elif checkpoint_flops is not None:
+            fail("resources checkpoint has unexpected FLOPs")
+    if not _same_number(
+            checkpoints[-1]["algorithm_wall_seconds"],
+            timing["algorithm_operations"]):
+        fail("resources final checkpoint wall time is inconsistent")
+    if checkpoints[-1]["communication_bytes"] != communication["total"]:
+        fail("resources final checkpoint communication is inconsistent")
+    if (experiment.estimate_flops
+            and checkpoints[-1]["algorithm_flops"]
+            != flops["algorithm_operations"]):
+        fail("resources final checkpoint FLOPs are inconsistent")
+    for previous, current in pairwise(checkpoints):
+        if (current["algorithm_wall_seconds"]
+                < previous["algorithm_wall_seconds"]
+                or current["communication_bytes"]
+                < previous["communication_bytes"]):
+            fail("resources checkpoint totals are not cumulative")
+        if (experiment.estimate_flops
+                and current["algorithm_flops"] < previous["algorithm_flops"]):
+            fail("resources checkpoint FLOPs are not cumulative")
+
+    reused_seconds = sum(item["wall_seconds"] for item in reused)
+    access_seconds = sum(item["current_access"]["wall_seconds"] for item in reused)
+    same_hardware = (
+        not missing_reused
+        and (not reused or (
+            hardware.get("cpu_identity_source") != "generic_fallback"
+            and all(item["measurement"]["hardware"] == hardware
+                    for item in reused)
+        ))
+    )
+    if attributed["wall_seconds_comparable"] != same_hardware:
+        fail("resources attributed-training hardware compatibility is inconsistent")
+    expected_wall = (
+        max(0.0, timing["algorithm_operations"] - access_seconds)
+        + reused_seconds
+        if same_hardware else None
+    )
+    if (expected_wall is None) != (attributed["wall_seconds"] is None):
+        fail("resources attributed-training wall time is inconsistent")
+    if (expected_wall is not None
+            and not _same_number(expected_wall, attributed["wall_seconds"])):
+        fail("resources attributed-training wall time is inconsistent")
+
+    expected_flops = None
+    compatible_flops = (
+        experiment.estimate_flops
+        and not missing_reused
+        and all(item["measurement"]["flop_estimation"] == flop_settings
+                for item in reused)
+        and all(item["flops"] is not None for item in reused)
+        and all(item["current_access"]["flops"] is not None for item in reused)
+    )
+    if compatible_flops:
+        expected_flops = (
+            max(0, flops["algorithm_operations"] - sum(
+                item["current_access"]["flops"] for item in reused))
+            + sum(item["flops"] for item in reused)
+        )
+    if attributed["flops"] != expected_flops:
+        fail("resources attributed-training FLOPs are inconsistent")
 
 
 def _validate_history(history: Any, experiment, fail) -> None:
@@ -237,7 +565,7 @@ def _validate_history(history: Any, experiment, fail) -> None:
         fail("evaluation_rounds is missing or empty")
     if not all(isinstance(r, int) and not isinstance(r, bool) for r in rounds):
         fail("evaluation_rounds contains a non-integer")
-    if any(right <= left for left, right in zip(rounds, rounds[1:])):
+    if any(right <= left for left, right in pairwise(rounds)):
         fail("evaluation_rounds is not strictly increasing")
     if rounds[0] < 0 or rounds[-1] >= experiment.rounds:
         fail("evaluation_rounds falls outside the configured round range")

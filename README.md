@@ -7,6 +7,8 @@ machinery.
 - [Key Features](#key-features)
 - [Installation](#installation)
 - [Example workflow](#example-workflow)
+- [Configuration](#configuration)
+- [Evaluation and reporting](#evaluation-and-reporting)
 - [Algorithms](#algorithms)
 - [Sweeps and tuning](#sweeps-and-tuning)
 - [Adding an algorithm](#adding-an-algorithm)
@@ -22,10 +24,6 @@ machinery.
   results and partitions are never overwritten. An experiment whose result
   already exists is not rerun—expanding or changing a sweep will only execute new
   combinations.
-
-- **Support for model-heterogeneous algorithms.** RigFL supports algorithms
-  designed for clients with different model architectures. The architecture
-  selection can be configured as a named family or an explicit ordered list.
 
 - **Joint hyperparameter tuning across multiple seeds.** Support for evaluating
   combinations of hyperparameters across several random seeds.
@@ -48,6 +46,10 @@ machinery.
 - **Optional W&B tracking.** Weights & Biases can be enabled to log experiment
   settings and validation performance during training.
 
+- **Support for model-heterogeneous algorithms.** RigFL supports algorithms
+  designed for clients with different model architectures. Registered model
+  families define which architectures are assigned across clients.
+
 ## Installation
 
 ```bash
@@ -56,14 +58,10 @@ pip install rigfl
 
 RigFL requires Python 3.10–3.12.
 
-Install the optional BioSilo backend with `pip install "rigfl[biosilo]"`. See
-the [data configuration guide](https://github.com/briannamueller/RigFL/blob/main/rigfl/data/README.md)
-for its configuration and dataset-specific dependencies.
-
 ## Example workflow
 
 The following CIFAR-10 example walks you through generating client data
-partitions, running an experiment, and reporting the results.
+partitions and running experiments.
 
 ### Generate client data partitions
 
@@ -106,6 +104,15 @@ Running the command again with the same data configuration reuses the existing
 partition. Changing a partitioning entry produces a different fingerprint and a
 separate directory instead of replacing the previous partition.
 
+Experiments reference a generated partition by its dataset name. When an
+experiment starts, RigFL reads that dataset's entry in `configs/datasets.yaml`,
+derives the partition fingerprint, and loads the corresponding partition
+automatically. The partition fingerprint does not need to be included in the
+experiment configuration. By default, RigFL reads dataset configurations from
+`configs/datasets.yaml` and stores generated partitions under `data/`; use
+`experiment.dataset_config` and `experiment.data_dir` when different locations
+are needed.
+
 To add another dataset, create another entry in
 [`configs/datasets.yaml`](https://github.com/briannamueller/RigFL/blob/main/configs/datasets.yaml).
 The included configuration contains MNIST, Fashion-MNIST, CIFAR-10, CIFAR-100,
@@ -116,18 +123,32 @@ See the
 for the available settings and guidance for datasets with multiple
 configurations, nonstandard splits, or ambiguous input and target columns.
 
-### Define and run the experiment
+Install the optional BioSilo backend with `pip install "rigfl[biosilo]"`. See
+the [data configuration guide](https://github.com/briannamueller/RigFL/blob/main/rigfl/data/README.md)
+for its configuration and dataset-specific dependencies.
 
-YAML files define experiment configurations:
-[`experiments/cifar10_run.yaml`](https://github.com/briannamueller/RigFL/blob/main/experiments/cifar10_run.yaml):
+### Configure experiments
+
+Configure the experiment in
+[`experiments/cifar10_run.yaml`](https://github.com/briannamueller/RigFL/blob/main/experiments/cifar10_run.yaml).
+
+The YAML has two sections. Entries under `experiment` define the overarching
+configuration for the execution of RigFL’s shared workflow. Entries under
+`algorithm` specify how individual algorithms operate. An algorithm entry may be
+supported by one or several algorithms. In a multi-algorithm sweep, each entry is
+applied only to algorithms that support it.
+
+Specify the model with `model`. For algorithms that support model
+heterogeneity, optionally specify a predefined `model_family`. See the
+[model configuration guide](https://github.com/briannamueller/RigFL/blob/main/rigfl/models/README.md)
+for the available architectures and model families.
 
 ```yaml
 experiment:
   dataset: cifar10
-  model_architectures: [fedavg_cnn]
+  model: fedavg_cnn
   rounds: 2
   seed: 0
-  shared_dim: 128
   eval_gap: 1
   device: cpu
   out_dir: results/cifar10_run
@@ -136,24 +157,6 @@ algorithm:
   local_epochs: 1
   lr: 0.01
 ```
-
-The YAML has two sections. Entries under `experiment` define the overarching
-configuration for the execution of RigFL’s shared workflow. Entries under
-`algorithm` specify how individual algorithms operate. An algorithm entry may be
-supported by one or several algorithms. In a multi-algorithm sweep, each entry is
-applied only to algorithms that support it.
-`shared_dim` applies only to algorithms that align internal representations;
-FedDES keeps each base classifier's native representation width.
-
-For 28×28 image datasets, RigFL provides `lenet5`, `fedavg_mnist_cnn`, and
-`small_cnn`, as well as the `mnist_heterogeneous_3` family. The existing
-`fedavg_cnn`, `cifar_resnet18`, and `cifar_mobilenet_v2` architectures support
-CIFAR-10, CIFAR-100, and Tiny ImageNet. For fixed-width tabular data such as the
-PaySim configuration, RigFL provides `tabular_linear`, `tabular_mlp`, and
-`tabular_residual_mlp`, grouped as `tabular_heterogeneous_3`.
-For the phishing URL configuration, `phishing_byte_cnn` operates on byte-token
-sequences derived from the URL strings.
-
 Run the experiment with:
 
 ```bash
@@ -173,6 +176,96 @@ Summarize the results with:
 python -m rigfl.experiment.collect \
   --results-dir results/cifar10_run
 ```
+
+Collection uses validation history to choose the reporting round, which can be
+selected globally from performance aggregated across clients or separately for
+each client from its own validation history.
+
+## Configuration
+
+`experiment` describes the shared setup—data, clients, rounds, seed, evaluation
+schedule, and output settings. `algorithm` contains algorithm-level settings.
+Some, such as `local_epochs` and `lr`, are supported by multiple algorithms;
+others apply to only one algorithm. In a multi-algorithm sweep, each
+`algorithm.*` sweep axis is applied only to algorithms that define that setting.
+
+```yaml
+experiment:
+  dataset: cifar10
+  rounds: 100
+  seed: 0
+  eval_gap: 5
+
+algorithm:
+  local_epochs: 3
+  lr: 0.03
+```
+
+Each result contains the resolved experiment and algorithm configurations and
+the complete per-client evaluation history.
+
+## Evaluation and reporting
+
+RigFL records accuracy, balanced accuracy, macro F1, and predictive log loss for
+each client at every evaluation round, together with the corresponding sample
+counts.
+
+The same history can be summarized in two ways:
+
+- `global` chooses one round from the validation score aggregated across clients;
+- `per-client` chooses each client's best validation round.
+
+The `both` view returns both summaries when both are supported. By default,
+collection chooses the earliest round with the highest mean validation accuracy.
+`mean` gives every client equal weight; `weighted_mean` gives every evaluation
+example equal weight.
+
+Collection presents validation and test performance at the requested selection
+view. Multi-seed tables include confidence intervals, client-distribution
+statistics, and win rate against a matching Local run.
+
+### Early stopping
+
+Early stopping controls when training ends and is separate from the reporting
+round chosen during collection. It is disabled by default. When enabled, it
+monitors mean validation loss unless another metric or aggregation is specified:
+
+```yaml
+experiment:
+  early_stopping:
+    enabled: true
+    patience: 10
+    min_delta: 0.0
+```
+
+### Resource measurements
+
+Completed runs record logical training communication, operation timing, and the
+hardware used for timing. Communication is the size of the algorithm payloads
+sent between clients and the server, or between peers; transport and
+serialization overhead are not included. Tensor and encoded-byte payloads are
+measured automatically. An algorithm using another representation can override
+`communication_payload_bytes(...)`.
+
+FLOP estimation is optional because profiling adds runtime overhead. Enable it
+for an experiment with `experiment.estimate_flops: true` or `--estimate-flops`.
+FLOP estimation requires PyTorch 2.1 or newer.
+The estimate covers PyTorch operations recognized by PyTorch's FLOP counter and
+records training and inference separately.
+
+Results created before resource measurements were added do not contain them.
+Rerun those configurations with `--force` if resource reporting is needed.
+
+Add resource results to the collection output with:
+
+```bash
+python -m rigfl.experiment.collect \
+  --results-dir results/cifar10_run \
+  --include-resources
+```
+
+Results created by an earlier RigFL version do not contain resource measurements.
+Re-run those configurations with `--force` when resource comparisons are needed.
 
 ### Client-centered metrics
 
@@ -216,6 +309,24 @@ provides a multi-algorithm, multi-seed tuning example. A sweep expands the value
 defined along each axis. Algorithm entries are applied only to algorithms that
 support them, so options belonging to different algorithms are not unnecessarily
 cross-multiplied.
+
+For example, the following sweep runs every combination of seed and learning
+rate for each listed algorithm:
+
+```yaml
+name: cifar10_sweep
+algorithms: [local, fedproto]
+
+base:
+  experiment:
+    dataset: cifar10
+    model: fedavg_cnn
+    rounds: 100
+
+sweep:
+  seed: [0, 1, 2]
+  algorithm.lr: [0.01, 0.03]
+```
 
 Expand the sweep and print its cluster submission command with:
 

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import argparse
 import random
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -31,10 +30,11 @@ from rigfl.experiment.env import capture_env
 from rigfl.experiment.registry import (BASELINES, adapter_factory,
                                        algorithm_run_fingerprint, algorithm_spec,
                                        build_algorithm, config_class,
-                                       resolve_algorithm_config)
+                                       resolve_algorithm_config,
+                                       resolve_algorithm_models)
 from rigfl.experiment.tracking import make_tracker
-from rigfl.models.registry import (instantiate_backbones,
-                                   resolve_model_architectures)
+from rigfl.eval.resources import ResourceMonitor
+from rigfl.models.registry import instantiate_backbones, resolve_models
 
 
 def set_seed(seed: int) -> None:
@@ -124,10 +124,13 @@ def resolve_experiment_data(
             ),
             input_kind=input_kind,
             input_spec=input_spec,
+            resolved_models=resolve_models(
+                model=exp.model,
+                model_family=exp.model_family,
+                input_kind=input_kind,
+            ),
         )
-        return resolve_experiment_architectures(
-            resolved, input_kind=resolved.input_kind
-        ), ResolvedData(settings=settings, artifact=artifact)
+        return resolved, ResolvedData(settings=settings, artifact=artifact)
 
     if isinstance(settings, BioSiloDatasetSettings):
         from rigfl.data.biosilo import (biosilo_input_spec,
@@ -150,32 +153,15 @@ def resolve_experiment_data(
             validation_fraction=settings.validation_fraction,
             input_kind=input_kind,
             input_spec=input_spec,
+            resolved_models=resolve_models(
+                model=exp.model,
+                model_family=exp.model_family,
+                input_kind=input_kind,
+            ),
         )
-        return resolve_experiment_architectures(
-            resolved, input_kind=resolved.input_kind
-        ), ResolvedData(settings=settings, handle=handle)
+        return resolved, ResolvedData(settings=settings, handle=handle)
 
     raise ValueError(f"unsupported dataset backend: {settings.backend!r}")
-
-
-def resolve_experiment_architectures(
-    exp: ExperimentConfig, *, input_kind: str
-) -> ExperimentConfig:
-    """Canonicalize the model architectures used by an experiment.
-
-    A named family, an equivalent explicit ordered list, and the default family
-    all resolve to one recorded representation. This happens before run identity
-    is computed, so configuration records and fingerprints describe the models
-    that were actually constructed.
-    """
-    names = resolve_model_architectures(
-        architecture_family=exp.model_architecture_family,
-        architectures=exp.model_architectures,
-        input_kind=input_kind,
-    )
-    return exp.model_copy(
-        update={"model_architecture_family": None, "model_architectures": names}
-    )
 
 
 def run_one(name, exp: ExperimentConfig, cfg, device, *, data: ResolvedData | None = None) -> dict:
@@ -183,22 +169,16 @@ def run_one(name, exp: ExperimentConfig, cfg, device, *, data: ResolvedData | No
         exp, data = resolve_experiment_data(exp)
     elif not isinstance(exp, ResolvedExperimentConfig):
         raise TypeError("pre-resolved data requires a ResolvedExperimentConfig")
+    exp = resolve_algorithm_models(name, exp)
     cfg = resolve_algorithm_config(name, exp, cfg)
     spec = algorithm_spec(name)
     set_seed(exp.seed)                                    # training + model determinism
     adapter = adapter_factory(name) if spec.requires_client_model else None
-    aux_backbone = None                                  # FML/FedKD shared aux model
     model_input_spec = dict(exp.input_spec)
-    input_kind = exp.input_kind
     if "shape" in model_input_spec:
         model_input_spec["shape"] = tuple(model_input_spec["shape"])
-    backbone_names = resolve_model_architectures(
-        architecture_family=exp.model_architecture_family,
-        architectures=exp.model_architectures,
-        input_kind=input_kind,
-    )
+    backbone_names = exp.resolved_models
     backbones = instantiate_backbones(backbone_names, input_spec=model_input_spec)
-    aux_backbone = backbones[0]
     if exp.data_backend == "flower":
         clients = build_partition_clients(
             data.artifact,
@@ -225,16 +205,18 @@ def run_one(name, exp: ExperimentConfig, cfg, device, *, data: ResolvedData | No
     else:
         raise RuntimeError(f"unresolved data backend: {exp.data_backend!r}")
     algorithm = build_algorithm(
-        name, exp, cfg, aux_backbone=aux_backbone,
-        model_input_spec=model_input_spec,
+        name, exp, cfg, model_input_spec=model_input_spec,
         model_template=clients[0].model)
     tracker = make_tracker(name, exp, cfg)               # W&B if exp.wandb else no-op
-    t0 = time.time()
+    monitor = ResourceMonitor(device, estimate_flops=exp.estimate_flops)
     runner = spec.runner
-    result = runner(algorithm, clients, num_rounds=exp.rounds, device=device,
-                    num_classes=exp.num_classes, eval_gap=exp.eval_gap,
-                    verbose=not exp.quiet, tracker=tracker,
-                    early_stopping=exp.early_stopping)
+    with monitor:
+        result = runner(algorithm, clients, num_rounds=exp.rounds, device=device,
+                        num_classes=exp.num_classes, eval_gap=exp.eval_gap,
+                        verbose=not exp.quiet, tracker=tracker,
+                        early_stopping=exp.early_stopping,
+                        resource_monitor=monitor)
+    resources = monitor.to_dict()
 
     # The fingerprint is computed from the resolved experiment, including the
     # identity and metadata of the partition that was actually loaded.
@@ -244,7 +226,8 @@ def run_one(name, exp: ExperimentConfig, cfg, device, *, data: ResolvedData | No
         run_fingerprint=algorithm_run_fingerprint(name, exp, cfg.model_dump()),
         result=result,
         env=capture_env(), device=str(device),
-        wall_seconds=round(time.time() - t0, 1),
+        wall_seconds=round(resources["observed"]["wall_seconds"]["total"], 1),
+        resources=resources,
         partition=partition_summary(
             clients,
             exp.num_classes,
@@ -253,6 +236,9 @@ def run_one(name, exp: ExperimentConfig, cfg, device, *, data: ResolvedData | No
         ),
     )
     if tracker is not None:
+        update_resources = getattr(tracker, "update_resources", None)
+        if callable(update_resources):
+            update_resources(resources)
         tracker.finish(result)
     return record
 
@@ -314,6 +300,8 @@ def build_configs(args) -> tuple[ExperimentConfig, dict]:
         exp_over["wandb"] = True
     if args.wandb_project:
         exp_over["wandb_project"] = args.wandb_project
+    if getattr(args, "estimate_flops", False):
+        exp_over["estimate_flops"] = True
     for flag in ["lr", "local_epochs"]:
         v = getattr(args, flag)
         if v is not None:
@@ -365,6 +353,7 @@ def run_experiment(algorithm: str, config: str | Path, *,
     experiment, algorithm_config = load_run_config(str(config))
     exp = ExperimentConfig(**experiment)
     exp, data = resolve_experiment_data(exp)
+    exp = resolve_algorithm_models(algorithm, exp)
 
     Cfg = config_class(algorithm)
     unknown = sorted(set(algorithm_config) - set(Cfg.model_fields))
@@ -401,6 +390,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--force", action="store_true", help="re-run even if the result JSON exists")
     p.add_argument("--wandb", action="store_true", help="log to Weights & Biases (needs rigfl[wandb])")
     p.add_argument("--wandb-project", help="W&B project name")
+    p.add_argument("--estimate-flops", action="store_true",
+                   help="estimate FLOPs for executed PyTorch operations")
     return p.parse_args()
 
 
@@ -424,11 +415,13 @@ def main() -> None:
 
     for name in algorithms:
         Cfg = config_class(name)
+        algorithm_exp = resolve_algorithm_models(name, exp)
         # Shared overrides are applied only to algorithms that define the field.
         cfg = Cfg(**{k: v for k, v in algorithm_over.items() if k in Cfg.model_fields})
-        cfg = resolve_algorithm_config(name, exp, cfg)
+        cfg = resolve_algorithm_config(name, algorithm_exp, cfg)
         try:
-            _run_resolved_experiment(name, exp, cfg, data=data, force=args.force)
+            _run_resolved_experiment(
+                name, algorithm_exp, cfg, data=data, force=args.force)
         except ResultValidationError as e:
             raise SystemExit(e.report())
 

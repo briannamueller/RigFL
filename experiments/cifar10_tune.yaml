@@ -11,7 +11,8 @@ base:                         # fixed settings for every task
     rounds: 100
     shared_dim: 512
     eval_gap: 5
-    model_architecture_family: image_heterogeneous_3
+    model: fedavg_cnn
+    model_family: image_heterogeneous_3
     # wandb: true             # uncomment to log curves to Weights & Biases
     # wandb_project: cifar-tune
 

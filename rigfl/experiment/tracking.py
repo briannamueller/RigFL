@@ -13,10 +13,13 @@ import os
 class Tracker:
     """No-op tracker (the default). Subclass to log somewhere."""
 
-    def log_round(self, rnd: int, val: dict, test: dict) -> None:  # per eval round
+    def update_resources(self, resources: dict) -> None:
         pass
 
-    def finish(self, best: dict) -> None:                          # end of the run
+    def log_round(self, rnd: int, val: dict, test: dict) -> None:
+        pass
+
+    def finish(self, best: dict) -> None:
         pass
 
 
@@ -29,6 +32,10 @@ class WandbTracker(Tracker):
     def __init__(self, project: str, config: dict, name: str | None = None):
         import wandb                          # lazy -- only needed when --wandb is used
         self.run = wandb.init(project=project, config=config, name=name)
+        self.resources = None
+
+    def update_resources(self, resources: dict) -> None:
+        self.resources = resources
 
     def log_round(self, rnd: int, val: dict, test: dict) -> None:
         """Validation every round; test only in the final summary.
@@ -52,6 +59,18 @@ class WandbTracker(Tracker):
                 v = mean_over_clients(test, m)
                 if v is not None:
                     payload[f"test/{m}"] = v
+        resources = getattr(self, "resources", None)
+        if resources:
+            checkpoint = resources.get("checkpoints", [])[-1:]
+            if checkpoint:
+                values = checkpoint[0]
+                payload["resources/communication_bytes"] = values[
+                    "communication_bytes"]
+                payload["resources/algorithm_wall_seconds"] = values[
+                    "algorithm_wall_seconds"]
+                if values.get("algorithm_flops") is not None:
+                    payload["resources/algorithm_flops"] = values[
+                        "algorithm_flops"]
         self.run.log(payload, step=rnd)
 
     def finish(self, result: dict) -> None:
@@ -64,6 +83,21 @@ class WandbTracker(Tracker):
         es = result.get("early_stopping", {})
         summary |= {f"early_stopping_{k}": es[k]
                     for k in ("termination_reason", "best_round") if k in es}
+        resources = getattr(self, "resources", None)
+        if resources:
+            observed = resources["observed"]
+            summary["resources/communication_bytes"] = observed[
+                "communication_bytes"]["total"]
+            summary["resources/observed_runner_wall_seconds"] = observed[
+                "wall_seconds"]["total"]
+            summary["resources/observed_algorithm_wall_seconds"] = observed[
+                "wall_seconds"]["algorithm_operations"]
+            attributed = resources["attributed_training"]
+            if attributed["wall_seconds"] is not None:
+                summary["resources/attributed_training_wall_seconds"] = attributed[
+                    "wall_seconds"]
+            if attributed["flops"] is not None:
+                summary["resources/attributed_training_flops"] = attributed["flops"]
         self.run.summary.update(summary)
         self.run.finish()
 

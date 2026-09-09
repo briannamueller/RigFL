@@ -136,7 +136,8 @@ def run_score(record: dict, metric: str, *, view: str = "global",
 
 
 def summarize(records: list[dict], metric: str, *, view: str = "global",
-              aggregation: str = "mean", tie_break: str = "earliest") -> dict:
+              aggregation: str = "mean", tie_break: str = "earliest",
+              include_resources: bool = False) -> dict:
     """Aggregate several seeds of one configuration into a row.
 
     Each seed is reduced with the *same* aggregation that selected its round: a
@@ -192,7 +193,82 @@ def summarize(records: list[dict], metric: str, *, view: str = "global",
         "seeds": len(records),
     }
     row.update(_average_distributions(dists))
+    if include_resources:
+        row["resources"] = summarize_resources(records)
     return row
+
+
+def summarize_resources(records: list[dict]) -> dict:
+    """Resource totals across complete run replicates."""
+    saved = [record.get("resources") for record in records]
+    if (not saved or any(not isinstance(item, dict)
+                         or item.get("schema_version") != 1
+                         for item in saved)):
+        return {"available": False}
+
+    try:
+        communication = [
+            item["observed"]["communication_bytes"]["total"] for item in saved
+        ]
+        flops = [item["attributed_training"].get("flops") for item in saved]
+        flop_signatures = {
+            json.dumps(item["measurement"]["flop_estimation"], sort_keys=True)
+            for item in saved
+        }
+        hardware = [
+            item["measurement"]["timing"]["hardware"] for item in saved
+        ]
+        signatures = {json.dumps(item, sort_keys=True) for item in hardware}
+        wall = [item["attributed_training"].get("wall_seconds") for item in saved]
+        cache_values = [
+            value for item in saved
+            for value in item.get("cache_reuse", {}).values()
+        ]
+        if any(not isinstance(item, dict) for item in hardware):
+            raise TypeError("invalid hardware signature")
+        cache = _combined_cache_status(cache_values)
+
+        communication_mean, communication_ci = mean_ci(communication)
+        comparable_flops = len(flop_signatures) == 1 and not any(
+            value is None for value in flops)
+        flop_mean, flop_ci = ((None, None) if not comparable_flops
+                              else mean_ci(flops))
+        comparable_wall = (len(signatures) == 1
+                           and all(item.get("cpu_identity_source")
+                                   != "generic_fallback" for item in hardware)
+                           and not any(value is None for value in wall))
+        wall_mean, wall_ci = (
+            (None, None) if not comparable_wall else mean_ci(wall)
+        )
+        return {
+            "available": True,
+            "communication_bytes_mean": communication_mean,
+            "communication_bytes_ci": communication_ci,
+            "attributed_training_flops_mean": flop_mean,
+            "attributed_training_flops_ci": flop_ci,
+            "flops_comparable": comparable_flops,
+            "flop_signatures": [json.loads(value)
+                                for value in sorted(flop_signatures)],
+            "attributed_training_wall_seconds_mean": wall_mean,
+            "attributed_training_wall_seconds_ci": wall_ci,
+            "wall_time_comparable": comparable_wall,
+            "hardware_signatures": [
+                json.loads(value) for value in sorted(signatures)
+            ],
+            "cache_reuse": cache,
+        }
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return {"available": False}
+
+
+def _combined_cache_status(values: list[str]) -> str:
+    if not values or all(value == "none" for value in values):
+        return "none"
+    if all(value == "disabled" for value in values):
+        return "disabled"
+    if all(value == "complete" for value in values):
+        return "complete"
+    return "partial"
 
 
 def _reduce(values: list[float], weights: Optional[list], aggregation: str) -> float:
@@ -299,3 +375,42 @@ def format_table(rows: dict, metric: str) -> str:
         out += ["", "‡ each client retained the model selected during its own local "
                     "computation; these selected steps are not federated rounds."]
     return "\n".join(out)
+
+
+def format_resource_table(rows: dict) -> str:
+    out = [
+        ("| algorithm | communication (GiB) | attributed training FLOPs "
+         "(TFLOPs) | attributed training time (min) | cache reuse |"),
+        "|---|---:|---:|---:|---|",
+    ]
+    for label, summary in rows.items():
+        resource = summary.get("resources", {})
+        if not resource.get("available"):
+            out.append(f"| {label} | — | — | — | — |")
+            continue
+        communication = _scaled_interval(
+            resource["communication_bytes_mean"],
+            resource["communication_bytes_ci"], 1024 ** 3)
+        flops = _scaled_interval(
+            resource["attributed_training_flops_mean"],
+            resource["attributed_training_flops_ci"], 10 ** 12)
+        wall = _scaled_interval(
+            resource["attributed_training_wall_seconds_mean"],
+            resource["attributed_training_wall_seconds_ci"], 60)
+        out.append("| " + " | ".join([
+            label, communication, flops, wall, resource["cache_reuse"]
+        ]) + " |")
+    out.extend([
+        "",
+        ("Communication is logical training traffic. Attributed totals replace "
+         "cache-read work with the compatible measurements saved when each reused "
+         "artifact was created. Wall time is omitted when hardware signatures "
+         "differ."),
+    ])
+    return "\n".join(out)
+
+
+def _scaled_interval(mean, interval, scale: float) -> str:
+    if mean is None or interval is None:
+        return "—"
+    return f"{mean / scale:.3f} ± {interval / scale:.3f}"

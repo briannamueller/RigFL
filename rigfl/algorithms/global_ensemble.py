@@ -42,6 +42,11 @@ class GlobalEnsemble(Algorithm):
     def aggregate(self, uploads: list, shared) -> list:
         return list(uploads)              # shared = every client's model
 
+    def communication_payload_bytes(self, payload, *, kind: str) -> int:
+        if kind == "server_to_client":
+            return 0
+        return super().communication_payload_bytes(payload, kind=kind)
+
     @torch.no_grad()
     def predict(self, client, x, shared: list) -> Predictions:
         # The ensemble's own average of member probabilities: already a
