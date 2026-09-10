@@ -80,3 +80,35 @@ def test_run_experiment_rejects_settings_not_used_by_the_algorithm(monkeypatch,
 
     with pytest.raises(ValueError, match="unknown fedavg algorithm setting.*mu"):
         run_module.run_experiment("fedavg", config)
+
+
+def test_run_experiment_accepts_nested_feddes_settings(monkeypatch, tmp_path):
+    captured = {}
+    monkeypatch.setattr(
+        run_module, "resolve_experiment_data", lambda exp: (_resolved(exp), None)
+    )
+
+    def fake_run(name, exp, cfg, *, data, force=False):
+        captured["cfg"] = cfg
+        return tmp_path / "result.json"
+
+    monkeypatch.setattr(run_module, "_run_resolved_experiment", fake_run)
+    config = tmp_path / "feddes.yaml"
+    config.write_text(
+        "experiment:\n"
+        "  dataset: cifar10\n"
+        "  model: fedavg_cnn\n"
+        "algorithm:\n"
+        "  graphroute:\n"
+        "    graph:\n"
+        "      node_feature_source: feature_space\n"
+        "      edge_feature_source: embedding_mean\n"
+        "      k: 7\n"
+    )
+
+    run_module.run_experiment("feddes", config)
+
+    graph = captured["cfg"].graphroute.graph
+    assert graph.node_feature_source == "feature_space"
+    assert graph.edge_feature_source == "embedding_mean"
+    assert graph.k == 7

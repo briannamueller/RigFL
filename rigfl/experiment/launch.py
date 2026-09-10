@@ -24,6 +24,8 @@ from rigfl.experiment.registry import (ALL_ALGORITHMS, BASELINES,
                                        algorithm_run_fingerprint, algorithm_spec,
                                        config_class, resolve_algorithm_config,
                                        resolve_algorithm_models)
+from rigfl.experiment.paths import (filter_for_model, flatten_mapping,
+                                    model_has_path, model_paths, nested_set)
 from rigfl.experiment.run import resolve_experiment_data, run_one
 from rigfl.experiment.tuning import (applicable_parameters, build_candidates,
                                      build_manifest,
@@ -56,8 +58,8 @@ def _validate_axes(exp_axes: dict, algorithm_axes: dict, algorithms: list[str],
     """Validate axes and fixed settings against the selected algorithms."""
     known_algorithm: set[str] = set()
     for m in algorithms:
-        known_algorithm |= set(config_class(m).model_fields)
-    known_exp = set(ExperimentConfig.model_fields)
+        known_algorithm |= model_paths(config_class(m))
+    known_exp = model_paths(ExperimentConfig)
 
     for field in algorithm_axes:
         if field not in known_algorithm:
@@ -83,7 +85,7 @@ def _validate_axes(exp_axes: dict, algorithm_axes: dict, algorithms: list[str],
             )
 
     # Fixed algorithm settings follow the same validation as algorithm axes.
-    for field in base_algorithm:
+    for field in flatten_mapping(base_algorithm):
         if field not in known_algorithm:
             raise SystemExit(
                 f'Unknown algorithm setting in base.algorithm: {field}\n'
@@ -147,9 +149,9 @@ def build_grid(spec: dict) -> list[dict]:
 
     An ``algorithm.x`` axis only multiplies the grid for algorithms that actually have
     field ``x``; for algorithms without it, that axis collapses to a single entry. So
-    ``--algorithms all --sweep algorithm.graph_k=3,5,10`` gives FedDES three variants and
-    every other algorithm exactly one -- no duplicate configs, no manual per-algorithm
-    scoping."""
+    ``--algorithms all --sweep algorithm.graphroute.graph.k=3,5,10`` gives
+    FedDES three variants and every other algorithm exactly one -- no duplicate
+    configs, no manual per-algorithm scoping."""
     return expand(spec)[0]
 
 
@@ -215,9 +217,12 @@ def expand(spec: dict) -> tuple[list[dict], dict | None]:
     grid: list[dict] = []
     manifest_tasks: list[dict] = []
     for algorithm in algorithms:
-        fields = config_class(algorithm).model_fields
+        config_model = config_class(algorithm)
         # only the algorithm-axes this algorithm has; the rest don't multiply its grid
-        m_axes = {k: v for k, v in algorithm_axes.items() if k in fields}
+        m_axes = {
+            k: v for k, v in algorithm_axes.items()
+            if model_has_path(config_model, k)
+        }
         ignored = set(algorithm_spec(algorithm).ignored_experiment_fields)
         axes = {f"exp::{k}": v for k, v in exp_axes.items() if k not in ignored}
         axes.update({f"algorithm::{k}": v for k, v in m_axes.items()})
@@ -227,11 +232,14 @@ def expand(spec: dict) -> tuple[list[dict], dict | None]:
             # Fixed algorithm settings obey the same per-algorithm scoping as algorithm
             # axes: validate against the selected-algorithm union above, then apply
             # only settings this algorithm's configuration class actually defines.
-            mcfg = {k: v for k, v in base_algorithm.items() if k in fields}
+            mcfg = filter_for_model(base_algorithm, config_model)
             assigned: dict[str, object] = {}
             for key, val in zip(keys, combo):
                 kind, field = key.split("::", 1)
-                (exp if kind == "exp" else mcfg)[field] = val
+                if kind == "exp":
+                    nested_set(exp, field, val)
+                else:
+                    nested_set(mcfg, field, val)
                 assigned[f"{'exp' if kind == 'exp' else 'algorithm'}.{field}"] = val
             task = {"algorithm": algorithm, "experiment": exp, "algorithm_config": mcfg}
             grid.append(task)
@@ -302,11 +310,13 @@ def run_task(grid_path: str, task_id: int, out_dir: Path,
             raise SystemExit(f"task {task_id}: {exc}") from exc
     Cfg = config_class(name)
     # Grid tasks use the same algorithm-setting validation as single runs.
-    unknown = sorted(set(task["algorithm_config"]) - set(Cfg.model_fields))
+    unknown = sorted(
+        set(flatten_mapping(task["algorithm_config"])) - model_paths(Cfg)
+    )
     if unknown:
         raise SystemExit(
             f"task {task_id} ({name}): unknown algorithm setting(s): {', '.join(unknown)}\n"
-            f"known: {', '.join(sorted(Cfg.model_fields))}")
+            f"known: {', '.join(sorted(model_paths(Cfg)))}")
     cfg = Cfg(**task["algorithm_config"])
     cfg = resolve_algorithm_config(name, exp, cfg)
     out_dir.mkdir(parents=True, exist_ok=True)

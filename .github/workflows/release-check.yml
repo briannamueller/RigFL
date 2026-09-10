@@ -23,7 +23,7 @@ jobs:
           python -m venv /tmp/rigfl-release-check/venv
           /tmp/rigfl-release-check/venv/bin/python -m pip install --upgrade pip
           /tmp/rigfl-release-check/venv/bin/python -m pip install dist/*.whl
-          /tmp/rigfl-release-check/venv/bin/python -m pip install "biosilo>=0.1.1,<0.2"
+          /tmp/rigfl-release-check/venv/bin/python -m pip install "biosilo>=0.1.2,<0.2"
 
       - name: Create release-check configurations
         working-directory: /tmp/rigfl-release-check
@@ -79,7 +79,7 @@ jobs:
             dataset: cifar10_dirichlet
             dataset_config: configs/datasets.yaml
             data_dir: data
-            model_architectures: [fedavg_cnn]
+            model: fedavg_cnn
             rounds: 1
             seed: 0
             shared_dim: 16
@@ -96,7 +96,7 @@ jobs:
             dataset: biosilo_synthetic
             dataset_config: configs/datasets.yaml
             data_dir: data
-            model_architectures: [tabular_mlp]
+            model: tabular_mlp
             rounds: 1
             seed: 0
             shared_dim: 16

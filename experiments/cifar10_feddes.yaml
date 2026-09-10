@@ -1,0 +1,25 @@
+name: cifar10_feddes
+algorithms: [feddes]
+
+base:
+  experiment:
+    dataset: cifar10
+    model: fedavg_cnn
+    rounds: 1
+    batch: 32
+    eval_gap: 1
+    device: auto
+    out_dir: results/cifar10_feddes
+  algorithm:
+    graphroute:
+      base:
+        epochs: 5
+        oof_folds: 3
+      graph:
+        k: 5
+        pool_calibrate: true
+      gnn:
+        arch: gat
+        epochs: 25
+        patience: 5
+    cache_dir: pool_cache/cifar10

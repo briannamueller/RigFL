@@ -114,6 +114,7 @@ def test_a_malformed_fixed_setting_fails_at_launch_not_on_a_worker(base):
 
 def test_algorithm_specific_scoping_is_unchanged():
     grid = build_grid({"algorithms": ["feddes", "local"],
-                       "sweep": {"seed": [0, 1], "algorithm.graph_k": [3, 5]}})
+                       "sweep": {"seed": [0, 1],
+                                 "algorithm.graphroute.graph.k": [3, 5]}})
     counts = {m: sum(t["algorithm"] == m for t in grid) for m in ("feddes", "local")}
     assert counts == {"feddes": 4, "local": 2}

@@ -204,6 +204,13 @@ algorithm:
 Each result contains the resolved experiment and algorithm configurations and
 the complete per-client evaluation history.
 
+FedDES places GraphRoute's modeling settings under `algorithm.graphroute` rather
+than directly under `algorithm`. See
+[`experiments/cifar10_feddes.yaml`](experiments/cifar10_feddes.yaml) for a
+complete runnable configuration and the
+[GraphRoute configuration reference](https://github.com/briannamueller/GraphRoute#configuration)
+for the available settings.
+
 ## Evaluation and reporting
 
 RigFL records accuracy, balanced accuracy, macro F1, and predictive log loss for

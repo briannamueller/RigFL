@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rigfl"
-version = "0.1.1"
+version = "0.1.2"
 description = "A modular research framework for rigorous federated learning experimentation"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
@@ -23,7 +23,7 @@ dependencies = [
     "pyarrow<15",
     "pillow<11",
     "pandas<2.3",
-    "graphroute>=0.1.1,<0.2",
+    "graphroute>=0.1.2,<0.2",
 ]
 
 [project.urls]
@@ -32,7 +32,7 @@ Issues = "https://github.com/briannamueller/RigFL/issues"
 
 [project.optional-dependencies]
 wandb = ["wandb"]                # optional experiment tracking (rigfl.experiment.run --wandb)
-biosilo = ["biosilo>=0.1.1,<0.2"]
+biosilo = ["biosilo>=0.1.2,<0.2"]
 test = ["pytest"]
 
 [tool.setuptools.packages.find]

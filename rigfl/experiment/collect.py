@@ -5,7 +5,7 @@
 Use ``--group-by`` to label hyperparameter variants:
 
     python -m rigfl.experiment.collect --results-dir results/feddes_tune \
-        --group-by algorithm.graph_k algorithm.gnn_arch
+        --group-by algorithm.graphroute.graph.k algorithm.graphroute.gnn.arch
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from rigfl.eval.metrics import direction_of
 from rigfl.eval.selection import resolve_metric
 from rigfl.experiment.config import (algorithm_identity, hashable as _hashable,
                                      normalize_early_stopping)
+from rigfl.experiment.paths import nested_get
 from rigfl.experiment.artifacts import (ResultValidationError, atomic_write_json,
                                         atomic_write_text, is_run_result, read_json,
                                         validate_run_record)
@@ -143,7 +144,7 @@ def _field(rec: dict, key: str):
         return rec["algorithm"]
     section, field = key.split(".", 1) if "." in key else ("exp", key)
     cfg = rec["config"]["algorithm"] if section == "algorithm" else rec["config"]["experiment"]
-    return cfg.get(field)
+    return nested_get(cfg, field)
 
 
 def _rows_by_algorithm(by_algorithm: dict[str, list[dict]], metric: str, *, view: str,
@@ -241,7 +242,8 @@ def main() -> None:
     p.add_argument("--results-dir", default="results")
     p.add_argument("--dataset", default=None)
     p.add_argument("--group-by", nargs="*", default=None,
-                   help="fields to group rows by, e.g. algorithm.graph_k algorithm.gnn_arch "
+                   help="fields to group rows by, e.g. algorithm.graphroute.graph.k "
+                        "algorithm.graphroute.gnn.arch "
                         "(default: one row per algorithm)")
     p.add_argument("--selection-metric", default=None,
                    help="metric that chooses the reported round, on VALIDATION. "

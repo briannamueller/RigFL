@@ -27,9 +27,9 @@ sweep:                        # every key is a cartesian axis; algorithm.X auto-
   algorithm.server_lr: [0.001, 0.01]       # fedgh, fedtgp
   algorithm.server_epochs: [1, 100]        # fedtgp (paper trains S=100 server epochs/round)
   # FedDES parameters; its base pool is reused across graph/GNN settings.
-  algorithm.gnn_arch:   [gat, graph_gps, mlp]
-  algorithm.graph_k:    [3, 5, 10]
-  algorithm.hidden_dim: [64, 128]
+  algorithm.graphroute.gnn.arch:       [gat, graph_gps, mlp]
+  algorithm.graphroute.graph.k:        [3, 5, 10]
+  algorithm.graphroute.gnn.hidden_dim: [64, 128]
 
 # Each complete assignment of the parameters an algorithm defines is a candidate.
 # Seeds are replicates of each complete hyperparameter configuration.
@@ -47,6 +47,6 @@ tuning:
     - algorithm.t_end
     - algorithm.server_lr
     - algorithm.server_epochs
-    - algorithm.gnn_arch
-    - algorithm.graph_k
-    - algorithm.hidden_dim
+    - algorithm.graphroute.gnn.arch
+    - algorithm.graphroute.graph.k
+    - algorithm.graphroute.gnn.hidden_dim

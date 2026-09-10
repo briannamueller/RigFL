@@ -53,10 +53,14 @@ def _rec(algorithm, seed, result_acc, **algorithm_cfg):
     }
 
 
+def _feddes_config(k):
+    return {"graphroute": {"graph": {"k": k}}}
+
+
 def test_field_reads_algorithm_and_experiment_and_name():
-    rec = _rec("feddes", 0, 0.7, graph_k=5)
+    rec = _rec("feddes", 0, 0.7, **_feddes_config(5))
     assert _field(rec, "algorithm") == "feddes"
-    assert _field(rec, "algorithm.graph_k") == 5
+    assert _field(rec, "algorithm.graphroute.graph.k") == 5
     assert _field(rec, "exp.batch") == 32
     assert _field(rec, "batch") == 32          # bare -> experiment field
 
@@ -84,20 +88,22 @@ def test_both_omits_an_unsupported_view_instead_of_duplicating_fallback():
 
 def test_group_by_hyperparameter_makes_one_row_per_setting():
     by_algorithm = {"feddes": [
-        _rec("feddes", 0, 0.60, graph_k=3), _rec("feddes", 1, 0.62, graph_k=3),
-        _rec("feddes", 0, 0.80, graph_k=5), _rec("feddes", 1, 0.82, graph_k=5),
+        _rec("feddes", 0, 0.60, **_feddes_config(3)),
+        _rec("feddes", 1, 0.62, **_feddes_config(3)),
+        _rec("feddes", 0, 0.80, **_feddes_config(5)),
+        _rec("feddes", 1, 0.82, **_feddes_config(5)),
     ]}
-    rows = _rows(by_algorithm, ["algorithm.graph_k"])
-    assert set(rows) == {"feddes graph_k=3", "feddes graph_k=5"}
-    assert rows["feddes graph_k=3"]["seeds"] == 2                 # 2 seeds per setting
-    assert abs(rows["feddes graph_k=3"]["test_mean"] - 0.61) < 1e-9
-    assert abs(rows["feddes graph_k=5"]["test_mean"] - 0.81) < 1e-9
+    rows = _rows(by_algorithm, ["algorithm.graphroute.graph.k"])
+    assert set(rows) == {"feddes k=3", "feddes k=5"}
+    assert rows["feddes k=3"]["seeds"] == 2
+    assert abs(rows["feddes k=3"]["test_mean"] - 0.61) < 1e-9
+    assert abs(rows["feddes k=5"]["test_mean"] - 0.81) < 1e-9
 
 
 def test_group_by_rejects_unlabelled_algorithm_variants():
     records = {"feddes": [
-        _rec("feddes", 0, 0.60, graph_k=3),
-        _rec("feddes", 1, 0.80, graph_k=5),
+        _rec("feddes", 0, 0.60, **_feddes_config(3)),
+        _rec("feddes", 1, 0.80, **_feddes_config(5)),
     ]}
 
     with pytest.raises(ValueError, match="multiple algorithm configurations"):
@@ -106,13 +112,13 @@ def test_group_by_rejects_unlabelled_algorithm_variants():
 
 def test_group_by_keeps_algorithms_separate():
     by_algorithm = {
-        "feddes": [_rec("feddes", 0, 0.8, graph_k=5)],
+        "feddes": [_rec("feddes", 0, 0.8, **_feddes_config(5))],
         "local": [_rec("local", 0, 0.5)],
     }
-    rows = _rows(by_algorithm, ["algorithm.graph_k"])
-    # local has no graph_k -> its own row labelled with None; feddes distinct
-    assert "feddes graph_k=5" in rows
-    assert "local graph_k=None" in rows
+    rows = _rows(by_algorithm, ["algorithm.graphroute.graph.k"])
+    # Local has no GraphRoute k, so it gets its own row labelled with None.
+    assert "feddes k=5" in rows
+    assert "local k=None" in rows
 
 
 def _cond_rec(algorithm, seed, *, dataset="cifar10", partition_id="partition-a",
@@ -211,8 +217,8 @@ def test_local_is_paired_within_its_own_experiment():
 
 def test_one_algorithm_swept_over_its_own_settings_gets_separate_rows():
     rows = _rows({"feddes": [
-        _cond_rec("feddes", 0, algorithm_cfg={"graph_k": 3}),
-        _cond_rec("feddes", 0, algorithm_cfg={"graph_k": 9}),
+        _cond_rec("feddes", 0, algorithm_cfg=_feddes_config(3)),
+        _cond_rec("feddes", 0, algorithm_cfg=_feddes_config(9)),
     ]})
     assert len(rows) == 2 and all("variant" in k for k in rows)
 
@@ -234,11 +240,11 @@ def test_sweep_task_rejects_an_unknown_setting(tmp_path):
                                     "experiment": {"dataset": "cifar10", "seed": 0},
                                     "algorithm_config": algorithm_config}) + "\n")
 
-    write({"graf_k": 7})
-    with pytest.raises(SystemExit, match="graf_k"):
+    write({"graphroute": {"graph": {"kk": 7}}})
+    with pytest.raises(SystemExit, match="graphroute.graph.kk"):
         run_task(str(grid), 1, tmp_path, dry_run=True)
 
-    write({"graph_k": 7})                      # the correct spelling still runs
+    write(_feddes_config(7))
     run_task(str(grid), 1, tmp_path, dry_run=True)
 
 
@@ -246,11 +252,11 @@ def test_group_by_still_separates_experiments():
     """--group-by says how to label rows, not that different datasets may be
     averaged together as extra seeds."""
     recs = {"feddes": [
-        _cond_rec("feddes", 0, partition_id="partition-a", algorithm_cfg={"graph_k": 5}),
-        _cond_rec("feddes", 1, partition_id="partition-a", algorithm_cfg={"graph_k": 5}),
-        _cond_rec("feddes", 0, partition_id="partition-b", algorithm_cfg={"graph_k": 5}),
+        _cond_rec("feddes", 0, partition_id="partition-a", algorithm_cfg=_feddes_config(5)),
+        _cond_rec("feddes", 1, partition_id="partition-a", algorithm_cfg=_feddes_config(5)),
+        _cond_rec("feddes", 0, partition_id="partition-b", algorithm_cfg=_feddes_config(5)),
     ]}
-    rows = _rows(recs, ["algorithm.graph_k"])
+    rows = _rows(recs, ["algorithm.graphroute.graph.k"])
     assert len(rows) == 2, rows                  # distinct partitions stay apart
     assert sorted(s["seeds"] for s in rows.values()) == [1, 2]
 
@@ -268,11 +274,11 @@ def test_experiments_differing_only_in_an_unlabelled_field_stay_apart():
                     "num_clients": 20, "num_classes": 10,
                     "validation_fraction": 0.2, "input_kind": "image",
                     "seed": seed, "batch": batch},
-                           "algorithm": {"graph_k": 5}},
+                           "algorithm": _feddes_config(5)},
                 "result": _history(.7, .6)}
 
     recs = {"feddes": [rec(0, 32), rec(1, 32), rec(0, 64)]}
-    for rows in (_rows(recs), _rows(recs, ["algorithm.graph_k"])):
+    for rows in (_rows(recs), _rows(recs, ["algorithm.graphroute.graph.k"])):
         assert len(rows) == 2, rows
         assert sorted(s["seeds"] for s in rows.values()) == [1, 2]
         assert any("batch=64" in k for k in rows)      # labelled by what differs

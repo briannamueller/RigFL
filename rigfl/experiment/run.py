@@ -27,6 +27,8 @@ from rigfl.experiment.config import (ExperimentConfig, ResolvedExperimentConfig,
                                      result_filename)
 from rigfl.experiment.device import resolve_device
 from rigfl.experiment.env import capture_env
+from rigfl.experiment.paths import (filter_for_model, flatten_mapping,
+                                    model_paths, nested_set)
 from rigfl.experiment.registry import (BASELINES, adapter_factory,
                                        algorithm_run_fingerprint, algorithm_spec,
                                        build_algorithm, config_class,
@@ -317,7 +319,7 @@ def build_configs(args) -> tuple[ExperimentConfig, dict]:
                 f'--set {kv}: unknown section "{section}".'
                 f'{_suggest(section, _SET_SECTIONS)}\n'
                 f"Use {', '.join(f'{s}.<field>' for s in sorted(_SET_SECTIONS))}.")
-        (exp_over if section == "exp" else algorithm_over)[field] = val
+        nested_set(exp_over if section == "exp" else algorithm_over, field, val)
     return ExperimentConfig(**exp_over), algorithm_over
 
 
@@ -356,11 +358,13 @@ def run_experiment(algorithm: str, config: str | Path, *,
     exp = resolve_algorithm_models(algorithm, exp)
 
     Cfg = config_class(algorithm)
-    unknown = sorted(set(algorithm_config) - set(Cfg.model_fields))
+    unknown = sorted(
+        set(flatten_mapping(algorithm_config)) - model_paths(Cfg)
+    )
     if unknown:
         raise ValueError(
             f"unknown {algorithm} algorithm setting(s): {', '.join(unknown)}; "
-            f"known: {', '.join(sorted(Cfg.model_fields))}"
+            f"known: {', '.join(sorted(model_paths(Cfg)))}"
         )
     cfg = resolve_algorithm_config(algorithm, exp, Cfg(**algorithm_config))
     return _run_resolved_experiment(algorithm, exp, cfg, data=data, force=force)
@@ -406,8 +410,8 @@ def main() -> None:
     algorithms = (ALL_ALGORITHMS if args.algorithm == "all" else
                   BASELINES if args.algorithm == "baselines" else [args.algorithm])
 
-    known = set().union(*(config_class(n).model_fields for n in algorithms))
-    unknown = sorted(set(algorithm_over) - known)
+    known = set().union(*(model_paths(config_class(n)) for n in algorithms))
+    unknown = sorted(set(flatten_mapping(algorithm_over)) - known)
     if unknown:
         raise SystemExit(
             f"unknown algorithm setting(s): {', '.join(unknown)}\n"
@@ -417,7 +421,7 @@ def main() -> None:
         Cfg = config_class(name)
         algorithm_exp = resolve_algorithm_models(name, exp)
         # Shared overrides are applied only to algorithms that define the field.
-        cfg = Cfg(**{k: v for k, v in algorithm_over.items() if k in Cfg.model_fields})
+        cfg = Cfg(**filter_for_model(algorithm_over, Cfg))
         cfg = resolve_algorithm_config(name, algorithm_exp, cfg)
         try:
             _run_resolved_experiment(

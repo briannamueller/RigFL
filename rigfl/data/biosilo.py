@@ -110,6 +110,9 @@ def biosilo_input_spec(handle) -> tuple[str, dict]:
     spec = {"input_kind": kind, "fields": fields}
     if len(fields) == 1:
         spec["shape"] = fields[0]["shape"]
+    feature_groups = getattr(handle, "feature_groups", {})
+    if feature_groups:
+        spec["feature_groups"] = feature_groups
     return kind, spec
 
 

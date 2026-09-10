@@ -425,7 +425,7 @@ def test_feddes_has_no_separate_model_selection():
     assert "model_family" not in Cfg.model_fields
     assert "local_epochs" not in Cfg.model_fields
     assert "lr" not in Cfg.model_fields
-    assert {"base_epochs", "base_lr"} <= set(Cfg.model_fields)
+    assert set(Cfg.model_fields) == {"graphroute", "cache_dir"}
 
     with pytest.raises(Exception, match="models"):
         Cfg(models=["fedavg_cnn"])
@@ -437,10 +437,12 @@ def test_feddes_relevant_settings_still_change_its_fingerprint():
     exp = resolved_experiment()
     default = resolve_algorithm_config("feddes", exp, config_class("feddes")())
     changed_epochs = resolve_algorithm_config(
-        "feddes", exp, config_class("feddes")(base_epochs=101)
+        "feddes", exp,
+        config_class("feddes")(graphroute={"base": {"epochs": 101}}),
     )
     changed_lr = resolve_algorithm_config(
-        "feddes", exp, config_class("feddes")(base_lr=0.001)
+        "feddes", exp,
+        config_class("feddes")(graphroute={"base": {"lr": 0.001}}),
     )
 
     original = run_fingerprint(exp, default.model_dump())

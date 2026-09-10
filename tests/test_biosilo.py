@@ -19,6 +19,7 @@ from rigfl.data.biosilo import (
 )
 from rigfl.data.builder import MultiTensor
 from rigfl.data.config import BioSiloDatasetSettings, dataset_settings
+from rigfl.data.features import graphroute_feature_extractor
 from rigfl.experiment.artifacts import validate_run_record
 from rigfl.experiment.config import ExperimentConfig
 from rigfl.experiment.registry import config_class
@@ -159,6 +160,42 @@ def test_biosilo_input_forms_map_to_model_families(tmp_path):
 
     assert image_kind == "image"
     assert image_model(torch.randn(1, 4, 240, 240)).shape == (1, 512)
+
+
+def test_biosilo_feature_groups_are_available_to_graphroute():
+    from graphroute.config import GraphConfig
+
+    handle = SimpleNamespace(
+        inputs=[
+            {"name": "ts", "shape": [24, 8], "dtype": "float32"},
+            {"name": "static", "shape": [7], "dtype": "float32"},
+        ],
+        feature_groups={
+            "diagnoses": {"input": "static", "start": 4, "stop": 7}
+        },
+    )
+    _, input_spec = biosilo_input_spec(handle)
+    extractor = graphroute_feature_extractor(
+        GraphConfig(
+            node_feature_source="embedding_concat",
+            edge_feature_source="diagnoses",
+        ),
+        input_spec,
+    )
+    inputs = MultiTensor((torch.randn(3, 24, 8), torch.randn(3, 7)))
+
+    assert input_spec["feature_groups"] == handle.feature_groups
+    assert torch.equal(extractor(inputs), inputs[1][:, 4:7])
+
+
+def test_unknown_dataset_feature_source_is_rejected():
+    from graphroute.config import GraphConfig
+
+    with pytest.raises(ValueError, match="not available for this dataset"):
+        graphroute_feature_extractor(
+            GraphConfig(edge_feature_source="diagnoses"),
+            {"fields": [{"name": "x", "shape": [5]}]},
+        )
 
 
 def test_temporal_models_accept_biosilo_multi_input_batches(tmp_path):
@@ -302,12 +339,11 @@ def test_feddes_accepts_a_biosilo_multi_input_partition(tmp_path):
         "feddes",
         resolved,
         config_class("feddes")(
-            base_epochs=1,
-            base_split_mode="in_sample",
-            gnn_arch="mlp",
-            gnn_epochs=2,
-            gnn_patience=1,
-            calibrate=False,
+            graphroute={
+                "base": {"epochs": 1, "oof_folds": 2},
+                "graph": {"pool_calibrate": False},
+                "gnn": {"arch": "mlp", "epochs": 2, "patience": 1},
+            },
             cache_dir="",
         ),
         torch.device("cpu"),

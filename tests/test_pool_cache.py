@@ -15,6 +15,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
+import pytest
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
@@ -39,12 +40,15 @@ class _ScaledLinear(nn.Module):
         return self.linear(x) * self.scale
 
 
-def _feddes(tmp, **over):
+def _feddes(tmp, *, base=None, graph=None, gnn=None, validation_fraction=0.2):
     torch.manual_seed(0)
     factories = [lambda: nn.Linear(4, 3), lambda: nn.Linear(4, 3)]
-    validation_fraction = over.pop("validation_fraction", 0.2)
     return FedDES(
-        FedDESConfig(cache_dir=tmp, **over), factories, 3,
+        FedDESConfig(
+            cache_dir=tmp,
+            graphroute={"base": base or {}, "graph": graph or {}, "gnn": gnn or {}},
+        ),
+        factories, 3,
         data_id=DATA_ID, model_ids=MODEL_IDS,
         validation_fraction=validation_fraction,
     )
@@ -62,28 +66,112 @@ def test_pool_fp_ignores_gnn_but_tracks_base():
     with tempfile.TemporaryDirectory() as tmp:
         base = _feddes(tmp)._pool_fp()
         # graph/GNN settings must NOT change the pool identity (that's the reuse win)
-        assert _feddes(tmp, gnn_arch="mlp", gnn_epochs=99, graph_k=9)._pool_fp() == base
-        assert _feddes(tmp, gnn_arch="hetero_gat")._pool_fp() == base
         assert _feddes(
-            tmp, use_edge_attr=True, use_sample_residual=True, fallback="wacc"
+            tmp, graph={"k": 9}, gnn={"arch": "mlp", "epochs": 99}
+        )._pool_fp() == base
+        assert _feddes(tmp, gnn={"arch": "hetero_gat"})._pool_fp() == base
+        assert _feddes(
+            tmp, gnn={"use_edge_attr": True, "use_sample_residual": True,
+                      "fallback": "wacc"}
         )._pool_fp() == base
         # base-training settings MUST change it
-        assert _feddes(tmp, base_lr=0.1)._pool_fp() != base
-        assert _feddes(tmp, base_epochs=7)._pool_fp() != base
-        assert _feddes(tmp, base_weighted_by_class=False)._pool_fp() != base
+        assert _feddes(tmp, base={"lr": 0.1})._pool_fp() != base
+        assert _feddes(tmp, base={"epochs": 7})._pool_fp() != base
+        assert _feddes(tmp, base={"weighted_by_class": False})._pool_fp() != base
         assert _feddes(tmp, validation_fraction=0.4)._pool_fp() != base
 
 
-def test_graphroute_config_forwards_gnn_options():
+def test_graphroute_config_forwards_modeling_settings():
     with tempfile.TemporaryDirectory() as tmp:
         model = _feddes(
-            tmp, use_edge_attr=True, use_sample_residual=True, fallback="wacc"
+            tmp,
+            base={"es_patience": 7},
+            graph={
+                "node_feature_source": "feature_space",
+                "edge_feature_source": "embedding_mean",
+                "neighbor_mode": "class_balanced",
+            },
+            gnn={"use_edge_attr": True, "use_sample_residual": True,
+                 "fallback": "wacc"},
         )
         cfg = model._graphroute_config(0, torch.device("cpu"))
 
+    assert cfg.base.es_patience == 7
+    assert cfg.graph.node_feature_source == "feature_space"
+    assert cfg.graph.edge_feature_source == "embedding_mean"
+    assert cfg.graph.neighbor_mode == "class_balanced"
     assert cfg.gnn.use_edge_attr is True
     assert cfg.gnn.use_sample_residual is True
     assert cfg.gnn.fallback == "wacc"
+
+
+def test_base_training_uses_the_nested_graphroute_settings(monkeypatch):
+    captured = {}
+
+    def fake_train(*args, **kwargs):
+        captured.update(kwargs)
+        return [nn.Linear(4, 3)], torch.zeros(4, 1, 3), torch.zeros(4)
+
+    monkeypatch.setattr("graphroute.pool.train_pool_oof", fake_train)
+    model = _feddes(
+        "",
+        base={
+            "oof_folds": 4,
+            "batch_size": 17,
+            "epochs": 23,
+            "es_patience": 6,
+            "lr": 0.002,
+            "optimizer": "SGD",
+            "weight_decay": 0.03,
+            "weighted_by_class": False,
+            "es_metric": "val_bacc",
+        },
+    )
+    dataset = TensorDataset(torch.randn(4, 4), torch.randint(0, 3, (4,)))
+
+    model._train(dataset, dataset, torch.device("cpu"), client_id=2)
+
+    assert captured == {
+        "n_folds": 4,
+        "inner_val_ratio": 0.2,
+        "batch_size": 17,
+        "max_epochs": 23,
+        "patience": 6,
+        "lr": 0.002,
+        "optimizer_name": "SGD",
+        "weight_decay": 0.03,
+        "task": "classification",
+        "num_classes": 3,
+        "weighted_by_class": False,
+        "es_metric": "val_bacc",
+        "seed": 2,
+        "collate_fn": captured["collate_fn"],
+    }
+
+
+def test_feddes_graphroute_defaults_and_partial_overrides():
+    cfg = FedDESConfig(graphroute={"graph": {"k": 11}})
+
+    assert cfg.graphroute.base.epochs == 100
+    assert cfg.graphroute.base.oof_folds == 3
+    assert cfg.graphroute.base.batch_size == 64
+    assert cfg.graphroute.graph.k == 11
+    assert cfg.graphroute.gnn.epochs == 500
+    assert cfg.graphroute.gnn.patience == 50
+    assert cfg.graphroute.gnn.ens_combination_mode == "hard_weighted_voting"
+    assert cfg.graphroute.gnn.voting_weight_space == "sig"
+
+
+def test_feddes_rejects_old_flat_graphroute_settings():
+    with pytest.raises(Exception, match="base_lr"):
+        FedDESConfig(base_lr=0.01)
+
+
+def test_feddes_rejects_graphroute_owned_pool_models_and_split_train():
+    with pytest.raises(Exception, match="selected by the RigFL experiment"):
+        FedDESConfig(graphroute={"base": {"models": ["mlp32"]}})
+    with pytest.raises(Exception, match="oof_stacking"):
+        FedDESConfig(graphroute={"base": {"split_mode": "split_train"}})
 
 
 def test_pool_fp_tracks_templates_separately_from_readable_names():
@@ -148,12 +236,12 @@ def test_train_or_load_reuses_pool():
     call out of two requests. Stubs ``_train`` so no base training happens.
     """
     with tempfile.TemporaryDirectory() as tmp:
-        m = _feddes(tmp, base_split_mode="in_sample")
+        m = _feddes(tmp)
         calls = {"n": 0}
 
         def fake_train(tr, va, dev, client_id):
             calls["n"] += 1
-            return [f() for f in m.base_factories], None   # (models, oof_logits)
+            return [f() for f in m.base_factories], torch.zeros(1, 2, 3)
 
         m._train = fake_train                              # instance stub: called as (tr, va, dev)
         dev = torch.device("cpu")
@@ -170,9 +258,9 @@ def test_train_or_load_reuses_pool():
 
 
 def test_reused_pool_carries_its_training_measurement(tmp_path):
-    model = _feddes(str(tmp_path), base_split_mode="in_sample")
+    model = _feddes(str(tmp_path))
     model._train = lambda tr, va, dev, cid: (
-        [factory() for factory in model.base_factories], None)
+        [factory() for factory in model.base_factories], torch.zeros(1, 2, 3))
     device = torch.device("cpu")
 
     created = ResourceMonitor(device)
@@ -193,12 +281,12 @@ def test_reused_pool_carries_its_training_measurement(tmp_path):
 def test_pool_measurement_includes_cache_publication(tmp_path, monkeypatch):
     from graphroute import pool_cache
 
-    model = _feddes(str(tmp_path), base_split_mode="in_sample")
+    model = _feddes(str(tmp_path))
     timeline = {"now": 0.0}
 
     def train(tr, va, dev, cid):
         timeline["now"] = 2.0
-        return [factory() for factory in model.base_factories], None
+        return [factory() for factory in model.base_factories], torch.zeros(1, 2, 3)
 
     original_save = pool_cache.save_pool
 
@@ -251,7 +339,9 @@ def test_feddes_uses_rigfls_official_validation_split():
     train_loader = DataLoader(train, batch_size=4)
     validation_loader = DataLoader(validation, batch_size=5)
     algorithm = FedDES(
-        FedDESConfig(calibrate=False, cache_dir=""),
+        FedDESConfig(
+            graphroute={"graph": {"pool_calibrate": False}}, cache_dir=""
+        ),
         [lambda: nn.Linear(4, 3)], 3)
     captured = {}
     artifact = object()
@@ -283,8 +373,12 @@ def test_feddes_publishes_the_training_artifact_layout(tmp_path):
     ]
     algorithm = FedDES(
         FedDESConfig(
-            base_epochs=1, gnn_arch="mlp", gnn_epochs=1, gnn_patience=1,
-            base_oof_folds=2, graph_k=2, hidden_dim=8, calibrate=False,
+            graphroute={
+                "base": {"epochs": 1, "oof_folds": 2},
+                "graph": {"k": 2, "pool_calibrate": False},
+                "gnn": {"arch": "mlp", "epochs": 1, "patience": 1,
+                        "hidden_dim": 8},
+            },
             cache_dir=str(tmp_path),
         ),
         [lambda: nn.Linear(4, 3)], 3, data_id=DATA_ID,
@@ -316,7 +410,9 @@ def test_cache_dir_is_operational_not_scientific():
     Cfg = config_class("feddes")
     a = Cfg(cache_dir="/scratch/a").model_dump()
     b = Cfg(cache_dir="/scratch/b").model_dump()
-    other = Cfg(cache_dir="/scratch/a", graph_k=9).model_dump()
+    other = Cfg(
+        cache_dir="/scratch/a", graphroute={"graph": {"k": 9}}
+    ).model_dump()
 
     assert run_fingerprint(exp, a) == run_fingerprint(exp, b)
     assert result_filename(exp, "feddes", run_fingerprint(exp, a)) == \

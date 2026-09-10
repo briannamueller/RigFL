@@ -20,6 +20,7 @@ import pytest
 from rigfl.eval.metrics import register, unregister
 from rigfl.experiment.config import ExperimentConfig
 from rigfl.experiment.launch import expand
+from rigfl.experiment.paths import nested_get
 from rigfl.experiment.registry import algorithm_run_fingerprint, config_class
 from rigfl.experiment.tuning import (TuningError, candidate_index, candidate_of,
                                      load_manifest, manifest_candidates,
@@ -41,10 +42,11 @@ def _spec(**over) -> dict:
         # of this configuration actually produces -- the validator checks that.
         "base": {"experiment": {"rounds": 1, "eval_gap": 1}},
         "sweep": {"seed": [0, 1, 2],
-                  "algorithm.base_lr": [0.01, 0.1],
-                  "algorithm.graph_k": [3, 5]},
+                  "algorithm.graphroute.base.lr": [0.01, 0.1],
+                  "algorithm.graphroute.graph.k": [3, 5]},
         "tuning": {"strategy": "grid",
-                   "parameters": ["algorithm.base_lr", "algorithm.graph_k"],
+                   "parameters": ["algorithm.graphroute.base.lr",
+                                  "algorithm.graphroute.graph.k"],
                    "replicate_axis": "seed"},
     }
     spec.update(over)
@@ -117,26 +119,33 @@ def _selected(artifact, group=0, view="global"):
 
 def test_a_2x2x3_tuning_space_produces_twelve_candidates():
     _, manifest = expand(_spec(sweep={"seed": [0, 1, 2],
-                                      "algorithm.base_lr": [0.01, 0.1],
-                                      "algorithm.base_epochs": [1, 5],
-                                      "algorithm.graph_k": [3, 5, 10]},
+                                      "algorithm.graphroute.base.lr": [0.01, 0.1],
+                                      "algorithm.graphroute.base.epochs": [1, 5],
+                                      "algorithm.graphroute.graph.k": [3, 5, 10]},
                                tuning={"strategy": "grid",
-                                       "parameters": ["algorithm.base_lr", "algorithm.base_epochs",
-                                                      "algorithm.graph_k"],
+                                       "parameters": ["algorithm.graphroute.base.lr",
+                                                      "algorithm.graphroute.base.epochs",
+                                                      "algorithm.graphroute.graph.k"],
                                        "replicate_axis": "seed"}))
     assert len(manifest["candidates"]) == 2 * 2 * 3 == 12
     # every candidate names every tuning parameter -- not one axis at a time
     for c in manifest["candidates"]:
-        assert set(c["parameters"]) == {"algorithm.base_lr", "algorithm.base_epochs",
-                                        "algorithm.graph_k"}
+        assert set(c["parameters"]) == {
+            "algorithm.graphroute.base.lr",
+            "algorithm.graphroute.base.epochs",
+            "algorithm.graphroute.graph.k",
+        }
 
 
 def test_three_seeds_make_36_tasks_without_changing_the_12_candidates():
-    base = dict(sweep={"seed": [0], "algorithm.base_lr": [0.01, 0.1],
-                       "algorithm.base_epochs": [1, 5], "algorithm.graph_k": [3, 5, 10]},
+    base = dict(sweep={"seed": [0],
+                       "algorithm.graphroute.base.lr": [0.01, 0.1],
+                       "algorithm.graphroute.base.epochs": [1, 5],
+                       "algorithm.graphroute.graph.k": [3, 5, 10]},
                 tuning={"strategy": "grid",
-                        "parameters": ["algorithm.base_lr", "algorithm.base_epochs",
-                                       "algorithm.graph_k"],
+                        "parameters": ["algorithm.graphroute.base.lr",
+                                       "algorithm.graphroute.base.epochs",
+                                       "algorithm.graphroute.graph.k"],
                         "replicate_axis": "seed"})
     one_grid, one = expand(_spec(**base))
     three = dict(base, sweep=dict(base["sweep"], seed=[0, 1, 2]))
@@ -221,10 +230,10 @@ def test_untuned_model_family_axis_remains_a_separate_condition(monkeypatch):
             "seed": [0, 1],
             "model_family": [
                 "image_heterogeneous_3", "image_pair"],
-            "algorithm.graph_k": [3, 5],
+            "algorithm.graphroute.graph.k": [3, 5],
         },
         "tuning": {
-            "parameters": ["algorithm.graph_k"],
+            "parameters": ["algorithm.graphroute.graph.k"],
             "replicate_axis": "seed",
         },
     })
@@ -251,7 +260,7 @@ def test_task_ids_and_candidate_ids_are_distinct_numbers():
 def _interaction_case():
     """A grid where choosing each axis independently picks the wrong point.
 
-    Marginal means favour lr=0.1 (0.775 vs 0.725) and graph_k=5 (0.85 vs 0.65),
+    Marginal means favour lr=0.1 (0.775 vs 0.725) and k=5 (0.85 vs 0.65),
     so a per-axis search lands on (0.1, 5) = 0.75. The best joint assignment is
     (0.01, 5) = 0.95.
     """
@@ -260,7 +269,9 @@ def _interaction_case():
     for c in manifest["candidates"]:
         p = c["parameters"]
         val[c["id"]] = {(0.01, 3): 0.50, (0.01, 5): 0.95,
-                        (0.1, 3): 0.80, (0.1, 5): 0.75}[(p["algorithm.base_lr"], p["algorithm.graph_k"])]
+                        (0.1, 3): 0.80, (0.1, 5): 0.75}[
+                            (p["algorithm.graphroute.base.lr"],
+                             p["algorithm.graphroute.graph.k"])]
     recs = _records(grid, manifest, lambda cid: _flat(val[cid], 0.5))
     return grid, manifest, recs, val
 
@@ -271,8 +282,10 @@ def test_the_selected_candidate_is_one_complete_parameter_combination():
     cid = _selected(art)
     params = next(c["parameters"] for c in art["groups"][0]["candidates"]
                   if c["id"] == cid)
-    assert set(params) == {"algorithm.base_lr", "algorithm.graph_k"}       # complete
-    assert params == {"algorithm.base_lr": 0.01, "algorithm.graph_k": 5}   # the joint optimum
+    assert set(params) == {"algorithm.graphroute.base.lr",
+                           "algorithm.graphroute.graph.k"}
+    assert params == {"algorithm.graphroute.base.lr": 0.01,
+                      "algorithm.graphroute.graph.k": 5}
 
 
 def test_values_are_not_selected_independently_per_parameter():
@@ -288,8 +301,10 @@ def test_values_are_not_selected_independently_per_parameter():
             buckets.setdefault(c["parameters"][axis], []).append(val[c["id"]])
         return max(buckets, key=lambda k: sum(buckets[k]) / len(buckets[k]))
 
-    per_axis = {a: marginal(a) for a in ("algorithm.base_lr", "algorithm.graph_k")}
-    assert per_axis == {"algorithm.base_lr": 0.1, "algorithm.graph_k": 5}
+    per_axis = {a: marginal(a) for a in (
+        "algorithm.graphroute.base.lr", "algorithm.graphroute.graph.k")}
+    assert per_axis == {"algorithm.graphroute.base.lr": 0.1,
+                        "algorithm.graphroute.graph.k": 5}
     assert params != per_axis          # the joint winner is a different point
 
 
@@ -297,7 +312,8 @@ def test_values_are_not_selected_independently_per_parameter():
 
 def test_non_tuned_experiment_setting_creates_separate_tuning_groups():
     spec = _spec(sweep={"seed": [0, 1, 2], "batch": [16, 32],
-                        "algorithm.base_lr": [0.01, 0.1], "algorithm.graph_k": [3, 5]})
+                        "algorithm.graphroute.base.lr": [0.01, 0.1],
+                        "algorithm.graphroute.graph.k": [3, 5]})
     grid, manifest = expand(spec)
     assert manifest["condition_axes"] == ["exp.batch"]
     assert len(manifest["candidates"]) == 4
@@ -329,10 +345,12 @@ def test_whatever_is_declared_the_replicate_axis_does_not_split_groups():
     user declares, not only for one called ``seed`` -- ``seed`` happens to sit
     outside the collector's condition fields already, so the rule would look
     satisfied while doing nothing."""
-    spec = _spec(sweep={"batch": [16, 32], "algorithm.base_lr": [0.01, 0.1],
-                        "algorithm.graph_k": [3, 5]},
+    spec = _spec(sweep={"batch": [16, 32],
+                        "algorithm.graphroute.base.lr": [0.01, 0.1],
+                        "algorithm.graphroute.graph.k": [3, 5]},
                  tuning={"strategy": "grid",
-                         "parameters": ["algorithm.base_lr", "algorithm.graph_k"],
+                         "parameters": ["algorithm.graphroute.base.lr",
+                                        "algorithm.graphroute.graph.k"],
                          "replicate_axis": "batch"})
     grid, manifest = expand(spec)
     assert manifest["replicate_axis"] == "exp.batch"
@@ -347,12 +365,14 @@ def test_whatever_is_declared_the_replicate_axis_does_not_split_groups():
 
 def test_declaring_an_experiment_setting_as_tuned_makes_it_a_candidate():
     spec = _spec(sweep={"seed": [0, 1, 2], "batch": [16, 32],
-                        "algorithm.base_lr": [0.01, 0.1], "algorithm.graph_k": [3, 5]},
+                        "algorithm.graphroute.base.lr": [0.01, 0.1],
+                        "algorithm.graphroute.graph.k": [3, 5]},
                  tuning={"strategy": "grid",
-                         "parameters": ["exp.batch", "algorithm.base_lr", "algorithm.graph_k"],
+                         "parameters": ["exp.batch", "algorithm.graphroute.base.lr",
+                                        "algorithm.graphroute.graph.k"],
                          "replicate_axis": "seed"})
     grid, manifest = expand(spec)
-    assert len(manifest["candidates"]) == 8       # 2 batches x 2 lr x 2 graph_k
+    assert len(manifest["candidates"]) == 8       # 2 batches x 2 lr x 2 k values
     assert manifest["condition_axes"] == []
     assert all("exp.batch" in c["parameters"] for c in manifest["candidates"])
 
@@ -364,8 +384,9 @@ def test_declaring_an_experiment_setting_as_tuned_makes_it_a_candidate():
 
 def test_different_algorithms_are_ranked_separately():
     spec = _spec(algorithms=["feddes", "fedproto"],
-                 sweep={"seed": [0], "algorithm.base_lr": [0.01, 0.1],
-                        "algorithm.graph_k": [3, 5]})
+                 sweep={"seed": [0],
+                        "algorithm.graphroute.base.lr": [0.01, 0.1],
+                        "algorithm.graphroute.graph.k": [3, 5]})
     grid, manifest = expand(spec)
     recs = _records(grid, manifest, lambda cid: _flat(0.5 + 0.01 * cid, 0.5))
     art = _rank(recs, manifest)
@@ -379,20 +400,21 @@ def test_different_algorithms_are_ranked_separately():
 def test_algorithm_specific_axis_makes_no_duplicate_candidates_for_other_algorithms():
     """Each algorithm gets only the candidate axes its configuration defines."""
     spec = _spec(algorithms=["feddes", "local"],
-                 sweep={"seed": [0], "algorithm.base_lr": [0.01, 0.1],
+                 sweep={"seed": [0], "algorithm.graphroute.base.lr": [0.01, 0.1],
                         "algorithm.lr": [0.01, 0.1],
-                        "algorithm.graph_k": [3, 5, 10]},
+                        "algorithm.graphroute.graph.k": [3, 5, 10]},
                  tuning={"strategy": "grid",
-                         "parameters": ["algorithm.base_lr", "algorithm.lr",
-                                        "algorithm.graph_k"],
+                         "parameters": ["algorithm.graphroute.base.lr", "algorithm.lr",
+                                        "algorithm.graphroute.graph.k"],
                          "replicate_axis": "seed"})
     _, manifest = expand(spec)
     per_algorithm: dict[str, list] = {}
     for c in manifest["candidates"]:
         per_algorithm.setdefault(c["algorithm"], []).append(c["parameters"])
-    assert len(per_algorithm["feddes"]) == 6            # 2 lr x 3 graph_k
+    assert len(per_algorithm["feddes"]) == 6            # 2 lr x 3 k values
     assert len(per_algorithm["local"]) == 2             # lr only
-    assert all("algorithm.graph_k" not in p for p in per_algorithm["local"])
+    assert all("algorithm.graphroute.graph.k" not in p
+               for p in per_algorithm["local"])
     assert len({json.dumps(p, sort_keys=True) for p in per_algorithm["local"]}) == 2
 
 
@@ -601,12 +623,14 @@ def test_allow_incomplete_ranks_it_and_records_what_was_missing():
 def test_unknown_tuning_parameter_fails_clearly():
     with pytest.raises(SystemExit) as e:
         expand(_spec(tuning={"strategy": "grid",
-                             "parameters": ["algorithm.base_lr", "algorithm.hidden"],
+                             "parameters": ["algorithm.graphroute.base.lr",
+                                            "algorithm.hidden"],
                              "replicate_axis": "seed"}))
     msg = str(e.value)
     assert "Unknown tuning parameter: algorithm.hidden" in msg
     assert "not a swept axis" in msg
-    assert "algorithm.base_lr" in msg and "algorithm.graph_k" in msg  # axes it could name
+    assert "algorithm.graphroute.base.lr" in msg
+    assert "algorithm.graphroute.graph.k" in msg
 
 
 def test_tuning_parameter_naming_an_unswept_field_fails():
@@ -617,36 +641,40 @@ def test_tuning_parameter_naming_an_unswept_field_fails():
 
 def test_invalid_replicate_axis_fails_clearly():
     with pytest.raises(SystemExit) as e:
-        expand(_spec(tuning={"strategy": "grid", "parameters": ["algorithm.base_lr"],
+        expand(_spec(tuning={"strategy": "grid",
+                             "parameters": ["algorithm.graphroute.base.lr"],
                              "replicate_axis": "repetition"}))
     assert "Unknown replicate axis: exp.repetition" in str(e.value)
 
 
 def test_missing_replicate_axis_fails_clearly():
     with pytest.raises(SystemExit, match="tuning.replicate_axis is unset"):
-        expand(_spec(tuning={"strategy": "grid", "parameters": ["algorithm.base_lr"]}))
+        expand(_spec(tuning={"strategy": "grid",
+                             "parameters": ["algorithm.graphroute.base.lr"]}))
 
 
 def test_replicate_axis_cannot_also_be_a_tuning_parameter():
     with pytest.raises(SystemExit, match="both a tuning parameter and the replicate"):
         expand(_spec(tuning={"strategy": "grid",
-                             "parameters": ["algorithm.base_lr", "seed"],
+                             "parameters": ["algorithm.graphroute.base.lr", "seed"],
                              "replicate_axis": "seed"}))
 
 
 def test_duplicate_tuning_parameters_are_rejected():
     with pytest.raises(SystemExit, match="Duplicate tuning parameter"):
         expand(_spec(tuning={"strategy": "grid",
-                             "parameters": ["algorithm.base_lr", "exp.batch", "batch"],
+                             "parameters": ["algorithm.graphroute.base.lr",
+                                            "exp.batch", "batch"],
                              "replicate_axis": "seed",
                              },
                      sweep={"seed": [0], "batch": [16, 32],
-                            "algorithm.base_lr": [0.01, 0.1]}))
+                            "algorithm.graphroute.base.lr": [0.01, 0.1]}))
 
 
 def test_only_grid_strategy_is_accepted():
     with pytest.raises(SystemExit, match="Only grid is implemented"):
-        expand(_spec(tuning={"strategy": "bayesian", "parameters": ["algorithm.base_lr"],
+        expand(_spec(tuning={"strategy": "bayesian",
+                             "parameters": ["algorithm.graphroute.base.lr"],
                              "replicate_axis": "seed"}))
 
 
@@ -713,7 +741,8 @@ def test_the_selected_configuration_is_complete_and_directly_runnable(tmp_path):
     # the tuned values are the winning candidate's, jointly
     winner = next(c for c in manifest["candidates"] if c["id"] == _selected(art))
     for path, value in winner["parameters"].items():
-        assert regrid[0]["algorithm_config"][path.split(".", 1)[1]] == value
+        assert nested_get(
+            regrid[0]["algorithm_config"], path.split(".", 1)[1]) == value
 
     # seeds stay parameterised rather than baked in as one arbitrary replicate
     assert spec["sweep"]["seed"] == manifest["replicate_values"]
@@ -736,8 +765,8 @@ def test_the_selected_configuration_is_complete_and_directly_runnable(tmp_path):
 def test_multiple_output_groups_cannot_silently_overwrite_one_another(tmp_path):
     spec = _spec(algorithms=["feddes", "fedproto"],
                  sweep={"seed": [0], "shared_dim": [64, 128],
-                        "algorithm.base_lr": [0.01, 0.1],
-                        "algorithm.graph_k": [3, 5]})
+                        "algorithm.graphroute.base.lr": [0.01, 0.1],
+                        "algorithm.graphroute.graph.k": [3, 5]})
     grid, manifest = expand(spec)
     recs = _records(grid, manifest, lambda cid: _flat(0.5 + 0.01 * cid, 0.5))
     art = _rank(recs, manifest, views=VIEWS)
@@ -791,23 +820,25 @@ def test_results_are_placed_by_their_recorded_parameter_values():
 def test_a_result_matching_no_candidate_is_reported_not_invented():
     grid, manifest = expand(_spec())
     recs = _records(grid, manifest, lambda cid: _flat(0.6, 0.5))
-    recs[0]["config"]["algorithm"]["graph_k"] = 999            # never swept
+    recs[0]["config"]["algorithm"]["graphroute"]["graph"]["k"] = 999
     art = _rank(recs, manifest)
     assert len(art["unassigned_records"]) == 1
-    assert art["unassigned_records"][0]["parameters"]["algorithm.graph_k"] == 999
+    assert art["unassigned_records"][0]["parameters"][
+        "algorithm.graphroute.graph.k"] == 999
     assert any("match no candidate" in w for w in art["warnings"])
 
 
 def test_fixed_algorithm_settings_define_separate_tuning_groups():
     grid, manifest = expand(_spec(sweep={
-        "seed": [0], "algorithm.base_lr": [0.01], "algorithm.graph_k": [3]
+        "seed": [0], "algorithm.graphroute.base.lr": [0.01],
+        "algorithm.graphroute.graph.k": [3]
     }))
     recs = _records(grid, manifest, lambda cid: _flat(0.6, 0.5))
     recs[0]["config"]["algorithm"] = config_class("feddes")(
         **recs[0]["config"]["algorithm"]
     ).model_dump()
     changed = json.loads(json.dumps(recs[0]))
-    changed["config"]["algorithm"]["gnn_arch"] = "mlp"
+    changed["config"]["algorithm"]["graphroute"]["gnn"]["arch"] = "mlp"
     changed["_source_file"] = "different_fixed_setting.json"
 
     placed, conditions, unassigned = place_records(recs + [changed], manifest)
@@ -815,14 +846,16 @@ def test_fixed_algorithm_settings_define_separate_tuning_groups():
     assert not unassigned
     assert len(placed) == 2
     values = {
-        condition["algorithm.gnn_arch"] for condition in conditions.values()
+        condition["algorithm.graphroute.gnn.arch"]
+        for condition in conditions.values()
     }
     assert values == {"gat", "mlp"}
 
 
 def test_duplicate_tuning_result_is_rejected():
     grid, manifest = expand(_spec(sweep={
-        "seed": [0], "algorithm.base_lr": [0.01], "algorithm.graph_k": [3]
+        "seed": [0], "algorithm.graphroute.base.lr": [0.01],
+        "algorithm.graphroute.graph.k": [3]
     }))
     recs = _records(grid, manifest, lambda cid: _flat(0.6, 0.5))
     duplicate = json.loads(json.dumps(recs[0]))
@@ -836,16 +869,28 @@ def test_duplicate_tuning_result_is_rejected():
 
 def test_string_and_numeric_spellings_of_a_value_match(tmp_path):
     """CLI-style sweep values are strings while result values are numeric."""
-    grid, manifest = expand(_spec(sweep={"seed": "0-2", "algorithm.base_lr": "0.01,0.1",
-                                         "algorithm.graph_k": "3,5"}))
+    grid, manifest = expand(_spec(sweep={
+        "seed": "0-2",
+        "algorithm.graphroute.base.lr": "0.01,0.1",
+        "algorithm.graphroute.graph.k": "3,5",
+    }))
     assert manifest["replicate_values"] == [0, 1, 2]
     recs = []
     for t in grid:
-        recs.append({"algorithm": t["algorithm"],
-                     "config": {"experiment": dict(t["experiment"], seed=int(t["experiment"]["seed"])),
-                                "algorithm": {k: float(v) if k == "base_lr" else int(v)
-                                           for k, v in t["algorithm_config"].items()}},
-                     "result": _flat(0.6, 0.5)})
+        algorithm_config = json.loads(json.dumps(t["algorithm_config"]))
+        algorithm_config["graphroute"]["base"]["lr"] = float(
+            algorithm_config["graphroute"]["base"]["lr"])
+        algorithm_config["graphroute"]["graph"]["k"] = int(
+            algorithm_config["graphroute"]["graph"]["k"])
+        recs.append({
+            "algorithm": t["algorithm"],
+            "config": {
+                "experiment": dict(
+                    t["experiment"], seed=int(t["experiment"]["seed"])),
+                "algorithm": algorithm_config,
+            },
+            "result": _flat(0.6, 0.5),
+        })
     _, _, unassigned = place_records(recs, manifest)
     assert not unassigned
 
@@ -908,7 +953,8 @@ def _collect(monkeypatch, *argv):
 def test_select_out_without_a_manifest_fails_clearly(tmp_path, monkeypatch):
     d, _ = _sweep_dir(tmp_path, {"name": "plain", "algorithms": ["feddes"],
                                  "base": {"experiment": {"rounds": 1, "eval_gap": 1}},
-                                 "sweep": {"seed": [0, 1], "algorithm.graph_k": [3, 5]}})
+                                 "sweep": {"seed": [0, 1],
+                                           "algorithm.graphroute.graph.k": [3, 5]}})
     with pytest.raises(SystemExit) as e:
         _collect(monkeypatch, "--results-dir", d, "--selection-metric", "accuracy",
                  "--rank", "--select-out", tmp_path / "out")
@@ -921,7 +967,8 @@ def test_rank_without_a_manifest_keeps_the_ordinary_table_ranking(tmp_path,
                                                                   monkeypatch, capsys):
     d, _ = _sweep_dir(tmp_path, {"name": "plain", "algorithms": ["feddes"],
                                  "base": {"experiment": {"rounds": 1, "eval_gap": 1}},
-                                 "sweep": {"seed": [0, 1], "algorithm.graph_k": [3, 5]}})
+                                 "sweep": {"seed": [0, 1],
+                                           "algorithm.graphroute.graph.k": [3, 5]}})
     _collect(monkeypatch, "--results-dir", d, "--selection-metric", "accuracy", "--rank")
     out = capsys.readouterr().out
     assert "ranked by VALIDATION (test never ranks):" in out

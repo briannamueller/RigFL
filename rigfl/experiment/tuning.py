@@ -9,6 +9,7 @@ from __future__ import annotations
 import itertools
 import json
 import statistics
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -20,6 +21,8 @@ from rigfl.experiment.artifacts import (ResultValidationError, atomic_write_json
                                         atomic_write_text, dumps, loads, read_json)
 from rigfl.experiment.config import (ExperimentConfig, algorithm_identity,
                                      fingerprint, hashable)
+from rigfl.experiment.paths import (flatten_mapping, model_has_path,
+                                    nested_delete, nested_get)
 from rigfl.experiment.registry import algorithm_spec, config_class
 
 #: Bumped when the manifest layout changes in a way a reader must notice.
@@ -207,14 +210,15 @@ def applicable_parameters(algorithm: str, parameters: list[str]) -> list[str]:
     Algorithm fields apply only where defined, and experiment fields apply only
     where used. Other axes do not mint duplicate "not applicable" candidates.
     """
-    fields = set(config_class(algorithm).model_fields)
     ignored_experiment_fields = set(
         algorithm_spec(algorithm).ignored_experiment_fields
     )
     out = []
     for p in parameters:
         section, name = _split(p)
-        if section == "algorithm" and name not in fields:
+        if section == "algorithm" and not model_has_path(
+            config_class(algorithm), name
+        ):
             continue
         if section == "exp" and name in ignored_experiment_fields:
             continue
@@ -345,7 +349,7 @@ def run_parameters(record: dict, parameters: list[str], algorithm: str) -> dict:
     for p in applicable_parameters(algorithm, parameters):
         section, name = _split(p)
         source = cfg.get("algorithm", {}) if section == "algorithm" else cfg.get("experiment", {})
-        out[p] = source.get(name)
+        out[p] = nested_get(source, name)
     return out
 
 
@@ -354,7 +358,7 @@ def replicate_of(record: dict, manifest: dict):
     section, name = _split(manifest["replicate_axis"])
     cfg = record.get("config", {})
     source = cfg.get("algorithm", {}) if section == "algorithm" else cfg.get("experiment", {})
-    return _norm(source.get(name))
+    return _norm(nested_get(source, name))
 
 
 def candidate_of(record: dict, manifest: dict, index: dict[tuple, int]) -> Optional[int]:
@@ -392,14 +396,15 @@ def effective_condition(record: dict, manifest: dict) -> dict:
     cond = {k: v for k, v in condition_fields(record).items() if k not in drop_exp}
     exp = record.get("config", {}).get("experiment", {})
     acfg = algorithm_identity(record.get("config", {}).get("algorithm", {}))
-    for name, value in acfg.items():
+    flat_acfg = flatten_mapping(acfg)
+    for name, value in flat_acfg.items():
         if name not in drop_algorithm:
             cond[f"algorithm.{name}"] = hashable(value)
     for axis in manifest["condition_axes"]:
         section, name = _split(axis)
         if section == "algorithm":
-            if name in acfg:
-                cond[f"algorithm.{name}"] = hashable(acfg[name])
+            if name in flat_acfg:
+                cond[f"algorithm.{name}"] = hashable(flat_acfg[name])
         elif (
             axis in applicable_parameters(record["algorithm"], [axis])
             and name not in cond
@@ -716,13 +721,13 @@ def selected_configuration(record: dict, manifest: dict) -> dict:
         for key, value in record.get("config", {}).get("experiment", {}).items()
         if key in ExperimentConfig.model_fields
     }
-    acfg = dict(record.get("config", {}).get("algorithm", {}))
+    acfg = deepcopy(record.get("config", {}).get("algorithm", {}))
     section, name = _split(manifest["replicate_axis"])
     if section == "algorithm":
-        acfg.pop(name, None)
+        nested_delete(acfg, name)
         sweep = {f"algorithm.{name}": list(manifest["replicate_values"])}
     else:
-        exp.pop(name, None)
+        nested_delete(exp, name)
         sweep = {name: list(manifest["replicate_values"])}
     return {"algorithms": [record["algorithm"]],
             "base": {"experiment": exp, "algorithm": acfg},

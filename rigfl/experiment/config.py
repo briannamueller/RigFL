@@ -16,7 +16,11 @@ def fingerprint(config: dict) -> str:
 
 def hashable(v):
     """A dict value usable in a set or as part of a key."""
-    return tuple(v) if isinstance(v, list) else v
+    if isinstance(v, dict):
+        return tuple(sorted((k, hashable(value)) for k, value in v.items()))
+    if isinstance(v, (list, tuple)):
+        return tuple(hashable(value) for value in v)
+    return v
 
 
 def normalize_early_stopping(es: dict | None) -> dict:

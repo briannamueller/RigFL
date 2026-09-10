@@ -18,10 +18,11 @@ from __future__ import annotations
 
 import copy
 from pathlib import Path
-from typing import Callable, Literal
+from typing import Callable
 
 import torch
-from pydantic import Field
+from graphroute.config import GraphRouteConfig, GraphRouteSettings
+from pydantic import Field, field_validator, model_validator
 from torch.utils.data import DataLoader, Dataset
 
 from rigfl.core.config import AlgorithmConfig
@@ -32,31 +33,50 @@ from rigfl.eval.resources import (
     payload_bytes,
     write_cached_measurement,
 )
+from rigfl.experiment.paths import deep_merge
 from rigfl.prediction import Predictions
 
 FEDDES_PREPROCESSING_KEY = "rigfl-feddes-multitensor-collation-v1"
+_OOF_INNER_VAL_RATIO = 0.2
+
+
+def _default_graphroute_settings() -> GraphRouteSettings:
+    return GraphRouteSettings(
+        base={"oof_folds": 3, "epochs": 100, "batch_size": 64},
+        gnn={
+            "epochs": 500,
+            "patience": 50,
+            "es_metric": "val_acc",
+            "ens_combination_mode": "hard_weighted_voting",
+            "voting_weight_space": "sig",
+        },
+    )
 
 
 class FedDESConfig(AlgorithmConfig):
-    # FedDES trains base classifiers + a GNN meta-learner; it does not use the
-    # local_epochs/lr settings used by algorithms with a client training loop.
-    gnn_arch: Literal["gat", "hetero_gat", "graph_gps", "mlp"] = "gat"
-    base_lr: float = Field(5e-4, gt=0)
-    base_epochs: int = Field(100, ge=1)
-    graph_k: int = Field(5, ge=1)
-    hidden_dim: int = Field(128, ge=1)
-    gnn_epochs: int = Field(500, ge=1)
-    gnn_patience: int = Field(50, ge=1)
-    calibrate: bool = True
-    base_weighted_by_class: bool = True
-    use_edge_attr: bool = False
-    use_sample_residual: bool = False
-    fallback: Literal["uniform", "wacc", "acc", "bacc"] = "uniform"
-    # OOF stacking produces training meta-labels from models that did not see the
-    # corresponding rows. In-sample mode is cheaper but measures training fit.
-    base_split_mode: Literal["oof_stacking", "in_sample"] = "oof_stacking"
-    base_oof_folds: int = Field(3, ge=2)
-    cache_dir: str = "pool_cache"     # reuse trained base pools across graph/GNN sweeps ("" disables)
+    graphroute: GraphRouteSettings = Field(
+        default_factory=_default_graphroute_settings
+    )
+    cache_dir: str = "pool_cache"
+
+    @field_validator("graphroute", mode="before")
+    @classmethod
+    def _merge_graphroute_defaults(cls, value):
+        if isinstance(value, GraphRouteSettings):
+            return value
+        if not isinstance(value, dict):
+            return value
+        return deep_merge(_default_graphroute_settings().model_dump(), value)
+
+    @model_validator(mode="after")
+    def _validate_feddes_settings(self):
+        if self.graphroute.base.models is not None:
+            raise ValueError(
+                "FedDES base models are selected by the RigFL experiment model settings."
+            )
+        if self.graphroute.base.split_mode != "oof_stacking":
+            raise ValueError("FedDES requires graphroute.base.split_mode='oof_stacking'.")
+        return self
 
 
 class FedDES(Algorithm):
@@ -64,7 +84,8 @@ class FedDES(Algorithm):
                  base_factories: list[torch.nn.Module | Callable[[], torch.nn.Module]],
                  num_classes: int, *, data_id: str | None = None,
                  model_ids: list[str] | None = None, seed: int = 0,
-                 validation_fraction: float = 0.2):
+                 validation_fraction: float = 0.2,
+                 feature_extractor: Callable | None = None):
         super().__init__(config)
         sources = list(base_factories)
         # Configuration resolves to actual model templates. A few low-level test
@@ -79,19 +100,11 @@ class FedDES(Algorithm):
             for model in self.base_models
         ]
         self.num_classes = num_classes
-        self.gnn_arch = config.gnn_arch
-        self.base_lr, self.base_epochs = config.base_lr, config.base_epochs
-        self.graph_k, self.hidden_dim = config.graph_k, config.hidden_dim
-        self.calibrate = config.calibrate
-        self.base_weighted_by_class = config.base_weighted_by_class
-        self.use_edge_attr = config.use_edge_attr
-        self.use_sample_residual = config.use_sample_residual
-        self.fallback = config.fallback
-        self.base_split_mode = config.base_split_mode
-        self.base_oof_folds = config.base_oof_folds
+        self.graphroute_settings = config.graphroute
         self.cache_dir = config.cache_dir or None
         self.data_id, self.seed = data_id, seed
         self.validation_fraction = validation_fraction
+        self.feature_extractor = feature_extractor
         self.model_ids = model_ids
         if self.cache_dir and not self.data_id:
             raise ValueError("FedDES pool reuse requires a stable data_id.")
@@ -101,11 +114,11 @@ class FedDES(Algorithm):
             raise ValueError("model_ids must name every base model in order.")
         if self.model_ids is None:
             self.model_ids = [f"model_{i}" for i in range(len(base_factories))]
-        self.gnn_epochs, self.gnn_patience = config.gnn_epochs, config.gnn_patience
 
     @classmethod
     def from_config(cls, config, *, experiment, base_pool=None,
                     model_input_spec=None, **resources):
+        from rigfl.data.features import graphroute_feature_extractor
         from rigfl.models.registry import instantiate_native_models
 
         data_id = f"{experiment.dataset}-{experiment.partition_id}"
@@ -129,6 +142,9 @@ class FedDES(Algorithm):
             model_ids=model_ids,
             seed=experiment.seed,
             validation_fraction=experiment.validation_fraction,
+            feature_extractor=graphroute_feature_extractor(
+                config.graphroute.graph, model_input_spec
+            ),
         )
 
     def prepare(self, model, train_loader, ctx: OneShotContext):
@@ -170,15 +186,16 @@ class FedDES(Algorithm):
         local_pool = st.get("local_pool")
         oof = None if local_pool is None else local_pool.load_oof()
         if oof is None:
-            return tr_logits
+            raise RuntimeError("FedDES requires out-of-fold logits for its local pool.")
         prefix = f"client_{client_id}/"
         cols = [j for j, model_id in enumerate(pool.model_ids)
                 if model_id.startswith(prefix)]
         if len(cols) != oof.shape[1] or oof.shape[0] != tr_logits.shape[0]:
-            print(f"[FedDES][warn] cannot place OOF logits (matched {len(cols)} of "
-                  f"{oof.shape[1]} own classifiers, {oof.shape[0]} vs "
-                  f"{tr_logits.shape[0]} rows); using in-sample meta-labels.")
-            return tr_logits
+            raise RuntimeError(
+                "FedDES cannot align the local out-of-fold logits with the "
+                f"shared pool (matched {len(cols)} of {oof.shape[1]} classifiers; "
+                f"{oof.shape[0]} OOF rows for {tr_logits.shape[0]} training rows)."
+            )
         tr_logits[:, cols, :] = oof.to(tr_logits.device, tr_logits.dtype)
         return tr_logits
 
@@ -187,6 +204,7 @@ class FedDES(Algorithm):
         """Fingerprint the ordered local pool and its complete training policy."""
         from graphroute.pool_cache import fingerprint_model, fingerprint_pool
         from rigfl.experiment.env import _package
+        base = self.graphroute_settings.base
         template_fingerprints = [
             fingerprint_model(model) for model in self.base_models
         ]
@@ -195,13 +213,8 @@ class FedDES(Algorithm):
             model_fingerprints=template_fingerprints,
             base_config={
                 "task": "classification", "num_classes": self.num_classes,
-                "split_mode": self.base_split_mode,
-                "oof_folds": self.base_oof_folds,
-                "lr": self.base_lr, "epochs": self.base_epochs,
-                "batch_size": 64, "patience": 20, "optimizer": "Adam",
-                "weight_decay": 5e-4,
-                "weighted_by_class": self.base_weighted_by_class,
-                "es_metric": "val_loss", "inner_val_ratio": 0.2,
+                **base.model_dump(exclude={"models"}),
+                "inner_val_ratio": _OOF_INNER_VAL_RATIO,
                 "client_validation_fraction": self.validation_fraction,
                 "seed_policy": "experiment_seed_plus_client_id",
                 "preprocessing": FEDDES_PREPROCESSING_KEY,
@@ -211,23 +224,30 @@ class FedDES(Algorithm):
                            "rigfl": _package("rigfl")})
 
     def _train(self, tr_ds, va_ds, device, client_id):
-        """Return the trained models and optional out-of-fold logits."""
+        """Return the trained models and out-of-fold logits."""
+        from graphroute.pool import train_pool_oof
         from graphroute.run import seed_everything
+
         seed_everything(self.seed + int(client_id))
-        if self.base_split_mode == "oof_stacking":
-            from graphroute.pool import train_pool_oof
-            models, oof_logits, _ = train_pool_oof(
-                self.base_factories, tr_ds, va_ds, device,
-                n_folds=self.base_oof_folds, num_classes=self.num_classes,
-                lr=self.base_lr, max_epochs=self.base_epochs,
-                seed=self.seed + int(client_id), collate_fn=_collate,
-                weighted_by_class=self.base_weighted_by_class)
-            return models, oof_logits          # [N_tr, M_local, C], row i unseen by its predictor
-        from graphroute.pool import train_pool
-        return train_pool(self.base_factories, tr_ds, va_ds, device,
-                          num_classes=self.num_classes, lr=self.base_lr, max_epochs=self.base_epochs,
-                          collate_fn=_collate,
-                          weighted_by_class=self.base_weighted_by_class), None
+        base = self.graphroute_settings.base
+        models, oof_logits, _ = train_pool_oof(
+            self.base_factories, tr_ds, va_ds, device,
+            n_folds=base.oof_folds,
+            inner_val_ratio=_OOF_INNER_VAL_RATIO,
+            batch_size=base.batch_size,
+            max_epochs=base.epochs,
+            patience=base.es_patience,
+            lr=base.lr,
+            optimizer_name=base.optimizer,
+            weight_decay=base.weight_decay,
+            task="classification",
+            num_classes=self.num_classes,
+            weighted_by_class=base.weighted_by_class,
+            es_metric=base.es_metric,
+            seed=self.seed + int(client_id),
+            collate_fn=_collate,
+        )
+        return models, oof_logits
 
     def _train_or_load_pool(self, tr_ds, va_ds, device, client_id, monitor=None):
         """Load or train this client's pool for reuse across graph/GNN sweeps."""
@@ -263,14 +283,14 @@ class FedDES(Algorithm):
                 artifact = cached_pool(
                     directory, self.base_factories, train,
                     fingerprint_value=fp, model_ids=self.model_ids,
-                    require_oof=self.base_split_mode == "oof_stacking",
+                    require_oof=True,
                     data_id=self.data_id)
             else:
                 with monitor.capture() as access:
                     artifact = cached_pool(
                         directory, self.base_factories, train,
                         fingerprint_value=fp, model_ids=self.model_ids,
-                        require_oof=self.base_split_mode == "oof_stacking",
+                        require_oof=True,
                         data_id=self.data_id)
                 monitor.record_cache("base_pools", "miss" if built else "hit")
                 if built:
@@ -284,23 +304,13 @@ class FedDES(Algorithm):
         return artifact
 
     def _graphroute_config(self, client_id, device):
-        from graphroute.config import GraphRouteConfig
         return GraphRouteConfig(
-            task="classification", loss_target="meta_labels",
+            **self.graphroute_settings.model_dump(),
+            task="classification",
             dataset=self.data_id or "federated-client",
             num_classes=self.num_classes, seed=self.seed + int(client_id),
             device=device.type,
-            base={"split_mode": ("oof_stacking" if self.base_split_mode == "oof_stacking"
-                                  else "split_train")},
-            graph={"k": self.graph_k, "pool_calibrate": self.calibrate},
-            gnn={"arch": self.gnn_arch, "hidden_dim": self.hidden_dim,
-                 "epochs": self.gnn_epochs, "patience": self.gnn_patience,
-                 "es_metric": "val_acc",
-                 "use_edge_attr": self.use_edge_attr,
-                 "use_sample_residual": self.use_sample_residual,
-                 "fallback": self.fallback,
-                 "ens_combination_mode": "hard_weighted_voting",
-                 "voting_weight_space": "sig"})
+        )
 
     # ── post-communication local computation: train one complete local GNN ──
     def local_computation(self, model, pool, loader, ctx: OneShotContext):
@@ -332,7 +342,7 @@ class FedDES(Algorithm):
         st["graphroute_model"] = fit_graphroute(
             self._graphroute_config(ctx.client_id, device), train_dataset,
             validation_set=validation_dataset, pool=client_pool,
-            collate_fn=_collate)
+            collate_fn=_collate, feature_extractor=self.feature_extractor)
         training = st["graphroute_model"].history
         return LocalSelection(
             selected_step=int(training["best_epoch"]),

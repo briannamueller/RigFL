@@ -335,7 +335,9 @@ def test_feddes_returns_graphroutes_soft_probs():
     from rigfl.algorithms.feddes import FedDES, FedDESConfig
 
     algorithm = FedDES(
-        FedDESConfig(calibrate=False, cache_dir=""),
+        FedDESConfig(
+            graphroute={"graph": {"pool_calibrate": False}}, cache_dir=""
+        ),
         [lambda: nn.Linear(INPUT_DIM, NUM_CLASSES)],
         NUM_CLASSES,
     )     # calibration is not what this tests
