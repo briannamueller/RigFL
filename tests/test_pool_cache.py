@@ -397,11 +397,7 @@ def test_feddes_publishes_the_training_artifact_layout(tmp_path):
 
 
 def test_cache_dir_is_operational_not_scientific():
-    """/scratch/a and /scratch/b train the identical configuration.
-
-    It used to be part of the fingerprint, so the two produced different result
-    filenames and two rows in the collected table.
-    """
+    """The cache location does not affect experiment identity."""
     from rigfl.experiment.collect import algorithm_variant
     from rigfl.experiment.config import result_filename, run_fingerprint
     from rigfl.experiment.registry import config_class

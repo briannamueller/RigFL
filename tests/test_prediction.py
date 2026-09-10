@@ -254,11 +254,7 @@ def test_every_built_in_algorithm_labels_equal_the_probability_argmax(name):
 
 @pytest.mark.parametrize("name", sorted(_built_in_algorithms()))
 def test_hard_labels_are_unchanged_by_the_new_interface(name):
-    """The labels the old label-only implementations produced, recomputed here.
-
-    Not a re-run of the new code under another name: each expression below is the
-    decision rule as it was written before probabilities existed.
-    """
+    """Built-in algorithms preserve their established hard-label decisions."""
     import torch.nn.functional as F
 
     for model, x, shared, state, out in _predictions(_built_in_algorithms()[name]):
@@ -401,12 +397,7 @@ def test_a_label_only_algorithm_still_gets_hard_label_metrics():
 
 
 def test_a_label_only_algorithm_runs_with_verbose_reporting():
-    """The per-round print reduces every computed metric, loss included.
-
-    An unavailable metric is present in the client's dict with a ``None`` value,
-    which is not the same absence as a client having no data -- summing it
-    crashed a run that was otherwise perfectly valid.
-    """
+    """Verbose reporting accepts metrics unavailable for an algorithm."""
     torch.manual_seed(0)
     result = iterative(LabelOnlyAlgorithm(), _clients(), num_rounds=2, device=DEVICE,
                            num_classes=NUM_CLASSES, verbose=True)
@@ -545,7 +536,7 @@ def test_a_custom_hard_label_metric_keeps_the_old_signature():
         out = compute_all(Predictions.from_probabilities(
             torch.tensor([[0.9, 0.1], [0.2, 0.8]])), y, 2)
         assert out["half_of_accuracy"] == 0.5
-        # ...and a bare tensor still works, exactly as it used to
+        # Bare label tensors remain accepted by the compatibility path.
         assert compute_all(torch.tensor([0, 1]), y, 2)["half_of_accuracy"] == 0.5
     finally:
         unregister("half_of_accuracy")

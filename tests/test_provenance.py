@@ -114,12 +114,7 @@ def test_the_environment_block_is_not_in_the_fingerprint():
 
 
 def test_provenance_describes_rigfl_not_the_working_directory(tmp_path, monkeypatch):
-    """Launching from inside another checkout must not borrow its commit.
-
-    ``git`` answers relative to the process's working directory, so a RigFL run
-    started from a sibling repository used to record that repository's commit and
-    dirty state as its own.
-    """
+    """Provenance describes RigFL when launched from another checkout."""
     other = tmp_path / "other_repo"
     other.mkdir()
     _git("init", cwd=other)

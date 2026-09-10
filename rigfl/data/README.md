@@ -147,8 +147,6 @@ RigFL identifies the input and target columns automatically for most datasets. S
     target_column: fine_label
 ```
 
-the error message lists the columns retrieved from the dataset’s Hugging Face metadata.
-
 ### Data transforms
 
 `data_transform` selects the conversion from the source dataset to model-ready

@@ -63,14 +63,10 @@ def prototype_prediction(rep: torch.Tensor, global_protos: Prototypes,
 
 
 def resolve_num_classes(declared, model, global_protos) -> int:
-    """The width of the reported distribution.
+    """Resolve the prediction width from metadata, the model, or the prototypes.
 
-    A prototype algorithm never needed a class count before -- its prediction was
-    the id of the nearest prototype. Now it reports a distribution, which must be
-    as wide as the evaluator's class count or every metric downstream is
-    comparing different-shaped things. Taken from an explicit value when given,
-    then from the model's own head, and only then from the prototypes -- which
-    is a lower bound, since a class nobody reported has no prototype.
+    The prototype-derived width is only a lower bound because an unreported class
+    has no prototype.
     """
     if declared is not None:
         return int(declared)

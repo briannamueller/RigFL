@@ -124,12 +124,7 @@ def test_group_by_keeps_algorithms_separate():
 def _cond_rec(algorithm, seed, *, dataset="cifar10", partition_id="partition-a",
               accs=(0.8, 0.7),
               algorithm_cfg=None):
-    """Uses each algorithm's REAL config by default.
-
-    The earlier version of these tests gave Local and FedDES the same synthetic
-    algorithm config, which hid the fact that folding algorithm settings into the
-    grouping key stopped the two from ever being paired.
-    """
+    """Use each algorithm's validated default configuration when unspecified."""
     if algorithm_cfg is None:
         from rigfl.experiment.registry import config_class
         algorithm_cfg = config_class(algorithm)().model_dump()
@@ -224,12 +219,7 @@ def test_one_algorithm_swept_over_its_own_settings_gets_separate_rows():
 
 
 def test_sweep_task_rejects_an_unknown_setting(tmp_path):
-    """Actually run the array-task path.
-
-    The earlier version of this test only asserted that "graf_k" is not a model
-    field, which was true before the repair too -- so it would have passed while
-    the bug was live. This one calls run_task and requires it to refuse.
-    """
+    """The array-task path rejects unknown algorithm settings."""
     import json
 
     from rigfl.experiment.launch import run_task
@@ -262,9 +252,7 @@ def test_group_by_still_separates_experiments():
 
 
 def test_experiments_differing_only_in_an_unlabelled_field_stay_apart():
-    """Rows were keyed by a display label built from a fixed field list, so two
-    experiments differing only in batch size rendered identically and one
-    overwrote the other -- while the collector announced two."""
+    """Every configuration difference produces a distinct result row."""
 
     def rec(seed, batch):
         return {"algorithm": "feddes",
@@ -307,9 +295,7 @@ def _es_rec(seed, **early_stopping):
 
 
 def test_rows_are_uniquely_labelled_when_only_early_stopping_differs():
-    """experiment_condition separated these, but the label was built from a
-    different field list -- so both rows rendered identically and one
-    overwrote the other, while the collector reported two experiments."""
+    """Early-stopping differences appear in unique result-row labels."""
     recs = {"local": [_es_rec(0, enabled=True, metric="accuracy", patience=5),
                       _es_rec(0, enabled=True, metric="accuracy", patience=20)]}
     for rows in (_rows(recs), _rows(recs, ["algorithm"])):
@@ -320,8 +306,7 @@ def test_rows_are_uniquely_labelled_when_only_early_stopping_differs():
 
 
 def test_the_three_condition_helpers_agree_on_their_fields():
-    """They used to derive from different lists, which is how a field could
-    separate two experiments while being invisible in their labels."""
+    """Condition grouping and display labels use the same fields."""
     from rigfl.experiment.collect import (condition_fields, describe_condition,
                                           experiment_condition, varying_fields)
     a = _es_rec(0, enabled=True, metric="accuracy", patience=5)

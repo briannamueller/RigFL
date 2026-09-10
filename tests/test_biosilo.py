@@ -318,8 +318,18 @@ def test_biosilo_runs_through_experiment_infrastructure(
     validate_run_record(record)
 
 
-def test_feddes_accepts_a_biosilo_multi_input_partition(tmp_path):
+def test_feddes_accepts_a_biosilo_dataset_feature_source(tmp_path, monkeypatch):
     pytest.importorskip("graphroute")
+    from biosilo.datasets import synthetic
+
+    monkeypatch.setattr(
+        synthetic,
+        "feature_groups",
+        lambda manifest: {
+            "selected_features": {"input": "flat", "start": 1, "stop": 3}
+        },
+        raising=False,
+    )
     config_path, _, _ = _generate_configured(
         tmp_path, n_inputs=2, with_groups=True
     )
@@ -341,7 +351,10 @@ def test_feddes_accepts_a_biosilo_multi_input_partition(tmp_path):
         config_class("feddes")(
             graphroute={
                 "base": {"epochs": 1, "oof_folds": 2},
-                "graph": {"pool_calibrate": False},
+                "graph": {
+                    "edge_feature_source": "selected_features",
+                    "pool_calibrate": False,
+                },
                 "gnn": {"arch": "mlp", "epochs": 2, "patience": 1},
             },
             cache_dir="",

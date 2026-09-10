@@ -1,10 +1,4 @@
-"""Configuration mistakes that used to be absorbed instead of reported.
-
-Each of these ran a different experiment than the file or command line described,
-without saying so: a misspelt YAML section, a misspelt ``--set`` prefix, a
-misspelt sweep key, a fixed setting that only a compute node would reject, and a
-``--quiet`` flag that was not passed overwriting ``quiet: true`` from the config.
-"""
+"""Validation of configuration files, overrides, and launch settings."""
 
 from __future__ import annotations
 
@@ -45,7 +39,7 @@ def test_a_misspelt_section_is_refused(tmp_path):
 
 
 def test_a_sweep_file_handed_to_the_single_run_path_is_refused(tmp_path):
-    """base/sweep belong to rigfl.experiment.launch, and used to be ignored here."""
+    """Sweep sections are accepted only by the sweep launcher."""
     with pytest.raises(SystemExit, match="unknown top-level section"):
         load_run_config(_yaml(tmp_path, "base:\n  experiment:\n    batch: 64\n"
                                         "sweep:\n  seed: [0, 1]\n"))
@@ -70,7 +64,7 @@ def test_a_valid_config_still_loads(tmp_path):
     ("batch=64", "expected <section>.<field>=<value>"),
 ])
 def test_an_unknown_set_prefix_is_refused(bad, match):
-    """Every non-``exp`` prefix used to be routed into the algorithm config."""
+    """Command-line overrides require a recognized configuration section."""
     with pytest.raises(SystemExit, match=match):
         build_configs(_args(set=[bad]))
 

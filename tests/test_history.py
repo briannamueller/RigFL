@@ -66,7 +66,7 @@ def test_evaluation_rounds_need_not_start_at_one_or_be_contiguous():
 
 
 def test_a_client_without_a_split_is_null_not_skipped():
-    """A skipped client used to shift every later client's position."""
+    """A missing split does not change client positions in the history."""
     out, _ = _run(clients=[_client(16), _client(24, val=False)])
     h = out["evaluation_history"]
     assert set(h["clients"]) == {"0", "1"}

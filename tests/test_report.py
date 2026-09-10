@@ -1,9 +1,4 @@
-"""Summaries and win-rate over selected rounds.
-
-Every function here takes the selection metric explicitly. That is the point of
-the redesign: there is no metric these can fall back on, so a test cannot pass
-by accident under a hidden default.
-"""
+"""Summaries and win rates using explicit round-selection policies."""
 
 from __future__ import annotations
 
@@ -225,8 +220,7 @@ def _rec_with_test(algorithm, seed, test_by_client):
 
 
 def test_win_rate_pairs_by_client_id_not_position():
-    """Dropping a client with no value used to shift the rest, so algorithm client 1
-    was compared against Local client 0."""
+    """Win-rate comparisons pair records by client identifier."""
     algorithm = [_rec_with_test("feddes", 0, [None, 0.90])]
     local = [_rec_with_test("local", 0, [0.95, 0.10])]
     assert win_rate(algorithm, local, "accuracy", **_SEL) == 1.0     # client 1 only

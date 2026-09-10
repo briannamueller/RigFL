@@ -206,7 +206,7 @@ the complete per-client evaluation history.
 
 FedDES places GraphRoute's modeling settings under `algorithm.graphroute` rather
 than directly under `algorithm`. See
-[`experiments/cifar10_feddes.yaml`](experiments/cifar10_feddes.yaml) for a
+[`experiments/cifar10_feddes.yaml`](https://github.com/briannamueller/RigFL/blob/main/experiments/cifar10_feddes.yaml) for a
 complete runnable configuration and the
 [GraphRoute configuration reference](https://github.com/briannamueller/GraphRoute#configuration)
 for the available settings.
@@ -247,21 +247,14 @@ experiment:
 
 ### Resource measurements
 
-Completed runs record logical training communication, operation timing, and the
-hardware used for timing. Communication is the size of the algorithm payloads
-sent between clients and the server, or between peers; transport and
-serialization overhead are not included. Tensor and encoded-byte payloads are
-measured automatically. An algorithm using another representation can override
-`communication_payload_bytes(...)`.
+Completed runs record training communication, operation timing, and the hardware
+used for timing. Communication measures the algorithm payloads exchanged during
+training; transport and serialization overhead are not included.
 
 FLOP estimation is optional because profiling adds runtime overhead. Enable it
 for an experiment with `experiment.estimate_flops: true` or `--estimate-flops`.
-FLOP estimation requires PyTorch 2.1 or newer.
-The estimate covers PyTorch operations recognized by PyTorch's FLOP counter and
-records training and inference separately.
-
-Results created before resource measurements were added do not contain them.
-Rerun those configurations with `--force` if resource reporting is needed.
+FLOP estimation requires PyTorch 2.1 or newer and records training and inference
+separately.
 
 Add resource results to the collection output with:
 
@@ -271,8 +264,8 @@ python -m rigfl.experiment.collect \
   --include-resources
 ```
 
-Results created by an earlier RigFL version do not contain resource measurements.
-Re-run those configurations with `--force` when resource comparisons are needed.
+Older results do not contain resource measurements. Rerun them with `--force`
+when resource comparisons are needed.
 
 ### Client-centered metrics
 
@@ -382,6 +375,10 @@ The algorithm class must define four operations:
    component.
 4. `predict(...)` performs inference for the supplied inputs and returns a
    `Predictions` object.
+
+Tensor and encoded-byte payloads are measured automatically for communication
+reporting. Override `communication_payload_bytes(...)` if the algorithm exchanges
+another payload representation.
 
 Declare all of the relevant arguments for the algorithm in its configuration
 class.

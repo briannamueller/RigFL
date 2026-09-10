@@ -81,11 +81,7 @@ def test_algorithm_specific_axis_lands_in_algorithm_config():
 
 
 def test_misspelt_algorithm_axis_is_refused():
-    """Auto-scoping collapses an algorithm axis for algorithms that lack the field,
-    which is right when some algorithm has it and indistinguishable from a typo
-    when none does. The axis used to vanish here, before the task runner could
-    reject it, leaving one default task and a sweep that reported the setting it
-    was asked for."""
+    """A sweep axis unsupported by every selected algorithm is an error."""
     import pytest
 
     from rigfl.experiment.launch import build_grid
@@ -109,8 +105,7 @@ def test_misspelt_experiment_axis_is_refused():
 
 
 def test_misspelt_fixed_algorithm_setting_is_refused():
-    """base.algorithm entries are as easy to misspell as an axis, and were dropped
-    just as quietly."""
+    """Fixed algorithm settings receive the same validation as sweep axes."""
     import pytest
 
     from rigfl.experiment.launch import build_grid

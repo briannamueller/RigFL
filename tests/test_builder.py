@@ -127,8 +127,7 @@ def test_build_clients_can_skip_unused_client_models():
 
 
 def test_small_clients_still_get_a_validation_split():
-    """int(n * val_frac) truncated to zero, so a small client had no val split
-    and was skipped during evaluation -- silently, since the loop just moves on."""
+    """Small clients receive nonempty training and validation splits."""
     from rigfl.data.builder import _train_val_indices
     for n in (2, 5, 9, 19):
         train_idx, val_idx = _train_val_indices(n, None, 0.1)
