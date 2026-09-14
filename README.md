@@ -14,9 +14,6 @@ machinery.
   already exists is not rerun—expanding or changing a sweep will only execute new
   combinations.
 
-- **Joint hyperparameter tuning across multiple seeds.** Evaluate complete
-  hyperparameter configurations with Optuna grid or adaptive search.
-
 - **Client-centered performance reporting.** Evaluation metrics that reveal
   whether the benefits of collaboration are broadly shared across clients,
   exposing disparities and uneven benefits that commonly reported averages
@@ -258,6 +255,10 @@ python -m rigfl.experiment.launch \
   --grid results/cifar10_sweep/grid.jsonl \
   --grid-task 1
 ```
+
+RigFL also supports hyperparameter tuning with Optuna. See the
+[hyperparameter-tuning guide](https://github.com/briannamueller/RigFL/blob/main/docs/hyperparameter_tuning.md).
+
 ### Variance studies
 
 To measure how much results depend on each source of randomness, vary the seeds
