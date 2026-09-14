@@ -3,8 +3,8 @@
 # Task N runs the Nth configuration in the grid file.
 #
 #   python -m rigfl.experiment.launch --name my_sweep --algorithms baselines --seeds 0-2
-#   qsub -t 1-N -q <gpu-queue> -l ngpus=1 scripts/run_grid.sh results/my_sweep/grid.jsonl
-#   python -m rigfl.experiment.collect --results-dir results/my_sweep
+#   qsub -t 1-N -q <gpu-queue> -l ngpus=1 scripts/run_grid.sh results/my_sweep/grid.jsonl results
+#   python -m rigfl.experiment.collect --results-dir results/runs
 #
 # (launch.py prints the exact qsub line, including N.)
 #
@@ -16,7 +16,8 @@
 ### #$ -pe smp 4                  # EDIT: CPU cores per task, if desired
 
 set -euo pipefail
-GRID="${1:?usage: qsub ... scripts/run_grid.sh <sweep>/grid.jsonl}"
+GRID="${1:?usage: qsub ... scripts/run_grid.sh <sweep>/grid.jsonl <results-root>}"
+RESULTS_ROOT="${2:?usage: qsub ... scripts/run_grid.sh <sweep>/grid.jsonl <results-root>}"
 SWEEP_DIR="$(dirname "$GRID")"
 mkdir -p "$SWEEP_DIR/logs"
 
@@ -32,4 +33,7 @@ export OMP_NUM_THREADS="${NSLOTS:-1}"
 # Redirect task output after creating the sweep log directory.
 exec > "$SWEEP_DIR/logs/task_${SGE_TASK_ID}.out" 2>&1
 echo "task $SGE_TASK_ID  ($(hostname), $(date))  grid=$GRID"
-python -m rigfl.experiment.launch --grid-task "$SGE_TASK_ID" --grid "$GRID"
+python -m rigfl.experiment.launch \
+  --grid-task "$SGE_TASK_ID" \
+  --grid "$GRID" \
+  --results-root "$RESULTS_ROOT"

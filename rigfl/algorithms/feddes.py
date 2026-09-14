@@ -122,6 +122,8 @@ class FedDES(Algorithm):
         from rigfl.models.registry import instantiate_native_models
 
         data_id = f"{experiment.dataset}-{experiment.partition_id}"
+        if experiment.split_seed is not None:
+            data_id += f"-split{experiment.split_seed}"
 
         model_ids = experiment.resolved_models
         if base_pool is None:
@@ -216,7 +218,7 @@ class FedDES(Algorithm):
                 **base.model_dump(exclude={"models"}),
                 "inner_val_ratio": _OOF_INNER_VAL_RATIO,
                 "client_validation_fraction": self.validation_fraction,
-                "seed_policy": "experiment_seed_plus_client_id",
+                "seed_policy": "shared_experiment_seed_across_clients",
                 "preprocessing": FEDDES_PREPROCESSING_KEY,
             },
             seed=self.seed,
@@ -228,7 +230,7 @@ class FedDES(Algorithm):
         from graphroute.pool import train_pool_oof
         from graphroute.run import seed_everything
 
-        seed_everything(self.seed + int(client_id))
+        seed_everything(self.seed)
         base = self.graphroute_settings.base
         models, oof_logits, _ = train_pool_oof(
             self.base_factories, tr_ds, va_ds, device,
@@ -244,7 +246,7 @@ class FedDES(Algorithm):
             num_classes=self.num_classes,
             weighted_by_class=base.weighted_by_class,
             es_metric=base.es_metric,
-            seed=self.seed + int(client_id),
+            seed=self.seed,
             collate_fn=_collate,
         )
         return models, oof_logits
@@ -308,7 +310,7 @@ class FedDES(Algorithm):
             **self.graphroute_settings.model_dump(),
             task="classification",
             dataset=self.data_id or "federated-client",
-            num_classes=self.num_classes, seed=self.seed + int(client_id),
+            num_classes=self.num_classes, seed=self.seed,
             device=device.type,
         )
 

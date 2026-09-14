@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import json
 
-from rigfl.experiment.launch import build_grid
+import pytest
+
+from rigfl.experiment.launch import _write_grid, build_grid
 
 
 def _counts(grid):
@@ -197,3 +199,20 @@ def test_fixed_setting_supported_by_no_selected_algorithm_is_an_error():
             "algorithms": ["feddes"],
             "base": {"algorithm": {"local_epochs": 2}},
         })
+
+
+def test_saved_grid_can_only_be_reused_with_identical_tasks(tmp_path):
+    path = tmp_path / "sweep" / "grid.jsonl"
+    original = [
+        {"algorithm": "local", "experiment": {"seed": 0}, "algorithm_config": {}}
+    ]
+    changed = [
+        {"algorithm": "fedavg", "experiment": {"seed": 0}, "algorithm_config": {}}
+    ]
+
+    assert _write_grid(path, original) is True
+    assert _write_grid(path, original) is False
+    with pytest.raises(SystemExit, match="different sweep"):
+        _write_grid(path, changed)
+
+    assert json.loads(path.read_text()) == original[0]

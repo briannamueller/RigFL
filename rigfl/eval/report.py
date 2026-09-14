@@ -5,11 +5,14 @@ from __future__ import annotations
 import json
 import math
 import statistics
-from typing import Optional
 
 from rigfl.eval.metrics import canonical, direction_of
-from rigfl.eval.selection import (SelectionError, client_distribution,
-                                  resolve_metric, select)
+from rigfl.eval.selection import (
+    SelectionError,
+    client_distribution,
+    resolve_metric,
+    select,
+)
 from rigfl.experiment.config import algorithm_identity
 
 _T95 = {
@@ -22,21 +25,37 @@ _T95 = {
 }
 
 
-def _seed(record: dict) -> int:
-    seed = record.get("config", {}).get("experiment", {}).get("seed")
-    if seed is None:
+def _replicate_condition(record: dict) -> tuple:
+    experiment = record.get("config", {}).get("experiment", {})
+    if experiment.get("seed") is None:
         raise ValueError("result record is missing config.experiment.seed")
-    return seed
+    return (
+        experiment.get("partition_seed"),
+        experiment.get("split_seed"),
+        experiment["seed"],
+    )
 
 
-def _records_by_seed(records: list[dict], label: str) -> dict[int, dict]:
+def _records_by_seed(records: list[dict], label: str) -> dict[tuple, dict]:
     indexed = {}
     for record in records:
-        seed = _seed(record)
-        if seed in indexed:
-            raise ValueError(f"{label} contains more than one record for seed {seed}")
-        indexed[seed] = record
+        condition = _replicate_condition(record)
+        if condition in indexed:
+            raise ValueError(
+                f"{label} contains more than one record for replicate condition "
+                f"{condition}"
+            )
+        indexed[condition] = record
     return indexed
+
+
+def independent_replicates(records: list[dict]) -> bool:
+    """Whether every completed run has a distinct experiment seed."""
+    seeds = {
+        record.get("config", {}).get("experiment", {}).get("seed")
+        for record in records
+    }
+    return len(records) == len(seeds)
 
 
 def _algorithm_configuration(record: dict) -> str:
@@ -44,20 +63,21 @@ def _algorithm_configuration(record: dict) -> str:
     return json.dumps(algorithm_identity(config), sort_keys=True)
 
 
-def mean_ci(xs: list[float]) -> tuple[float, float]:
+def mean_ci(xs: list[float]) -> tuple[float, float | None]:
     """Mean and half-width of a 95% t interval."""
     if not xs:
-        return 0.0, 0.0
+        return 0.0, None
     mean = sum(xs) / len(xs)
     n = len(xs)
     if n < 2:
-        return mean, 0.0
+        return mean, None
     sd = statistics.stdev(xs)
     return mean, _T95.get(n - 1, 1.96) * sd / math.sqrt(n)
 
 
-def selection_for(record: dict, metric: Optional[str], *, view: str = "global",
-                  aggregation: str = "mean", tie_break: str = "earliest") -> dict:
+def selection_for(record: dict, metric: str | None, *, view: str = "global",
+                  aggregation: str = "mean", tie_break: str = "earliest",
+                  include_test: bool = True) -> dict:
     """Select an available reporting view, explicitly recording any fallback."""
     result = record["result"]
     supported = result.get("selection_views_supported",
@@ -81,7 +101,7 @@ def selection_for(record: dict, metric: Optional[str], *, view: str = "global",
 
     selected = select(result["evaluation_history"], name, view=actual,
                       aggregation=aggregation, tie_break=tie_break,
-                      split="validation")
+                      split="validation", include_test=include_test)
     selected["requested_selection_view"] = view
     selected["selection_view_fallback"] = actual != view
     if provenance is not None:
@@ -171,8 +191,17 @@ def summarize(records: list[dict], metric: str, *, view: str = "global",
         if "selected_steps" in sel:
             steps.extend(sel["selected_steps"].values())
 
+    replicate_independence = independent_replicates(records)
+    intervals_available = replicate_independence and len(records) > 1
     t_m, t_ci = mean_ci(test_scores)
     v_m, v_ci = mean_ci(val_scores)
+    if not intervals_available:
+        t_ci = None
+        v_ci = None
+    experiment_seeds = {
+        record.get("config", {}).get("experiment", {}).get("seed")
+        for record in records
+    }
     row = {
         "metric": name,
         "selection_view": sels[0].get("selection_view") if sels else view,
@@ -190,15 +219,29 @@ def summarize(records: list[dict], metric: str, *, view: str = "global",
         "val_mean": v_m, "val_ci": v_ci,
         "selected_rounds": rounds,
         "selected_steps": steps,
-        "seeds": len(records),
+        "seeds": len(experiment_seeds),
+        "runs": len(records),
+        "independent_replicates": replicate_independence,
+        "confidence_intervals_available": intervals_available,
+        "confidence_interval_reason": (
+            None
+            if intervals_available
+            else (
+                "fewer than two runs"
+                if len(records) < 2
+                else "experiment seeds are reused across run conditions"
+            )
+        ),
     }
     row.update(_average_distributions(dists))
     if include_resources:
-        row["resources"] = summarize_resources(records)
+        row["resources"] = summarize_resources(
+            records, include_intervals=intervals_available
+        )
     return row
 
 
-def summarize_resources(records: list[dict]) -> dict:
+def summarize_resources(records: list[dict], *, include_intervals: bool = True) -> dict:
     """Resource totals across complete run replicates."""
     saved = [record.get("resources") for record in records]
     if (not saved or any(not isinstance(item, dict)
@@ -240,6 +283,10 @@ def summarize_resources(records: list[dict]) -> dict:
         wall_mean, wall_ci = (
             (None, None) if not comparable_wall else mean_ci(wall)
         )
+        if not include_intervals:
+            communication_ci = None
+            flop_ci = None
+            wall_ci = None
         return {
             "available": True,
             "communication_bytes_mean": communication_mean,
@@ -271,7 +318,7 @@ def _combined_cache_status(values: list[str]) -> str:
     return "partial"
 
 
-def _reduce(values: list[float], weights: Optional[list], aggregation: str) -> float:
+def _reduce(values: list[float], weights: list | None, aggregation: str) -> float:
     """One seed's clients -> one number, by the aggregation that selected.
 
     A missing weight is an error, not a reason to switch to an unweighted mean:
@@ -306,34 +353,6 @@ def _average_distributions(dists: list[dict]) -> dict:
     return out
 
 
-def win_rate(algorithm_records: list[dict], local_records: list[dict], metric: str,
-             **kw) -> Optional[float]:
-    """Fraction of matched client-and-seed pairs where the algorithm beats Local."""
-    name = canonical(metric)
-    better = (lambda a, b: a > b) if direction_of(name) == "maximize" else (lambda a, b: a < b)
-
-    local_configurations = {
-        _algorithm_configuration(record) for record in local_records
-    }
-    if len(local_configurations) > 1:
-        raise ValueError(
-            "win rate requires one Local configuration per experiment"
-        )
-    local_by_seed = _records_by_seed(local_records, "Local baseline")
-    algorithm_by_seed = _records_by_seed(algorithm_records, "algorithm")
-    wins = total = 0
-    for seed, m in algorithm_by_seed.items():
-        l = local_by_seed.get(seed)
-        if l is None:
-            continue
-        mv = _by_client(selection_for(m, name, **kw), name, "test")
-        lv = _by_client(selection_for(l, name, **kw), name, "test")
-        for cid in mv.keys() & lv.keys():          # same client, same seed
-            wins += int(better(mv[cid][0], lv[cid][0]))
-            total += 1
-    return wins / total if total else None
-
-
 def format_table(rows: dict, metric: str) -> str:
     """rows: {label: summary} -> markdown. The header names what selected."""
     name = canonical(metric)
@@ -341,40 +360,93 @@ def format_table(rows: dict, metric: str) -> str:
     any_mixed = any(s.get("mixed_rounds") for s in rows.values())
     any_local = any(s.get("mixed_local_selections") for s in rows.values())
     any_fallback = any(s.get("selection_view_fallback") for s in rows.values())
+    any_dependent = any(
+        not s.get("independent_replicates", True) for s in rows.values()
+    )
+    any_single = any(s.get("confidence_interval_reason") == "fewer than two runs"
+                     for s in rows.values())
 
     if higher_better:
-        out = [f"| algorithm | selection | val {name} | test {name} | p10 | bottom-10% | win% | seeds |",
-               "|---|---|---|---|---|---|---|---|"]
+        out = [
+            (
+                f"| algorithm | selection | val {name} | test {name} | p10 | "
+                "bottom-10% | seeds | runs |"
+            ),
+            "|---|---|---|---|---|---|---:|---:|",
+        ]
     else:
-        out = [f"| algorithm | selection | val {name} | test {name} | win% | seeds |",
-               "|---|---|---|---|---|---|"]
+        out = [
+            f"| algorithm | selection | val {name} | test {name} | seeds | runs |",
+            "|---|---|---|---|---:|---:|",
+        ]
     for label, s in rows.items():
-        win = f"{s['win'] * 100:.0f}%" if s.get("win") is not None else "—"
         mark = " *" if s.get("mixed_rounds") else ""
         fallback = " †" if s.get("selection_view_fallback") else ""
         local = " ‡" if s.get("mixed_local_selections") else ""
-        cells = [f"{label}{mark}{fallback}{local}", s["selection_view"],
-                 f"{s['val_mean']:.3f} ± {s['val_ci']:.3f}",
-                 f"{s['test_mean']:.3f} ± {s['test_ci']:.3f}"]
+        dependent = " §" if not s.get("independent_replicates", True) else ""
+        single = " ¶" if s.get("confidence_interval_reason") == (
+            "fewer than two runs"
+        ) else ""
+        cells = [f"{label}{mark}{fallback}{local}{dependent}{single}", s["selection_view"],
+                 _format_interval(s["val_mean"], s["val_ci"]),
+                 _format_interval(s["test_mean"], s["test_ci"])]
         if higher_better:
             tail = s.get(f"p10_{name}")
             bulk = s.get(f"bottom_10pct_mean_{name}")
             cells.extend([f"{tail:.3f}" if tail is not None else "—",
                           f"{bulk:.3f}" if bulk is not None else "—"])
-        cells.extend([win, str(s["seeds"])])
+        cells.extend([str(s["seeds"]), str(s["runs"])])
         out.append("| " + " | ".join(cells) + " |")
     if any_mixed:
-        out += ["", "\\* per-client view: each client is reported from its own "
-                    "validation-selected round, so the aggregate mixes rounds and is "
-                    "not a single system checkpoint."]
+        out += [
+            "",
+            (
+                "\\* per-client view: each client is reported from its own "
+                "validation-selected round, so the aggregate mixes rounds and is "
+                "not a single system checkpoint."
+            ),
+        ]
     if any_fallback:
-        out += ["", "† global selection was requested, but this algorithm only "
-                    "supports per-client selection; the row is explicitly reported "
-                    "using its per-client-selected models."]
+        out += [
+            "",
+            (
+                "† global selection was requested, but this algorithm only "
+                "supports per-client selection; the row is explicitly reported "
+                "using its per-client-selected models."
+            ),
+        ]
     if any_local:
-        out += ["", "‡ each client retained the model selected during its own local "
-                    "computation; these selected steps are not federated rounds."]
+        out += [
+            "",
+            (
+                "‡ each client retained the model selected during its own local "
+                "computation; these selected steps are not federated rounds."
+            ),
+        ]
+    if any_dependent:
+        out += [
+            "",
+            (
+                "§ experiment seeds are reused across run conditions, so ordinary "
+                "replicate confidence intervals are omitted. Use "
+                "`python -m rigfl.experiment.variance` for a crossed seed sweep."
+            ),
+        ]
+    if any_single:
+        out += [
+            "",
+            (
+                "¶ fewer than two runs are available; no confidence interval "
+                "is reported."
+            ),
+        ]
     return "\n".join(out)
+
+
+def _format_interval(mean: float, interval: float | None) -> str:
+    if interval is None:
+        return f"{mean:.3f}"
+    return f"{mean:.3f} ± {interval:.3f}"
 
 
 def format_resource_table(rows: dict) -> str:
@@ -384,9 +456,12 @@ def format_resource_table(rows: dict) -> str:
         "|---|---:|---:|---:|---|",
     ]
     for label, summary in rows.items():
+        marker = " §" if not summary.get("independent_replicates", True) else ""
+        if summary.get("confidence_interval_reason") == "fewer than two runs":
+            marker += " ¶"
         resource = summary.get("resources", {})
         if not resource.get("available"):
-            out.append(f"| {label} | — | — | — | — |")
+            out.append(f"| {label}{marker} | — | — | — | — |")
             continue
         communication = _scaled_interval(
             resource["communication_bytes_mean"],
@@ -398,7 +473,7 @@ def format_resource_table(rows: dict) -> str:
             resource["attributed_training_wall_seconds_mean"],
             resource["attributed_training_wall_seconds_ci"], 60)
         out.append("| " + " | ".join([
-            label, communication, flops, wall, resource["cache_reuse"]
+            label + marker, communication, flops, wall, resource["cache_reuse"]
         ]) + " |")
     out.extend([
         "",
@@ -407,10 +482,29 @@ def format_resource_table(rows: dict) -> str:
          "artifact was created. Wall time is omitted when hardware signatures "
          "differ."),
     ])
+    if any(not row.get("independent_replicates", True) for row in rows.values()):
+        out.extend([
+            "",
+            (
+                "§ experiment seeds are reused across run conditions; resource "
+                "means are shown without ordinary replicate confidence intervals."
+            ),
+        ])
+    if any(row.get("confidence_interval_reason") == "fewer than two runs"
+           for row in rows.values()):
+        out.extend([
+            "",
+            (
+                "¶ fewer than two runs are available; resource confidence "
+                "intervals are omitted."
+            ),
+        ])
     return "\n".join(out)
 
 
 def _scaled_interval(mean, interval, scale: float) -> str:
-    if mean is None or interval is None:
+    if mean is None:
         return "—"
+    if interval is None:
+        return f"{mean / scale:.3f}"
     return f"{mean / scale:.3f} ± {interval / scale:.3f}"

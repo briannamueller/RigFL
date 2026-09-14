@@ -22,6 +22,7 @@ from rigfl.data.config import BioSiloDatasetSettings, dataset_settings
 from rigfl.data.features import graphroute_feature_extractor
 from rigfl.experiment.artifacts import validate_run_record
 from rigfl.experiment.config import ExperimentConfig
+from rigfl.experiment.launch import _validate_biosilo_partitions
 from rigfl.experiment.registry import config_class
 from rigfl.experiment.run import resolve_experiment_data, run_one
 from rigfl.models.registry import instantiate_backbones, resolve_models
@@ -57,7 +58,8 @@ def _parameters(*, n_inputs=1, with_groups=False):
 
 
 def _dataset_config(
-    tmp_path, *, n_inputs=1, with_groups=False, validation_fraction=0.25
+    tmp_path, *, n_inputs=1, with_groups=False, validation_fraction=0.25,
+    split_seed=0,
 ):
     path = tmp_path / "datasets.yaml"
     config = {
@@ -69,6 +71,7 @@ def _dataset_config(
                     n_inputs=n_inputs, with_groups=with_groups
                 ),
                 "validation_fraction": validation_fraction,
+                "split_seed": split_seed,
             }
         }
     }
@@ -248,6 +251,128 @@ def test_validation_split_preserves_biosilo_groups(tmp_path):
     assert train_groups.isdisjoint(validation_groups)
 
 
+def test_biosilo_split_seed_is_independent_of_training_seed(tmp_path):
+    handle = _generate(tmp_path)
+    _, input_spec = biosilo_input_spec(handle)
+    backbones = instantiate_backbones(["tabular_mlp"], input_spec=input_spec)
+
+    def indices(*, training_seed, split_seed):
+        clients = build_biosilo_clients(
+            handle,
+            shared_dim=8,
+            batch=8,
+            seed=training_seed,
+            split_seed=split_seed,
+            backbones=backbones,
+            validation_fraction=0.25,
+        )
+        return (
+            list(clients[0].train_loader.dataset.indices),
+            list(clients[0].val_loader.dataset.indices),
+            list(clients[0].test_loader.dataset.indices),
+        )
+
+    first = indices(training_seed=3, split_seed=11)
+    other_training_seed = indices(training_seed=4, split_seed=11)
+    other_split_seed = indices(training_seed=3, split_seed=12)
+
+    assert first == other_training_seed
+    assert first[2] == other_split_seed[2]
+    assert first[:2] != other_split_seed[:2]
+
+
+def test_biosilo_experiment_seed_overrides_resolve_the_matching_partition(
+    tmp_path, monkeypatch
+):
+    config = _dataset_config(tmp_path, split_seed=2)
+    experiment = ExperimentConfig(
+        dataset="biomedical",
+        dataset_config=str(config),
+        data_dir=str(tmp_path),
+        rounds=1,
+        model="tabular_mlp",
+        partition_seed=11,
+        split_seed=13,
+        seed=17,
+    )
+
+    with pytest.raises(FileNotFoundError, match="--partition-seed 11"):
+        resolve_experiment_data(experiment)
+
+    from rigfl.data import generate
+
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "generate",
+            "--dataset",
+            "biomedical",
+            "--dataset-config",
+            str(config),
+            "--data-dir",
+            str(tmp_path),
+            "--partition-seed",
+            "11",
+            "--split-seed",
+            "13",
+        ],
+    )
+    generate.main()
+    resolved, data = resolve_experiment_data(experiment)
+
+    assert resolved.partition_seed == 11
+    assert resolved.split_seed == 13
+    assert resolved.seed == 17
+    assert data.handle.path.is_dir()
+
+
+def test_biosilo_sweep_preflight_checks_every_partition(tmp_path):
+    config = _dataset_config(tmp_path, split_seed=2)
+    task = {
+        "algorithm": "local",
+        "experiment": {
+            "dataset": "biomedical",
+            "dataset_config": str(config),
+            "data_dir": str(tmp_path),
+            "partition_seed": 11,
+            "rounds": 1,
+        },
+        "algorithm_config": {},
+    }
+
+    with pytest.raises(SystemExit, match="BioSilo partition preflight failed"):
+        _validate_biosilo_partitions([task])
+
+    settings = dataset_settings("biomedical", config)
+    settings = settings.model_copy(
+        update={"parameters": {**settings.parameters, "seed": 11}}
+    )
+    generate_biosilo_partition(settings, data_dir=tmp_path)
+
+    _validate_biosilo_partitions([task])
+
+
+def test_biosilo_preflight_reports_dataset_configuration_errors(tmp_path):
+    config = _dataset_config(tmp_path, split_seed=2)
+    task = {
+        "algorithm": "local",
+        "experiment": {
+            "dataset": "misspelled",
+            "dataset_config": str(config),
+            "data_dir": str(tmp_path),
+            "rounds": 1,
+        },
+        "algorithm_config": {},
+    }
+
+    with pytest.raises(SystemExit, match="dataset 'misspelled' does not validate"):
+        _validate_biosilo_partitions([task])
+
+    task["experiment"]["dataset_config"] = str(tmp_path / "missing.yaml")
+    with pytest.raises(SystemExit, match="dataset configuration not found"):
+        _validate_biosilo_partitions([task])
+
+
 def test_biosilo_memmap_inputs_remain_lazy(tmp_path):
     path = biosilo.generate(
         "synthetic_memmap",
@@ -311,6 +436,11 @@ def test_biosilo_runs_through_experiment_infrastructure(
     assert resolved.data_backend == "biosilo"
     assert resolved.partition_scheme is None
     assert resolved.partition_id == handle.partition_id
+    assert resolved.partition_seed == 7
+    assert resolved.split_seed == 0
+    assert record["config"]["experiment"]["partition_seed"] == 7
+    assert record["config"]["experiment"]["split_seed"] == 0
+    assert record["config"]["experiment"]["seed"] == 0
     assert record["partition"]["biosilo"]["dataset"] == "synthetic"
     assert [row["source_client_id"] for row in record["partition"]["per_client"]] == [
         "site-0", "site-1", "site-2"

@@ -8,23 +8,24 @@ import pytest
 import torch
 import torch.nn as nn
 
+from rigfl.algorithms.local import Local, LocalConfig
+from rigfl.core.round import iterative
 from rigfl.data import partitions
+from rigfl.data.config import (
+    FlowerDatasetSettings,
+    dataset_settings,
+    inactive_replicate_seed_fields,
+    load_dataset_registry,
+)
 from rigfl.data.partitions import (
     build_partition_clients,
     generate_partition,
     load_partition,
     partition_fingerprint,
 )
-from rigfl.data.config import (
-    FlowerDatasetSettings,
-    dataset_settings,
-    load_dataset_registry,
-)
 from rigfl.experiment.config import ExperimentConfig, run_fingerprint
+from rigfl.experiment.launch import expand
 from rigfl.experiment.run import resolve_experiment_data
-from rigfl.algorithms.local import Local, LocalConfig
-from rigfl.core.round import iterative
-
 
 DATASET = "my_images"
 
@@ -71,6 +72,65 @@ def test_synthetic_partitioner_defaults_to_five_clients():
     assert settings.partition.num_clients == 5
 
 
+def test_inactive_data_replicate_seeds_are_identified():
+    settings = FlowerDatasetSettings(
+        source_dataset="organization/source-data",
+        source_splits={
+            "train": "train",
+            "validation": "validation",
+            "test": "test",
+        },
+        partition={
+            "scheme": "natural_id",
+            "partition_by": "client_id",
+            "shuffle": False,
+            "train_per_client": None,
+            "validation_per_client": None,
+            "test_per_client": None,
+        },
+    )
+
+    assert inactive_replicate_seed_fields(settings) == {
+        "partition_seed",
+        "split_seed",
+    }
+
+
+def test_sweep_rejects_varied_data_seeds_that_cannot_change_the_data(tmp_path):
+    config = tmp_path / "datasets.yaml"
+    config.write_text(
+        "datasets:\n"
+        "  stable:\n"
+        "    backend: flower\n"
+        "    source_dataset: organization/source-data\n"
+        "    source_splits:\n"
+        "      train: train\n"
+        "      validation: validation\n"
+        "      test: test\n"
+        "    partition:\n"
+        "      scheme: natural_id\n"
+        "      partition_by: client_id\n"
+        "      shuffle: false\n"
+        "      train_per_client: null\n"
+        "      validation_per_client: null\n"
+        "      test_per_client: null\n"
+    )
+    spec = {
+        "algorithms": ["local"],
+        "base": {
+            "experiment": {
+                "dataset": "stable",
+                "dataset_config": str(config),
+                "rounds": 1,
+            }
+        },
+        "sweep": {"partition_seed": [0, 1]},
+    }
+
+    with pytest.raises(SystemExit, match="does not use the varied replicate"):
+        expand(spec)
+
+
 def _config(path, *, alpha=0.3):
     path.write_text(
         "datasets:\n"
@@ -83,6 +143,7 @@ def _config(path, *, alpha=0.3):
         "      num_clients: 2\n"
         f"      alpha: {alpha}\n"
         "      partition_seed: 7\n"
+        "      split_seed: 13\n"
         "      train_per_client: 12\n"
         "      test_per_client: 6\n"
         "      val_frac: 0.25\n"
@@ -146,6 +207,20 @@ def test_partition_fingerprint_is_stable_and_tracks_generation_settings(tmp_path
     _config(config, alpha=0.8)
     second = dataset_settings(DATASET, config)
     assert partition_fingerprint(DATASET, first) != partition_fingerprint(DATASET, second)
+
+
+def test_partition_fingerprint_tracks_split_seed():
+    first = FlowerDatasetSettings(
+        source_dataset="organization/source-data",
+        partition={"scheme": "iid", "num_clients": 2, "split_seed": 3},
+    )
+    second = first.model_copy(
+        update={"partition": first.partition.model_copy(update={"split_seed": 4})}
+    )
+
+    assert partition_fingerprint(DATASET, first) != partition_fingerprint(
+        DATASET, second
+    )
 
 
 def test_partition_fingerprint_tracks_pipeline_version(monkeypatch, tmp_path):
@@ -296,6 +371,8 @@ def test_experiment_uses_alias_to_resolve_partition(monkeypatch, tmp_path):
     assert resolved.data_backend == "flower"
     assert resolved.partition_scheme == "dirichlet"
     assert resolved.partition_id == generated.partition_id
+    assert resolved.partition_seed == 7
+    assert resolved.split_seed == 13
     assert resolved.num_clients == 2
     assert resolved.num_classes == 3
     assert resolved.validation_fraction == 0.25
@@ -305,6 +382,59 @@ def test_experiment_uses_alias_to_resolve_partition(monkeypatch, tmp_path):
     assert run_fingerprint(other_seed, LocalConfig().model_dump()) != run_fingerprint(
         resolved, LocalConfig().model_dump()
     )
+
+
+def test_experiment_generates_a_missing_flower_partition(monkeypatch, tmp_path):
+    config = _config(tmp_path / "datasets.yaml")
+    monkeypatch.setitem(
+        partitions.BACKEND_GENERATORS, "flower", _fake_flower_backend
+    )
+
+    resolved, data = resolve_experiment_data(
+        ExperimentConfig(
+            dataset=DATASET,
+            dataset_config=str(config),
+            data_dir=str(tmp_path / "data"),
+        )
+    )
+
+    assert data.artifact.path.is_dir()
+    assert resolved.partition_id == data.artifact.partition_id
+
+
+def test_experiment_seed_overrides_generate_and_resolve_the_matching_partition(
+    monkeypatch, tmp_path
+):
+    config = _config(tmp_path / "datasets.yaml")
+    monkeypatch.setitem(
+        partitions.BACKEND_GENERATORS, "flower", _fake_flower_backend
+    )
+    base = ExperimentConfig(
+        dataset=DATASET,
+        dataset_config=str(config),
+        data_dir=str(tmp_path / "data"),
+        rounds=1,
+        partition_seed=17,
+        split_seed=23,
+        seed=31,
+    )
+
+    resolved, data = resolve_experiment_data(base)
+    other_training_seed, other_data = resolve_experiment_data(
+        base.model_copy(update={"seed": 32})
+    )
+    other_split_seed, split_data = resolve_experiment_data(
+        base.model_copy(update={"split_seed": 24})
+    )
+
+    assert resolved.partition_seed == 17
+    assert resolved.split_seed == 23
+    assert resolved.seed == 31
+    assert data.artifact.path.is_dir()
+    assert other_training_seed.partition_id == resolved.partition_id
+    assert other_data.artifact.path == data.artifact.path
+    assert other_split_seed.partition_id != resolved.partition_id
+    assert split_data.artifact.path.is_dir()
 
 
 def test_experiment_uses_merged_client_validation_fraction(monkeypatch, tmp_path):
@@ -430,6 +560,9 @@ def test_generated_partition_runs_through_experiment_infrastructure(monkeypatch,
     )
     record = run_one("local", exp, config_class("local")(), torch.device("cpu"))
     assert record["config"]["experiment"]["partition_id"] == generated.partition_id
+    assert record["config"]["experiment"]["partition_seed"] == 7
+    assert record["config"]["experiment"]["split_seed"] == 13
+    assert record["config"]["experiment"]["seed"] == 0
     assert record["config"]["experiment"]["partition_scheme"] == "dirichlet"
     assert set(record["result"]["evaluation_history"]["clients"]) == {"0", "1"}
     validate_run_record(record)

@@ -137,7 +137,8 @@ def build_clients(source: Source, num_clients: int, num_classes: int,
                   backbones: list[Callable[[], nn.Module]], shared_dim: int,
                   val_frac: float = 0.2, batch: int = 32,
                   adapter: Callable[[int, int], nn.Module] | None = None,
-                  seed: int = 0, build_models: bool = True) -> list[Client]:
+                  seed: int = 0, split_seed: int | None = None,
+                  build_models: bool = True) -> list[Client]:
     """Turn a data source + a pool of backbone *factories* into ``Client``s.
 
     ``backbones`` are factories (not instances) so every client gets its OWN
@@ -152,12 +153,14 @@ def build_clients(source: Source, num_clients: int, num_classes: int,
     """
     if adapter is None:
         adapter = lambda native, shared: LearnedProjection(native, shared)
+    if split_seed is None:
+        split_seed = seed
     clients: list[Client] = []
     for cid in range(num_clients):
         x_tr, y_tr, g_tr = source(cid, "train")
         train_idx, val_idx = _train_val_indices(
             len(y_tr), g_tr, val_frac,
-            generator=_client_generator(seed, cid, 0),
+            generator=_client_generator(split_seed, cid, 0),
         )
         x_te, y_te, _ = source(cid, "test")
 

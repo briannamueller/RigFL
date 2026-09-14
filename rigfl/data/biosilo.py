@@ -5,6 +5,7 @@ from __future__ import annotations
 import shlex
 from collections.abc import Callable
 
+from filelock import FileLock
 from torch import nn
 
 from rigfl.data.builder import build_clients
@@ -33,12 +34,14 @@ def generate_biosilo_partition(settings, *, data_dir="data"):
         root=_root(settings, data_dir),
         **settings.parameters,
     )
-    existed = (expected / "manifest.json").is_file()
-    path = biosilo.generate(
-        settings.source_dataset,
-        root=_root(settings, data_dir),
-        **settings.parameters,
-    )
+    expected.parent.mkdir(parents=True, exist_ok=True)
+    with FileLock(f"{expected}.lock"):
+        existed = (expected / "manifest.json").is_file()
+        path = biosilo.generate(
+            settings.source_dataset,
+            root=_root(settings, data_dir),
+            **settings.parameters,
+        )
     handle = biosilo.load(
         settings.source_dataset,
         root=_root(settings, data_dir),
@@ -48,7 +51,12 @@ def generate_biosilo_partition(settings, *, data_dir="data"):
 
 
 def load_biosilo_partition(
-    settings, *, data_dir="data", dataset_name=None, dataset_config=None
+    settings,
+    *,
+    data_dir="data",
+    dataset_name=None,
+    dataset_config=None,
+    partition_seed_override=None,
 ):
     """Load the BioSilo partition determined by the configured parameters."""
     biosilo = _biosilo()
@@ -69,6 +77,8 @@ def load_biosilo_partition(
         if dataset_config is not None:
             command.extend(["--dataset-config", str(dataset_config)])
         command.extend(["--data-dir", str(data_dir)])
+        if partition_seed_override is not None:
+            command.extend(["--partition-seed", str(partition_seed_override)])
         formatted_command = " ".join(shlex.quote(part) for part in command)
         raise FileNotFoundError(
             f"BioSilo partition for {settings.source_dataset!r} was not found at "
@@ -122,6 +132,7 @@ def build_biosilo_clients(
     shared_dim: int,
     batch: int,
     seed: int,
+    split_seed: int | None = None,
     backbones: list[Callable[[], nn.Module]],
     validation_fraction: float,
     adapter=None,
@@ -138,5 +149,6 @@ def build_biosilo_clients(
         batch=batch,
         adapter=adapter,
         seed=seed,
+        split_seed=split_seed,
         build_models=build_models,
     )

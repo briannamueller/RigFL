@@ -10,6 +10,7 @@ datasets:
       min_partition_size: 10
       self_balancing: false
       partition_seed: 0
+      split_seed: 0
       train_per_client: null
       validation_per_client: null
       test_per_client: null

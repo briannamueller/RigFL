@@ -6,41 +6,53 @@ is excluded from candidate identity, and validation scores rank candidates.
 
 from __future__ import annotations
 
-import itertools
 import json
 import statistics
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from rigfl.eval.metrics import direction_of
-from rigfl.eval.report import mean_ci, run_score
-from rigfl.eval.selection import SelectionError
-from rigfl.experiment.artifacts import (ResultValidationError, atomic_write_json,
-                                        atomic_write_text, dumps, loads, read_json)
-from rigfl.experiment.config import (ExperimentConfig, algorithm_identity,
-                                     fingerprint, hashable)
-from rigfl.experiment.paths import (flatten_mapping, model_has_path,
-                                    nested_delete, nested_get)
+from rigfl.eval.metrics import canonical, direction_of
+from rigfl.eval.report import mean_ci, selection_for
+from rigfl.eval.selection import SelectionError, aggregate
+from rigfl.experiment.artifacts import (
+    ResultValidationError,
+    atomic_write_json,
+    atomic_write_text,
+    dumps,
+    loads,
+    read_json,
+)
+from rigfl.experiment.config import (
+    ExperimentConfig,
+    IntensificationConfig,
+    algorithm_identity,
+    fingerprint,
+    hashable,
+)
+from rigfl.experiment.paths import (
+    flatten_mapping,
+    model_has_path,
+    nested_delete,
+    nested_get,
+)
 from rigfl.experiment.registry import algorithm_spec, config_class
 
-#: Bumped when the manifest layout changes in a way a reader must notice.
-MANIFEST_SCHEMA_VERSION = 2
-MANIFEST_NAME = "tuning_manifest.json"
-MANIFEST_KIND = "rigfl.tuning_manifest"
+#: Bumped when the study layout changes in a way a reader must notice.
+MANIFEST_SCHEMA_VERSION = 4
+MANIFEST_NAME = "study.json"
+MANIFEST_KIND = "rigfl.tuning_study"
 
-ARTIFACT_SCHEMA_VERSION = 2
-ARTIFACT_KIND = "rigfl.tuning_selection"
-
-#: Supported tuning strategies.
-STRATEGIES = ("grid",)
+ARTIFACT_SCHEMA_VERSION = 1
+ARTIFACT_KIND = "rigfl.tuning_ranking"
+SELECTION_SCHEMA_VERSION = 1
+SELECTION_KIND = "rigfl.tuning_selection"
 
 #: Tie-breaks for equal aggregate validation scores.
 CANDIDATE_TIE_BREAKS = ("lowest_id",)
 
 SEED_AGGREGATION = "mean"
-
 
 class TuningError(ValueError):
     """Raised when candidate selection is asked for and cannot be done honestly."""
@@ -90,88 +102,47 @@ def _norm(v):
 
 # ── The tuning declaration ───────────────────────────────────────────────────
 
-@dataclass
-class TuningSpec:
-    """The ``tuning:`` block of a sweep file, validated against its sweep axes."""
-    strategy: str
-    parameters: list[str]            # canonical axis paths, in declaration order
-    replicate_axis: str              # canonical axis path
-    declared: dict = field(default_factory=dict)   # the block as written
-
-    def to_dict(self) -> dict:
-        return {"strategy": self.strategy, "parameters": list(self.parameters),
-                "replicate_axis": self.replicate_axis}
-
-
-def parse_tuning(block: dict | None, axis_values: dict[str, list]) -> Optional[TuningSpec]:
-    """Validate a ``tuning:`` block against the axes the sweep actually declares.
-
-    ``axis_values`` maps canonical axis path -> its declared values. Every error
-    here is a launch-time ``SystemExit``: a tuning parameter naming an axis that
-    is not swept would otherwise produce one candidate and a sweep that reports
-    a search it never ran.
-    """
-    if not block:
+def parse_intensification(
+    value, screening_conditions: list[dict[str, int]] | None
+) -> IntensificationConfig | None:
+    if value is None:
         return None
-    if not isinstance(block, dict):
-        raise SystemExit("tuning: must be a mapping with 'parameters' and 'replicate_axis'.")
+    if isinstance(value, IntensificationConfig):
+        parsed = value
+    else:
+        from pydantic import ValidationError
 
-    unknown = sorted(set(block) - {"strategy", "parameters", "replicate_axis"})
-    if unknown:
-        raise SystemExit(
-            f"Unknown key(s) in tuning: {', '.join(unknown)}\n"
-            f"Known: strategy, parameters, replicate_axis")
-
-    strategy = str(block.get("strategy", "grid"))
-    if strategy not in STRATEGIES:
-        raise SystemExit(
-            f'Unknown tuning strategy "{strategy}". '
-            f'Only {", ".join(STRATEGIES)} is implemented -- random, Bayesian and '
-            f'bandit search are not, and naming one must not quietly run a grid.')
-
-    raw_params = block.get("parameters") or []
-    if isinstance(raw_params, str):
-        raw_params = [raw_params]
-    if not raw_params:
-        raise SystemExit(
-            "tuning.parameters is empty. Name the axes that jointly define a "
-            "candidate; every other swept axis stays an experimental condition.")
-
-    known = ", ".join(sorted(axis_values)) or "(none declared)"
-
-    params: list[str] = []
-    for p in raw_params:
-        path = canonical_axis(p)
-        if path in params:
+        try:
+            parsed = IntensificationConfig.model_validate(value)
+        except ValidationError as error:
+            first = error.errors(include_url=False)[0]
+            location = ".".join(str(part) for part in first["loc"])
             raise SystemExit(
-                f"Duplicate tuning parameter: {p} (already declared as {path}).")
-        if path not in axis_values:
-            raise SystemExit(
-                f"Unknown tuning parameter: {p}\n"
-                f'"{path}" is not a swept axis, so it has nothing to search over.\n\n'
-                f"Declared sweep axes: {known}")
-        params.append(path)
-
-    if "replicate_axis" not in block:
+                f"invalid tuning.intensification at {location}: {first['msg']}"
+            ) from error
+    if screening_conditions is None:
         raise SystemExit(
-            "tuning.replicate_axis is unset. State which axis is a replicate "
-            "rather than part of the search -- usually 'seed'. Without it, seeds "
-            "would be ranked against each other as if they were configurations.\n\n"
-            f"Declared sweep axes: {known}")
-    rep = canonical_axis(block["replicate_axis"])
-    if rep not in axis_values:
+            "tuning.intensification requires top-level replicates so its data and "
+            "training conditions can be checked against the screening conditions"
+        )
+    replicates = [condition.model_dump() for condition in parsed.replicates]
+    screening_data = {
+        (item["partition_seed"], item["split_seed"])
+        for item in screening_conditions
+    }
+    repeated_data = sorted(
+        screening_data
+        & {
+            (item["partition_seed"], item["split_seed"])
+            for item in replicates
+        }
+    )
+    if repeated_data:
         raise SystemExit(
-            f"Unknown replicate axis: {block['replicate_axis']}\n"
-            f'"{rep}" is not a swept axis, so there are no replicates to aggregate.\n\n'
-            f"Declared sweep axes: {known}")
-    if rep in params:
-        raise SystemExit(
-            f'"{rep}" is both a tuning parameter and the replicate axis. It is '
-            f"either part of what is being searched or what is averaged over, "
-            f"not both.")
-
-    return TuningSpec(strategy=strategy, parameters=params, replicate_axis=rep,
-                      declared=dict(block))
+            "intensification replicates must use data-seed pairs not used for "
+            f"screening; repeated pairs: {repeated_data}"
+        )
+    return parsed
 
 
 # ── Candidates ───────────────────────────────────────────────────────────────
@@ -226,73 +197,9 @@ def applicable_parameters(algorithm: str, parameters: list[str]) -> list[str]:
     return out
 
 
-def build_candidates(algorithms: list[str], parameters: list[str],
-                     axis_values: dict[str, list]) -> list[Candidate]:
-    """Every complete assignment, numbered from zero.
-
-    Ordering is algorithm order, then declared parameter order, then declared value
-    order -- so the same sweep file always produces the same ids. The replicate
-    axis is not among ``parameters``, so seeds never reach this function and
-    cannot split one candidate into several.
-    """
-    out: list[Candidate] = []
-    seen: set[tuple] = set()
-    for algorithm in algorithms:
-        applicable = applicable_parameters(algorithm, parameters)
-        for combo in itertools.product(*(axis_values[p] for p in applicable)):
-            params = dict(zip(applicable, combo))
-            key = (algorithm, tuple(sorted((k, _norm(v))
-                                        for k, v in params.items())))
-            if key in seen:
-                continue
-            seen.add(key)
-            out.append(Candidate(len(out), algorithm, params,
-                                 candidate_hash(algorithm, params)))
-    return out
-
-
 def candidate_index(candidates: list[Candidate]) -> dict[tuple, int]:
     """``(algorithm, normalised parameter key) -> candidate id``."""
     return {(c.algorithm, c.key): c.id for c in candidates}
-
-
-# ── The manifest ─────────────────────────────────────────────────────────────
-
-def build_manifest(*, name: str, tuning: TuningSpec, algorithms: list[str],
-                   base: dict, axis_values: dict[str, list],
-                   declared_axes: list[dict], candidates: list[Candidate],
-                   tasks: list[dict],
-                   declared_tuning_parameters: list[str] | None = None) -> dict:
-    """Everything needed to reconstruct the search without parsing a label."""
-    condition_axes = [a for a in axis_values
-                      if a not in tuning.parameters and a != tuning.replicate_axis]
-    return {
-        "schema_version": MANIFEST_SCHEMA_VERSION,
-        "kind": MANIFEST_KIND,
-        "name": name,
-        "strategy": tuning.strategy,
-        "algorithms": list(algorithms),
-        "base": base,
-        # Declaration order, because candidate numbering follows it.
-        "sweep_axes": declared_axes,
-        "tuning_parameters": list(tuning.parameters),
-        "declared_tuning_parameters": list(
-            declared_tuning_parameters or tuning.parameters),
-        "replicate_axis": tuning.replicate_axis,
-        "replicate_values": list(axis_values[tuning.replicate_axis]),
-        "condition_axes": condition_axes,
-        "candidates": [c.to_dict() for c in candidates],
-        # Task ids are 1-based array indices; candidate ids are 0-based.
-        "tasks": tasks,
-        "candidate_tasks": _candidate_tasks(tasks),
-    }
-
-
-def _candidate_tasks(tasks: list[dict]) -> dict[str, list[int]]:
-    out: dict[str, list[int]] = {}
-    for t in tasks:
-        out.setdefault(str(t["candidate_id"]), []).append(t["task_id"])
-    return out
 
 
 def write_manifest(manifest: dict, sweep_dir: Path) -> Path:
@@ -310,8 +217,16 @@ def _check_manifest(parsed: dict) -> None:
         raise TuningError(f"written manifest has kind {parsed.get('kind')!r}")
     if parsed.get("schema_version") != MANIFEST_SCHEMA_VERSION:
         raise TuningError("written manifest has the wrong schema version")
-    for key in ("candidates", "tasks", "tuning_parameters", "replicate_axis",
-                "replicate_values", "condition_axes"):
+    for key in (
+        "algorithm",
+        "candidates",
+        "search_space",
+        "tuning_parameters",
+        "replicate_axis",
+        "replicate_values",
+        "condition_axes",
+        "selection_protocol",
+    ):
         if key not in parsed:
             raise TuningError(f"written manifest is missing {key!r}")
 
@@ -330,7 +245,7 @@ def load_manifest(results_dir: Path) -> Optional[dict]:
             f"{path} uses manifest schema {manifest.get('schema_version')}, and this "
             f"version reads {MANIFEST_SCHEMA_VERSION}. Re-declare the sweep with the "
             f"current launcher rather than reading it under the wrong schema.")
-    manifest["_path"] = str(path)
+    manifest["_path"] = str(path.resolve())
     return manifest
 
 
@@ -355,6 +270,19 @@ def run_parameters(record: dict, parameters: list[str], algorithm: str) -> dict:
 
 def replicate_of(record: dict, manifest: dict):
     """The run's value on the replicate axis."""
+    conditions = manifest.get("replicate_conditions")
+    if conditions:
+        experiment = record.get("config", {}).get("experiment", {})
+        actual = {
+            "partition_seed": experiment.get("partition_seed"),
+            "split_seed": experiment.get("split_seed"),
+            "experiment_seed": experiment.get("seed"),
+        }
+        if not any(
+            all(_norm(actual[key]) == _norm(condition[key]) for key in actual)
+            for condition in conditions
+        ):
+            return None
     section, name = _split(manifest["replicate_axis"])
     cfg = record.get("config", {})
     source = cfg.get("algorithm", {}) if section == "algorithm" else cfg.get("experiment", {})
@@ -388,7 +316,9 @@ def effective_condition(record: dict, manifest: dict) -> dict:
     """
     from rigfl.experiment.collect import condition_fields
 
-    tuned = list(manifest["tuning_parameters"]) + [manifest["replicate_axis"]]
+    tuned = list(manifest["tuning_parameters"]) + list(
+        manifest.get("replicate_fields", [manifest["replicate_axis"]])
+    )
     drop_exp = {_split(p)[1] for p in tuned if _split(p)[0] == "exp"}
     drop_algorithm = {_split(p)[1] for p in tuned
                       if _split(p)[0] == "algorithm"}
@@ -471,6 +401,7 @@ def place_records(records: list[dict], manifest: dict,
     placed: dict[tuple, dict[int, dict]] = {}
     conditions: dict[tuple, dict] = {}
     unassigned: list[dict] = []
+    expected_replicates = {_norm(value) for value in manifest["replicate_values"]}
     for rec in records:
         cid = candidate_of(rec, manifest, index)
         if cid is None:
@@ -480,9 +411,27 @@ def place_records(records: list[dict], manifest: dict,
                                              rec["algorithm"]),
                 "reason": "no manifest candidate has these tuning-parameter values"})
             continue
+        replicate = replicate_of(rec, manifest)
+        if replicate is None:
+            unassigned.append({
+                "algorithm": rec["algorithm"],
+                "parameters": run_parameters(
+                    rec, manifest["tuning_parameters"], rec["algorithm"]
+                ),
+                "reason": "the run does not match a declared replicate condition",
+            })
+            continue
+        if replicate not in expected_replicates:
+            unassigned.append({
+                "algorithm": rec["algorithm"],
+                "parameters": run_parameters(
+                    rec, manifest["tuning_parameters"], rec["algorithm"]
+                ),
+                "reason": "the run does not match a declared replicate condition",
+            })
+            continue
         gk = group_key(rec, manifest)
         conditions.setdefault(gk, effective_condition(rec, manifest))
-        replicate = replicate_of(rec, manifest)
         slot = placed.setdefault(gk, {}).setdefault(cid, {})
         if replicate in slot:
             first = slot[replicate].get("_source_file", "an earlier result")
@@ -501,9 +450,7 @@ def rank(records: list[dict], manifest: dict, *, metric: str, views: list[str],
          candidate_tie_break: str = "lowest_id") -> dict:
     """Rank every candidate within every tuning group, on validation only.
 
-    Returns the selection artifact. Test statistics are computed and carried for
-    every candidate; nothing in the ordering, the eligibility test or the tie
-    break reads them.
+    Returns the selection artifact. Test values are not read or included.
     """
     if candidate_tie_break not in CANDIDATE_TIE_BREAKS:
         raise TuningError(f'Unknown candidate tie-break "{candidate_tie_break}"; '
@@ -583,10 +530,10 @@ def rank(records: list[dict], manifest: dict, *, metric: str, views: list[str],
     return {
         "schema_version": ARTIFACT_SCHEMA_VERSION,
         "kind": ARTIFACT_KIND,
-        "manifest": {"path": manifest.get("_path"), "name": manifest.get("name"),
-                     "strategy": manifest.get("strategy"),
+        "study": {"path": manifest.get("_path"), "name": manifest.get("name"),
+                     "engine": manifest.get("engine"),
                      "schema_version": manifest.get("schema_version")},
-        "selection": {
+        "selection_protocol": {
             "metric": metric,
             "split": "validation",
             # Plural and unordered: neither view is primary, and one may pick a
@@ -598,7 +545,7 @@ def rank(records: list[dict], manifest: dict, *, metric: str, views: list[str],
             "round_tie_break": tie_break,
             "candidate_tie_break": candidate_tie_break,
             "allow_incomplete": allow_incomplete,
-            "ranked_on": "validation only; test statistics are reported, never ranked",
+            "ranked_on": "validation only",
         },
         "groups": groups,
         "unassigned_records": unassigned,
@@ -610,21 +557,33 @@ def _candidate_view(recs: dict, expected: list, display: dict, metric: str, view
                     aggregation: str, tie_break: str) -> dict:
     """One candidate's per-seed scores and their aggregate, for one view."""
     per_seed: dict[str, dict] = {}
-    val_scores, test_scores = [], []
+    val_scores = []
     errors: dict[str, str] = {}
     for seed in sorted(recs, key=str):
         try:
-            s = run_score(recs[seed], metric, view=view, aggregation=aggregation,
-                          tie_break=tie_break)
+            selected = selection_for(
+                recs[seed], metric, view=view, aggregation=aggregation,
+                tie_break=tie_break, include_test=False,
+            )
+            name = canonical(metric)
+            values = selected.get("validation", {}).get(name, [])
+            weights = (selected.get("sample_counts") or {}).get("validation")
+            value = aggregate(values, weights, aggregation) if values else None
         except (SelectionError, ValueError) as e:
             errors[str(seed)] = str(e)
             continue
+        s = {
+            "selection_view": selected.get("selection_view", view),
+            "validation": value,
+        }
+        if selected.get("selected_round") is not None:
+            s["selected_round"] = selected["selected_round"]
+        elif "selected_rounds" in selected:
+            s["selected_rounds"] = selected["selected_rounds"]
         s["source_file"] = recs[seed].get("_source_file")
         per_seed[str(display.get(seed, seed))] = s
         if s["validation"] is not None:
             val_scores.append(s["validation"])
-        if s["test"] is not None:
-            test_scores.append(s["test"])
 
     scored = [s for s in recs if str(display.get(s, s)) in per_seed]
     missing = [display.get(s, s) for s in expected if s not in scored]
@@ -644,9 +603,6 @@ def _candidate_view(recs: dict, expected: list, display: dict, metric: str, view
 
     return {
         "validation": _stats(val_scores),
-        # Reported so every candidate's test performance stays visible. Reading
-        # it to choose a candidate is test-based tuning, whatever it is called.
-        "test": _stats(test_scores),
         "observed_seeds": scored_display,
         "missing_seeds": missing,
         "eligible": eligible,
@@ -675,7 +631,7 @@ def _rank_view(rows: list[dict], view: str, direction: str, allow_incomplete: bo
     included_incomplete = [r["id"] for r in pool if not r["views"][view]["eligible"]]
     if included_incomplete:
         warnings.append(
-            f"--allow-incomplete: {algorithm} [{label}] / {view}: candidate(s) "
+            f"Incomplete ranking for {algorithm} [{label}] / {view}: candidate(s) "
             f"{included_incomplete} were ranked with missing replicates "
             f"(" + "; ".join(
                 f"id {r['id']} has {len(r['views'][view]['observed_seeds'])} of "
@@ -683,7 +639,7 @@ def _rank_view(rows: list[dict], view: str, direction: str, allow_incomplete: bo
                 for r in pool if not r["views"][view]["eligible"]) + ")")
     if len(counts) > 1:
         warnings.append(
-            f"--allow-incomplete: {algorithm} [{label}] / {view}: candidates were "
+            f"Incomplete ranking for {algorithm} [{label}] / {view}: candidates were "
             f"ranked on unequal replicate counts {sorted(counts)}; the comparison "
             f"is not between equal amounts of evidence.")
 
@@ -705,7 +661,13 @@ def _rank_view(rows: list[dict], view: str, direction: str, allow_incomplete: bo
 
 # ── The runnable configuration a selection produces ──────────────────────────
 
-def selected_configuration(record: dict, manifest: dict) -> dict:
+def selected_configuration(
+    record: dict,
+    manifest: dict,
+    *,
+    replicate_values: list | None = None,
+    replicate_conditions: list[dict[str, int]] | None = None,
+) -> dict:
     """A directly runnable sweep spec for the winning configuration.
 
     Built from the resolved config of a run that produced the candidate, so it
@@ -722,16 +684,103 @@ def selected_configuration(record: dict, manifest: dict) -> dict:
         if key in ExperimentConfig.model_fields
     }
     acfg = deepcopy(record.get("config", {}).get("algorithm", {}))
+    if manifest.get("replicate_conditions"):
+        for name in ("partition_seed", "split_seed", "seed"):
+            exp.pop(name, None)
+        conditions = (
+            list(manifest["replicate_conditions"])
+            if replicate_conditions is None
+            else [dict(condition) for condition in replicate_conditions]
+        )
+        return {
+            "algorithms": [record["algorithm"]],
+            "base": {"experiment": exp, "algorithm": acfg},
+            "replicates": conditions,
+        }
     section, name = _split(manifest["replicate_axis"])
+    values = (
+        list(manifest["replicate_values"])
+        if replicate_values is None
+        else list(replicate_values)
+    )
     if section == "algorithm":
         nested_delete(acfg, name)
-        sweep = {f"algorithm.{name}": list(manifest["replicate_values"])}
+        sweep = {f"algorithm.{name}": values}
     else:
         nested_delete(exp, name)
-        sweep = {name: list(manifest["replicate_values"])}
+        sweep = {name: values}
     return {"algorithms": [record["algorithm"]],
             "base": {"experiment": exp, "algorithm": acfg},
             "sweep": sweep}
+
+
+def build_intensification_plan(
+    artifact: dict, records: list[dict], manifest: dict
+) -> dict | None:
+    intensification = manifest.get("intensification")
+    if not intensification:
+        return None
+    placed, _, _ = place_records(records, manifest)
+    by_key = {str(key): value for key, value in placed.items()}
+    shortlists = []
+    for group in artifact["groups"]:
+        for view, ranking in group["rankings"].items():
+            candidate_ids = ranking["order"][: intensification["top_k"]]
+            if not candidate_ids:
+                raise TuningError(
+                    f"{group['label']} / {view} has no eligible candidates for "
+                    "intensification"
+                )
+            configurations = []
+            for screening_rank, candidate_id in enumerate(candidate_ids, 1):
+                runs = by_key[group["group_key"]][candidate_id]
+                record = runs[min(runs, key=str)]
+                candidate = next(
+                    item
+                    for item in group["candidates"]
+                    if item["id"] == candidate_id
+                )
+                configurations.append(
+                    {
+                        "screening_rank": screening_rank,
+                        "candidate_id": candidate_id,
+                        "candidate_parameters": candidate["parameters"],
+                        "candidate_config_hash": candidate["config_hash"],
+                        "screening_validation": candidate["views"][view][
+                            "validation"
+                        ],
+                        "screening_result_files": [
+                            runs[seed].get("_source_file")
+                            for seed in sorted(runs, key=str)
+                        ],
+                        "configuration": selected_configuration(
+                            record,
+                            manifest,
+                            replicate_conditions=intensification["replicates"],
+                        ),
+                    }
+                )
+            shortlists.append(
+                {
+                    "group_id": group["group_id"],
+                    "group_key": group["group_key"],
+                    "label": group["label"],
+                    "algorithm": group["algorithm"],
+                    "condition": group["condition"],
+                    "selection_view": view,
+                    "configurations": configurations,
+                }
+            )
+    return {
+        "top_k": intensification["top_k"],
+        "intensification_replicates": [
+            dict(condition) for condition in intensification["replicates"]
+        ],
+        "practical_threshold": intensification["practical_threshold"],
+        "tail_fraction": intensification["tail_fraction"],
+        "prefer": intensification["prefer"],
+        "shortlists": shortlists,
+    }
 
 
 def _slug(text: str) -> str:
@@ -742,19 +791,11 @@ def _slug(text: str) -> str:
     return out[:80] or "x"
 
 
-def write_selection(artifact: dict, records: list[dict], manifest: dict,
-                    out_dir: Path) -> list[Path]:
-    """Write the artifact plus one runnable config per (group, view).
-
-    Separate files, named by group id and view, because a sweep over several
-    algorithms or conditions selects several configurations and there is no sense
-    in which one of them is *the* result. The names are checked for collision
-    before anything is written rather than after one has overwritten another.
-    """
-    out_dir = Path(out_dir)
+def _selected_groups(artifact: dict, records: list[dict], manifest: dict) -> list[dict]:
+    """Build final choices from an initial ranking."""
     placed, _, _ = place_records(records, manifest)
     by_key = {str(gk): v for gk, v in placed.items()}
-    planned: dict[str, dict] = {}
+    selected = []
     for group in artifact["groups"]:
         for view, ranking in group["rankings"].items():
             cid = ranking["selected_candidate"]
@@ -763,95 +804,154 @@ def write_selection(artifact: dict, records: list[dict], manifest: dict,
             runs = by_key.get(group["group_key"], {}).get(cid, {})
             if not runs:
                 continue
-            rec = runs[sorted(runs, key=str)[0]]        # any run of the candidate:
-            #                                             they differ only in replicate
-            cand = next(c for c in group["candidates"] if c["id"] == cid)
-            name = (
-                f"group{group['group_id']}_{_slug(group['algorithm'])}"
-                f"_{_slug(_label(group['condition'], group.get('label_fields')))}"
-                f"_{_slug(view)}.yaml")
-            if name in planned:
-                raise TuningError(
-                    f"Two selected configurations would be written as {name}. "
-                    f"Refusing rather than overwriting one with the other.")
-            planned[name] = {
-                "selected_configuration": selected_configuration(rec, manifest),
-                "provenance": {
-                    "manifest": artifact["manifest"],
+            record = runs[min(runs, key=str)]
+            candidate = next(item for item in group["candidates"] if item["id"] == cid)
+            selected.append(
+                {
                     "group_id": group["group_id"],
+                    "group_key": group["group_key"],
+                    "label": group["label"],
                     "algorithm": group["algorithm"],
                     "condition": group["condition"],
                     "selection_view": view,
                     "candidate_id": cid,
-                    "candidate_parameters": cand["parameters"],
-                    "candidate_config_hash": cand["config_hash"],
-                    "selection": artifact["selection"],
-                    "expected_seeds": group["expected_seeds"],
-                    "observed_seeds": cand["views"][view]["observed_seeds"],
-                    "validation": cand["views"][view]["validation"],
+                    "candidate_parameters": candidate["parameters"],
+                    "candidate_config_hash": candidate["config_hash"],
+                    "validation": candidate["views"][view]["validation"],
+                    "selected_configuration": selected_configuration(record, manifest),
+                    "selected_result_files": [
+                        str(
+                            Path(manifest.get("run_store", "../runs"))
+                            / Path(runs[seed].get("_source_file", "")).name
+                        )
+                        for seed in sorted(runs, key=str)
+                    ],
                     "selected_because": (
-                        f'highest aggregate VALIDATION {artifact["selection"]["metric"]} '
-                        f'among {ranking["ranked_count"]} ranked candidate(s) '
-                        if artifact["selection"]["direction"] == "maximize" else
-                        f'lowest aggregate VALIDATION {artifact["selection"]["metric"]} '
-                        f'among {ranking["ranked_count"]} ranked candidate(s) ')
-                        + "(test performance was not consulted)",
-                    "source_results": [
-                        (cand["views"][view]["per_seed"].get(str(s)) or {}).get("source_file")
-                        for s in cand["views"][view]["observed_seeds"]],
-                },
-            }
+                        f'{"highest" if artifact["selection_protocol"]["direction"] == "maximize" else "lowest"} '
+                        f'aggregate validation {artifact["selection_protocol"]["metric"]} among '
+                        f'{ranking["ranked_count"]} ranked candidate(s); test performance '
+                        "was not consulted"
+                    ),
+                }
+            )
+    return selected
 
-    # The JSON artifact is authoritative and contains the selected configurations
-    # directly. YAML files are convenient runnable copies and may be regenerated.
+
+def _write_final_selection(
+    artifact: dict,
+    groups: list[dict],
+    out_dir: Path,
+    *,
+    selected_from: str,
+) -> list[Path]:
+    if not groups:
+        raise TuningError("no eligible configuration can be selected")
+    selection = {
+        "schema_version": SELECTION_SCHEMA_VERSION,
+        "kind": SELECTION_KIND,
+        "study": artifact["study"],
+        "ranking": "ranking.json",
+        "selected_from": selected_from,
+        "selection_protocol": artifact["selection_protocol"],
+        "groups": groups,
+    }
     out_dir.mkdir(parents=True, exist_ok=True)
+    selection_path = out_dir / "selection.json"
+    atomic_write_json(selection_path, selection, validate=_check_selection)
+    written = [selection_path]
+    if len(groups) == 1:
+        selected_path = out_dir / "selected.yaml"
+        atomic_write_text(
+            selected_path,
+            _dump(groups[0]["selected_configuration"]),
+            validate=_check_selected_config,
+        )
+        written.append(selected_path)
+    else:
+        configs_dir = out_dir / "selected"
+        configs_dir.mkdir(parents=True, exist_ok=True)
+        for group in groups:
+            target = configs_dir / (
+                f"group{group['group_id']}_{_slug(group['algorithm'])}_"
+                f"{_slug(group['selection_view'])}.yaml"
+            )
+            atomic_write_text(
+                target,
+                _dump(group["selected_configuration"]),
+                validate=_check_selected_config,
+            )
+            written.append(target)
+    return written
+
+
+def write_ranking(
+    artifact: dict, records: list[dict], manifest: dict, out_dir: Path
+) -> list[Path]:
+    """Write the initial ranking and either select or prepare intensification."""
+    out_dir = Path(out_dir)
     normalized = loads(dumps(artifact, indent=None))
-    normalized["selected_configurations"] = planned
-
-    configs_dir = out_dir / "configs"
-    configs_dir.mkdir(parents=True, exist_ok=True)
-    written: list[Path] = []
-    for name, payload in sorted(planned.items()):
-        target = configs_dir / name
-        atomic_write_text(target, _dump(payload), validate=_check_selected_config)
-        written.append(target)
-
-    selection = out_dir / "selection.json"
-    atomic_write_json(selection, normalized, validate=_check_selection)
-    return written + [selection]
+    normalized["run_store"] = manifest.get("run_store", "../runs")
+    normalized["intensification_plan"] = build_intensification_plan(
+        artifact, records, manifest
+    )
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ranking_path = out_dir / "ranking.json"
+    atomic_write_json(ranking_path, normalized, validate=_check_ranking)
+    written = [ranking_path]
+    if normalized["intensification_plan"] is not None:
+        from rigfl.experiment.intensification import prepare_intensification
+        written.append(prepare_intensification(ranking_path))
+    else:
+        written.extend(
+            _write_final_selection(
+                normalized,
+                _selected_groups(normalized, records, manifest),
+                out_dir,
+                selected_from="initial_ranking",
+            )
+        )
+    return written
 
 
 def _check_selected_config(text: str) -> None:
     payload = _load(text)
-    spec = payload.get("selected_configuration")
-    if not isinstance(spec, dict) or not spec.get("algorithms") or "base" not in spec:
+    if not isinstance(payload, dict) or not payload.get("algorithms") or "base" not in payload:
         raise TuningError("written configuration is not a runnable sweep spec")
-    if "candidate_id" not in (payload.get("provenance") or {}):
-        raise TuningError("written configuration carries no candidate provenance")
+
+
+def _check_ranking(parsed: dict) -> None:
+    if not isinstance(parsed, dict):
+        raise TuningError(f"ranking document is {type(parsed).__name__}, not an object")
+    if parsed.get("kind") != ARTIFACT_KIND:
+        raise TuningError(f"written ranking has kind {parsed.get('kind')!r}")
+    if parsed.get("schema_version") != ARTIFACT_SCHEMA_VERSION:
+        raise TuningError("written ranking has the wrong schema version")
+    if not isinstance(parsed.get("groups"), list) or not isinstance(
+            parsed.get("selection_protocol"), dict):
+        raise TuningError("written ranking is missing its groups or protocol")
 
 
 def _check_selection(parsed: dict) -> None:
     if not isinstance(parsed, dict):
         raise TuningError(f"selection document is {type(parsed).__name__}, not an object")
-    if parsed.get("kind") != ARTIFACT_KIND:
+    if parsed.get("kind") != SELECTION_KIND:
         raise TuningError(f"written selection has kind {parsed.get('kind')!r}")
-    if parsed.get("schema_version") != ARTIFACT_SCHEMA_VERSION:
+    if parsed.get("schema_version") != SELECTION_SCHEMA_VERSION:
         raise TuningError("written selection has the wrong schema version")
     if not isinstance(parsed.get("groups"), list) or not isinstance(
-            parsed.get("selection"), dict):
+        parsed.get("selection_protocol"), dict
+    ):
         raise TuningError("written selection is missing its groups or protocol")
-    if not isinstance(parsed.get("selected_configurations"), dict):
-        raise TuningError("written selection is missing selected configurations")
 
 
-def load_selection(out_dir: Path) -> dict:
-    """Load the latest tuning selection artifact."""
-    marker = Path(out_dir) / "selection.json"
+def load_ranking(out_dir: Path) -> dict:
+    """Load a tuning ranking artifact."""
+    marker = Path(out_dir) / "ranking.json"
     try:
         parsed = read_json(marker)
     except ResultValidationError as exc:
-        raise TuningError(f"cannot load tuning selection: {exc}") from exc
-    _check_selection(parsed)
+        raise TuningError(f"cannot load tuning ranking: {exc}") from exc
+    _check_ranking(parsed)
     return parsed
 
 
@@ -875,23 +975,22 @@ def _dump(payload: dict) -> str:
 # ── Printing ─────────────────────────────────────────────────────────────────
 
 def format_ranking(artifact: dict) -> str:
-    """The tables a human reads: validation ranks, with test alongside."""
-    sel = artifact["selection"]
+    """Format validation-only candidate rankings."""
+    sel = artifact["selection_protocol"]
     m = sel["metric"]
-    out = [f"### hyperparameter candidates  (strategy={artifact['manifest']['strategy']}, "
+    out = [f"### hyperparameter candidates  (engine={artifact['study']['engine']}, "
            f"ranked on VALIDATION {m}, direction={sel['direction']}, "
            f"seeds aggregated by {sel['seed_aggregation']}, "
-           f"candidate tie-break={sel['candidate_tie_break']})",
-           "test columns are reported for inspection and take no part in ranking."]
+           f"candidate tie-break={sel['candidate_tie_break']})"]
     for group in artifact["groups"]:
         out.append(f"\n#### group {group['group_id']}: {group['label']}   "
                    f"expected replicates: {group['expected_seeds']}")
         for view, ranking in group["rankings"].items():
             out.append(f"\nselection-view: {view}   "
                        f"selected candidate: {ranking['selected_candidate']}")
-            out.append(f"| rank (val) | candidate | parameters | val {m} | test {m} "
+            out.append(f"| rank (val) | candidate | parameters | val {m} "
                        f"| seeds | eligible |")
-            out.append("|---|---|---|---|---|---|---|")
+            out.append("|---|---|---|---|---|---|")
             order = ranking["order"] + [c["id"] for c in group["candidates"]
                                         if c["id"] not in ranking["order"]]
             for cid in order:
@@ -901,7 +1000,7 @@ def format_ranking(artifact: dict) -> str:
                 out.append("| " + " | ".join([
                     str(v["rank"]) if v["rank"] is not None else "—",
                     str(cid), params,
-                    _fmt(v["validation"]), _fmt(v["test"]),
+                    _fmt(v["validation"]),
                     f"{len(v['observed_seeds'])}/{len(c['expected_seeds'])}",
                     "yes" if v["eligible"] else f"no — {v['ineligible_reason']}",
                 ]) + " |")
@@ -916,4 +1015,6 @@ def format_ranking(artifact: dict) -> str:
 def _fmt(stats: dict) -> str:
     if stats.get("mean") is None:
         return "—"
+    if stats.get("ci") is None:
+        return f"{stats['mean']:.4f}"
     return f"{stats['mean']:.4f} ± {stats['ci']:.4f}"

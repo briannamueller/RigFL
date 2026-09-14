@@ -112,6 +112,13 @@ def test_both_returns_global_and_per_client():
     assert out["per-client"]["selected_rounds"] == {"0": 5, "1": 10}
 
 
+def test_validation_only_selection_omits_test_values_and_counts():
+    for view in ("global", "per-client"):
+        selected = select(history(), "accuracy", view=view, include_test=False)
+        assert "test" not in selected
+        assert set(selected["sample_counts"]) == {"validation"}
+
+
 # 9 -- tie-breaking
 def test_ties_take_the_earliest_round_by_default():
     h = history()

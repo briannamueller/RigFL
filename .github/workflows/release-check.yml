@@ -137,8 +137,8 @@ jobs:
             --algorithm local \
             --config configs/biosilo_experiment.yaml
           $RIGFL_PYTHON -m rigfl.experiment.collect \
-            --results-dir results/dirichlet
+            --results-dir results/dirichlet/runs
           $RIGFL_PYTHON -m rigfl.experiment.collect \
-            --results-dir results/pathological
+            --results-dir results/pathological/runs
           $RIGFL_PYTHON -m rigfl.experiment.collect \
-            --results-dir results/biosilo
+            --results-dir results/biosilo/runs

@@ -1,5 +1,12 @@
 # Python
 __pycache__/
+
+# Terraform working data and state
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
 *.py[cod]
 *.egg-info/
 .eggs/

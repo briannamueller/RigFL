@@ -9,7 +9,7 @@ from tests.helpers import resolved_experiment
 def test_filename_uses_the_resolved_partition_identity():
     exp = resolved_experiment(dataset="cifar10", partition_id="partition-abc")
     name = result_filename(exp, "fedproto", "deadbeef")
-    assert name == "cifar10_partition-abc_fedproto_seed0_deadbeef.json"
+    assert name == "cifar10_partition-abc_fedproto_deadbeef_seed0.json"
 
 
 def test_run_identity_tracks_partition_but_not_its_storage_location():
@@ -34,6 +34,13 @@ def test_validation_fraction_is_part_of_identity():
     assert run_fingerprint(base, {}) != run_fingerprint(other_validation, {})
 
 
+def test_split_seed_is_part_of_identity():
+    first = resolved_experiment(partition_id="same", split_seed=3)
+    second = resolved_experiment(partition_id="same", split_seed=4)
+
+    assert run_fingerprint(first, {}) != run_fingerprint(second, {})
+
+
 def test_environment_flags_do_not_change_identity():
     a = resolved_experiment()
     b = resolved_experiment(
@@ -48,5 +55,5 @@ def test_algorithm_name_is_outside_fingerprint_and_inside_result_identity():
 
     fp = run_fingerprint(exp, algorithm_config)
     assert result_filename(exp, "local", fp) != result_filename(exp, "global", fp)
-    assert result_filename(exp, "local", fp).endswith(f"local_seed0_{fp}.json")
-    assert result_filename(exp, "global", fp).endswith(f"global_seed0_{fp}.json")
+    assert result_filename(exp, "local", fp).endswith(f"local_{fp}_seed0.json")
+    assert result_filename(exp, "global", fp).endswith(f"global_{fp}_seed0.json")

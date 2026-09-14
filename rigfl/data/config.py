@@ -10,7 +10,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from rigfl.data.transforms import get_data_transform
 
-
 DEFAULT_DATASET_CONFIG = "configs/datasets.yaml"
 DEFAULT_DATA_DIR = "data"
 
@@ -64,6 +63,7 @@ class PartitionSettingsBase(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     partition_seed: int = Field(0, ge=0)
+    split_seed: int = Field(0, ge=0)
     shuffle: bool = True
     train_per_client: int | None = Field(2000, ge=1)
     validation_per_client: int | None = Field(None, ge=1)
@@ -277,6 +277,7 @@ class BioSiloDatasetSettings(BaseModel):
     data_root: str | None = None
     parameters: dict[str, Any] = Field(default_factory=dict)
     validation_fraction: float = Field(0.2, gt=0, lt=1)
+    split_seed: int = Field(0, ge=0)
 
     @field_validator("source_dataset")
     @classmethod
@@ -302,6 +303,52 @@ DatasetSettings = Annotated[
     FlowerDatasetSettings | BioSiloDatasetSettings,
     Field(discriminator="backend"),
 ]
+
+
+_SEEDED_PARTITIONERS = {
+    "continuous",
+    "dirichlet",
+    "distribution",
+    "inner_dirichlet",
+    "pathological",
+    "shard",
+}
+
+
+def inactive_replicate_seed_fields(settings: DatasetSettings) -> set[str]:
+    """Return data-seed fields that cannot affect this dataset configuration."""
+    if isinstance(settings, BioSiloDatasetSettings):
+        return set()
+
+    inactive = set()
+    if (
+        isinstance(settings.source_splits, SourceSplits)
+        and settings.source_splits.validation is not None
+    ):
+        inactive.add("split_seed")
+
+    partition = settings.partition
+    caps_samples = any(
+        getattr(partition, name) is not None
+        for name in (
+            "train_per_client",
+            "validation_per_client",
+            "test_per_client",
+        )
+    )
+    selects_clients = getattr(partition, "client_limit", None) is not None
+    merges_splits = isinstance(settings.source_splits, MergedSourceSplits)
+    if not any(
+        (
+            partition.shuffle,
+            caps_samples,
+            selects_clients,
+            merges_splits,
+            partition.scheme in _SEEDED_PARTITIONERS,
+        )
+    ):
+        inactive.add("partition_seed")
+    return inactive
 
 
 class DatasetRegistry(BaseModel):

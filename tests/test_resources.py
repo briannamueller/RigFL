@@ -299,7 +299,13 @@ def test_resource_summary_requires_compatible_hardware():
     assert summary["wall_time_comparable"] is False
     assert summary["attributed_training_wall_seconds_mean"] is None
 
-    table = format_resource_table({"fedavg": {"resources": summary}})
+    table = format_resource_table({
+        "fedavg": {
+            "independent_replicates": True,
+            "confidence_intervals_available": True,
+            "resources": summary,
+        }
+    })
     assert "communication (GiB)" in table
     assert "attributed training FLOPs (TFLOPs)" in table
     assert "| fedavg | 0.000 ± 0.000 | — | — | none |" in table

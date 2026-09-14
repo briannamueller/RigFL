@@ -1,33 +1,51 @@
 """Aggregate completed runs into multi-seed tables and tuning rankings.
 
-    python -m rigfl.experiment.collect --results-dir results
+    python -m rigfl.experiment.collect
 
 Use ``--group-by`` to label hyperparameter variants:
 
-    python -m rigfl.experiment.collect --results-dir results/feddes_tune \
+    python -m rigfl.experiment.collect --results-dir results/runs \
         --group-by algorithm.graphroute.graph.k algorithm.graphroute.gnn.arch
 """
 
 from __future__ import annotations
 
 import argparse
+import math
 from collections import defaultdict
 from pathlib import Path
 
-from rigfl.eval.report import (format_resource_table, format_table, summarize,
-                               win_rate)
 from rigfl.eval.metrics import direction_of
+from rigfl.eval.report import (
+    format_resource_table,
+    format_table,
+    independent_replicates,
+    summarize,
+)
 from rigfl.eval.selection import resolve_metric
-from rigfl.experiment.config import (algorithm_identity, hashable as _hashable,
-                                     normalize_early_stopping)
+from rigfl.eval.transfer import (
+    TransferComparisonError,
+    format_negative_transfer_profile,
+    format_negative_transfer_table,
+    negative_transfer_summary,
+)
+from rigfl.experiment.artifacts import (
+    ResultValidationError,
+    atomic_write_json,
+    atomic_write_text,
+    is_run_result,
+    read_json,
+    validate_run_record,
+)
+from rigfl.experiment.config import (
+    algorithm_identity,
+    normalize_early_stopping,
+    result_data_configuration_id,
+)
+from rigfl.experiment.config import hashable as _hashable
 from rigfl.experiment.paths import nested_get
-from rigfl.experiment.artifacts import (ResultValidationError, atomic_write_json,
-                                        atomic_write_text, is_run_result, read_json,
-                                        validate_run_record)
 from rigfl.experiment.registry import ALL_ALGORITHMS
-from rigfl.experiment.tuning import (MANIFEST_NAME, TuningError, format_ranking,
-                                     load_manifest,
-                                     rank as rank_tuning, write_selection)
+from rigfl.experiment.storage import records_for_grid
 
 
 def load_results(results_dir: Path, dataset: str | None, *, ignore_invalid: bool = False,
@@ -38,8 +56,6 @@ def load_results(results_dir: Path, dataset: str | None, *, ignore_invalid: bool
     others: list[str] = []
 
     for path in sorted(results_dir.glob("*.json")):
-        if path.name == MANIFEST_NAME:                        # the sweep's own manifest
-            continue
         try:
             rec = read_json(path)
         except ResultValidationError as e:
@@ -80,9 +96,11 @@ def load_results(results_dir: Path, dataset: str | None, *, ignore_invalid: bool
 
 
 # Algorithm settings are excluded so different algorithms can share one experimental
-# condition. Seed is excluded because rows aggregate over seeds.
-_EXPERIMENT = ("dataset", "data_backend", "partition_id", "partition_scheme",
-               "num_clients", "num_classes", "validation_fraction", "input_kind",
+# condition. Replicate seeds and generated partition IDs are excluded because rows
+# aggregate over replicate conditions.
+_EXPERIMENT = ("dataset", "data_backend", "partition_scheme",
+               "num_clients", "num_classes",
+               "validation_fraction", "input_kind",
                "rounds", "shared_dim", "model", "model_family", "batch", "eval_gap",
                "estimate_flops")
 
@@ -91,6 +109,7 @@ def condition_fields(rec: dict) -> dict:
     """The flattened fields that define an experiment."""
     exp = rec.get("config", {}).get("experiment", {})
     fields = {k: _hashable(exp.get(k)) for k in _EXPERIMENT}
+    fields["data_configuration"] = result_data_configuration_id(rec)
     fields["estimate_flops"] = bool(exp.get("estimate_flops", False))
     for k, v in normalize_early_stopping(exp.get("early_stopping")).items():
         fields[f"early_stopping.{k}"] = v
@@ -149,8 +168,12 @@ def _field(rec: dict, key: str):
 
 def _rows_by_algorithm(by_algorithm: dict[str, list[dict]], metric: str, *, view: str,
                     aggregation: str, tie_break: str,
-                    include_resources: bool = False) -> dict[str, dict]:
-    """One row per algorithm per experiment, with win% vs Local from that experiment."""
+                    include_resources: bool = False,
+                    include_transfer: bool = True,
+                    transfer_threshold: float = 0.0,
+                    transfer_profile: tuple[float, ...] = (),
+                    transfer_tail: float = 0.10) -> dict[str, dict]:
+    """One row per algorithm configuration and experiment."""
     flat = [r for recs in by_algorithm.values() for r in recs]
     experiments = {experiment_condition(r) for r in flat}
     multi = len(experiments) > 1
@@ -177,16 +200,30 @@ def _rows_by_algorithm(by_algorithm: dict[str, list[dict]], metric: str, *, view
                 summary = summarize(vrecs, metric, view=view, aggregation=aggregation,
                                     tie_break=tie_break,
                                     include_resources=include_resources)
-                if local_records and name != "local":
-                    summary["win"] = win_rate(vrecs, local_records, metric, view=view,
-                                              aggregation=aggregation, tie_break=tie_break)
+                if include_transfer and local_records and name != "local":
+                    summary["negative_transfer"] = _negative_transfer(
+                        vrecs,
+                        local_records,
+                        metric,
+                        view=view,
+                        aggregation=aggregation,
+                        tie_break=tie_break,
+                        threshold=transfer_threshold,
+                        profile_thresholds=transfer_profile,
+                        tail_fraction=transfer_tail,
+                        include_uncertainty=independent_replicates(vrecs),
+                    )
                 rows[label] = summary
     return rows
 
 
 def _rows_by_group(by_algorithm: dict[str, list[dict]], group_by: list[str], metric: str,
                    *, view: str, aggregation: str, tie_break: str,
-                   include_resources: bool = False) -> dict[str, dict]:
+                   include_resources: bool = False,
+                   include_transfer: bool = True,
+                   transfer_threshold: float = 0.0,
+                   transfer_profile: tuple[float, ...] = (),
+                   transfer_tail: float = 0.10) -> dict[str, dict]:
     """Grouped view: one row per (experiment + algorithm + selected fields) setting."""
     flat = [r for recs in by_algorithm.values() for r in recs]
     extra = [k for k in group_by if k != "algorithm"]
@@ -211,10 +248,31 @@ def _rows_by_group(by_algorithm: dict[str, list[dict]], group_by: list[str], met
                 f"group {label!r} combines multiple algorithm configurations; "
                 "include the differing algorithm fields in --group-by"
             )
-        rows[label] = summarize(
+        summary = summarize(
             records, metric, view=view, aggregation=aggregation,
             tie_break=tie_break, include_resources=include_resources,
         )
+        if include_transfer and records[0]["algorithm"] != "local":
+            condition = experiment_condition(records[0])
+            local_records = [
+                record for record in flat
+                if record["algorithm"] == "local"
+                and experiment_condition(record) == condition
+            ]
+            if local_records:
+                summary["negative_transfer"] = _negative_transfer(
+                    records,
+                    local_records,
+                    metric,
+                    view=view,
+                    aggregation=aggregation,
+                    tie_break=tie_break,
+                    threshold=transfer_threshold,
+                    profile_thresholds=transfer_profile,
+                    tail_fraction=transfer_tail,
+                    include_uncertainty=independent_replicates(records),
+                )
+        rows[label] = summary
     return rows
 
 
@@ -237,9 +295,51 @@ def rank_candidates(rows: dict, metric: str, direction: str) -> list[tuple[str, 
     return sorted(scored, key=lambda kv: kv[1], reverse=(direction == "maximize"))
 
 
+def _nonnegative_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed < 0:
+        raise argparse.ArgumentTypeError("must be finite and nonnegative")
+    return parsed
+
+
+def _tail_fraction(value: str) -> float:
+    parsed = float(value)
+    if not 0 < parsed <= 1:
+        raise argparse.ArgumentTypeError("must be greater than 0 and at most 1")
+    return parsed
+
+
+def _collection_rows(rows: dict) -> tuple[dict, dict]:
+    """Separate predictive summaries from Local-relative transfer summaries."""
+    performance, transfer = {}, {}
+    for label, row in rows.items():
+        saved = dict(row)
+        comparison = saved.pop("negative_transfer", None)
+        performance[label] = saved
+        if comparison is not None:
+            transfer[label] = comparison
+    return performance, transfer
+
+
+def _negative_transfer(algorithm_records: list[dict], local_records: list[dict],
+                       metric: str, **options) -> dict:
+    try:
+        return negative_transfer_summary(
+            algorithm_records, local_records, metric, **options
+        )
+    except TransferComparisonError as error:
+        return {
+            "schema_version": 1,
+            "available": False,
+            "baseline": "local",
+            "reason": str(error),
+        }
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Aggregate RigFL result JSONs into a table.")
-    p.add_argument("--results-dir", default="results")
+    p.add_argument("--results-dir", default="results/runs")
+    p.add_argument("--grid", help="include only runs in this saved grid.jsonl")
     p.add_argument("--dataset", default=None)
     p.add_argument("--group-by", nargs="*", default=None,
                    help="fields to group rows by, e.g. algorithm.graphroute.graph.k "
@@ -258,20 +358,7 @@ def main() -> None:
                    default=None, help="how the global view combines clients")
     p.add_argument("--tie-break", choices=["earliest", "latest"], default=None)
     p.add_argument("--rank", action="store_true",
-                   help="order candidates by validation score. With a tuning "
-                        "manifest in the results directory this is candidate-aware: "
-                        "one ranking per tuning group, seeds aggregated as "
-                        "replicates. Without one it orders the table's rows.")
-    p.add_argument("--select-out", default=None, metavar="DIR",
-                   help="write the tuning selection artifact and one runnable "
-                        "config per (group, selection view) into DIR. Needs a "
-                        "tuning manifest.")
-    p.add_argument("--allow-incomplete", action="store_true",
-                   help="rank candidates that are missing expected replicates. Off "
-                        "by default: a three-seed candidate and a one-seed candidate "
-                        "are not comparable. The output records what was missing.")
-    p.add_argument("--candidate-tie-break", choices=["lowest_id"], default="lowest_id",
-                   help="how equal validation scores are broken between candidates")
+                   help="order the displayed result rows by validation score")
     p.add_argument("--ignore-invalid", action="store_true",
                    help="proceed when some result files cannot be read as completed "
                         "runs. Off by default: a table over an unknown subset of the "
@@ -282,47 +369,77 @@ def main() -> None:
                    help="write the collection artifact (both views, full provenance)")
     p.add_argument("--include-resources", action="store_true",
                    help="print communication, estimated FLOPs, and training time")
+    p.add_argument("--negative-transfer-threshold", type=_nonnegative_float,
+                   default=0.0, metavar="DELTA",
+                   help="smallest change treated as a benefit or harm, in metric "
+                        "units (default: 0)")
+    p.add_argument("--negative-transfer-profile", nargs="*", type=_nonnegative_float,
+                   default=[], metavar="DELTA",
+                   help="additional thresholds for the negative-transfer rate profile")
+    p.add_argument("--negative-transfer-tail", type=_tail_fraction, default=0.10,
+                   metavar="FRACTION",
+                   help="fraction used for worst-tail relative gain (default: 0.10)")
     args = p.parse_args()
 
     invalid: list[tuple[str, str]] = []
     by_algorithm = load_results(Path(args.results_dir), args.dataset,
                                 ignore_invalid=args.ignore_invalid, invalid=invalid)
+    if args.grid:
+        try:
+            filtered = records_for_grid(
+                [record for records in by_algorithm.values() for record in records],
+                args.grid,
+            )
+        except ValueError as error:
+            raise SystemExit(f"[collect] {error}") from error
+        by_algorithm = defaultdict(list)
+        for record in filtered:
+            by_algorithm[record["algorithm"]].append(record)
     ignored = [{"file": name, "reason": reason} for name, reason in invalid]
     if not by_algorithm:
         print(f"no results found in {args.results_dir}")
         return
 
     flat = [r for recs in by_algorithm.values() for r in recs]
-    metric, view, aggregation, tie_break = _resolve_selection(args, flat)
-
-    manifest = load_manifest(Path(args.results_dir))
-    if args.select_out and manifest is None:
-        raise SystemExit(
-            f"--select-out needs a tuning manifest, and {args.results_dir} has no "
-            f"{MANIFEST_NAME}. Candidates are defined by the sweep that produced "
-            f"the runs; reconstructing them from result filenames or table labels "
-            f"would be a guess. Re-declare the sweep with a tuning: block "
-            f"(rigfl.experiment.launch writes the manifest), or drop --select-out.")
+    metric, view, aggregation, tie_break = _resolve_selection(
+        args, flat, manifest=None
+    )
 
     views = ["global", "per-client"] if view == "both" else [view]
     tables = {}
     for v in views:
         source = (_records_supporting(by_algorithm, v)
                   if view == "both" else by_algorithm)
-        rows = (_rows_by_group(source, args.group_by, metric, view=v,
-                               aggregation=aggregation, tie_break=tie_break)
+        rows = (_rows_by_group(
+                    source, args.group_by, metric, view=v,
+                    aggregation=aggregation, tie_break=tie_break,
+                    transfer_threshold=args.negative_transfer_threshold,
+                    transfer_profile=tuple(args.negative_transfer_profile),
+                    transfer_tail=args.negative_transfer_tail)
                 if args.group_by else
-                _rows_by_algorithm(source, metric, view=v,
-                                   aggregation=aggregation, tie_break=tie_break))
+                _rows_by_algorithm(
+                    source, metric, view=v,
+                    aggregation=aggregation, tie_break=tie_break,
+                    transfer_threshold=args.negative_transfer_threshold,
+                    transfer_profile=tuple(args.negative_transfer_profile),
+                    transfer_tail=args.negative_transfer_tail))
         tables[v] = rows
         print(f"\n### selection-view: {v}  (metric={metric}, split=validation, "
               f"direction={direction_of(metric)}, aggregation={aggregation}, "
               f"tie_break={tie_break})")
         print(format_table(rows, metric))
-        if args.rank and not manifest:
+        transfer_table = format_negative_transfer_table(rows)
+        if transfer_table:
+            print("\n### negative transfer relative to Local")
+            print(transfer_table)
+        transfer_profile = format_negative_transfer_profile(rows)
+        if transfer_profile:
+            print("\n### negative-transfer rate profile")
+            print(transfer_profile)
+        if args.rank:
             print("\nranked by VALIDATION (test never ranks):")
-            for i, (label, score) in enumerate(rank_candidates(rows, metric,
-                                                               direction_of(metric)), 1):
+            for i, (label, score) in enumerate(rank_candidates(
+                    rows, metric, direction_of(metric)), 1):
                 print(f"  {i}. {label}  val {metric}={score:.4f}")
 
     resource_rows = None
@@ -330,49 +447,39 @@ def main() -> None:
         resource_rows = (
             _rows_by_group(by_algorithm, args.group_by, metric, view="global",
                            aggregation=aggregation, tie_break=tie_break,
-                           include_resources=True)
+                           include_resources=True, include_transfer=False)
             if args.group_by else
             _rows_by_algorithm(by_algorithm, metric, view="global",
                                aggregation=aggregation, tie_break=tie_break,
-                               include_resources=True)
+                               include_resources=True, include_transfer=False)
         )
         print("\n### resources: attributed training")
         print(format_resource_table(resource_rows))
 
-    if manifest and (args.rank or args.select_out):
-        try:
-            artifact = rank_tuning(flat, manifest, metric=metric, views=views,
-                                   aggregation=aggregation, tie_break=tie_break,
-                                   allow_incomplete=args.allow_incomplete,
-                                   candidate_tie_break=args.candidate_tie_break)
-        except TuningError as e:      # a refusal, not a crash: say why and stop
-            raise SystemExit(f"[collect] cannot select a configuration: {e}")
-        print()
-        print(format_ranking(artifact))
-        # Carried into the selection artifact: a candidate that looks short of a
-        # replicate because its file was unreadable must say so where the
-        # selection is read, not only in this terminal.
-        artifact["ignored_invalid_results"] = ignored
-        if ignored:
-            artifact["warnings"].append(
-                f"--ignore-invalid: {len(ignored)} result file(s) were excluded from "
-                f"this collection; any replicate among them is missing, and its "
-                f"candidate is incomplete rather than complete.")
-        if args.select_out:
-            written = write_selection(artifact, flat, manifest, Path(args.select_out))
-            print("\nwrote:")
-            for w in written:
-                print(f"  {w}")
-
     if args.out:
-        body = "\n\n".join(f"### selection-view: {v}\n" + format_table(rows, metric)
-                            for v, rows in tables.items())
+        sections = []
+        for v, rows in tables.items():
+            sections.append(f"### selection-view: {v}\n" + format_table(rows, metric))
+            transfer_table = format_negative_transfer_table(rows)
+            if transfer_table:
+                sections.append(
+                    f"### negative transfer relative to Local: {v}\n"
+                    + transfer_table
+                )
+            transfer_profile = format_negative_transfer_profile(rows)
+            if transfer_profile:
+                sections.append(
+                    f"### negative-transfer rate profile: {v}\n"
+                    + transfer_profile
+                )
+        body = "\n\n".join(sections)
         if resource_rows is not None:
             body += ("\n\n### resources: attributed training\n" +
                      format_resource_table(resource_rows))
         if ignored:
             body += ("\n\n**Ignored (--ignore-invalid):**\n"
-                     + "\n".join(f"- `{i['file']}` — {i['reason']}" for i in ignored))
+                     + "\n".join(
+                         f"- `{i['file']}` — {i['reason']}" for i in ignored))
         atomic_write_text(Path(args.out), body)
         print(f"\nwrote {args.out}")
 
@@ -380,11 +487,12 @@ def main() -> None:
         # Both views always, whatever was displayed: the artifact is the record,
         # and which view was looked at should not change what was computed.
         artifact = {
-            "schema_version": 2,
+            "schema_version": 3,
             "selection": {"metric": metric, "split": "validation",
                           "direction": direction_of(metric),
                           "aggregation": aggregation, "tie_break": tie_break},
             "views": {},
+            "negative_transfer": {},
             # Every artifact this collection produces states what it could not
             # read, so a number from it is never quietly a number over a subset.
             "ignored_invalid_results": ignored,
@@ -393,22 +501,68 @@ def main() -> None:
             source = _records_supporting(by_algorithm, v)
             rows = (_rows_by_group(source, args.group_by, metric, view=v,
                                    aggregation=aggregation, tie_break=tie_break,
-                                   include_resources=args.include_resources)
+                                   include_resources=args.include_resources,
+                                   transfer_threshold=args.negative_transfer_threshold,
+                                   transfer_profile=tuple(args.negative_transfer_profile),
+                                   transfer_tail=args.negative_transfer_tail)
                     if args.group_by else
                     _rows_by_algorithm(source, metric, view=v,
                                        aggregation=aggregation, tie_break=tie_break,
-                                       include_resources=args.include_resources))
-            artifact["views"][v] = rows
+                                       include_resources=args.include_resources,
+                                       transfer_threshold=args.negative_transfer_threshold,
+                                       transfer_profile=tuple(args.negative_transfer_profile),
+                                       transfer_tail=args.negative_transfer_tail))
+            performance, transfer = _collection_rows(rows)
+            artifact["views"][v] = performance
+            artifact["negative_transfer"][v] = transfer
         atomic_write_json(Path(args.out_json), artifact)
         print(f"wrote {args.out_json}")
 
 
-def _resolve_selection(args, records: list[dict]) -> tuple[str, str, str, str]:
+def _resolve_selection(args, records: list[dict],
+                       manifest: dict | None = None) -> tuple[str, str, str, str]:
     """Resolve collection-time reporting choices."""
-    return (resolve_metric(args.selection_metric, source="--selection-metric"),
-            args.selection_view or "global",
-            args.selection_aggregation or "mean",
-            args.tie_break or "earliest")
+    optimization = (manifest or {}).get("optimization", {})
+    protocol = (manifest or {}).get("selection_protocol", {})
+    defaults = {
+        "metric": protocol.get("metric", optimization.get("metric", "accuracy")),
+        "view": protocol.get(
+            "selection_view", optimization.get("selection_view", "global")
+        ),
+        "aggregation": protocol.get(
+            "selection_aggregation",
+            optimization.get("selection_aggregation", "mean"),
+        ),
+        "tie_break": protocol.get(
+            "round_tie_break", optimization.get("round_tie_break", "earliest")
+        ),
+    }
+    resolved = {
+        "metric": resolve_metric(
+            args.selection_metric or defaults["metric"],
+            source="--selection-metric",
+        ),
+        "view": args.selection_view or defaults["view"],
+        "aggregation": args.selection_aggregation or defaults["aggregation"],
+        "tie_break": args.tie_break or defaults["tie_break"],
+    }
+    if optimization or protocol.get("fixed"):
+        expected = dict(defaults)
+        expected["metric"] = resolve_metric(expected["metric"])
+        changed = [name for name in expected if resolved[name] != expected[name]]
+        if changed:
+            details = ", ".join(
+                f"{name}={resolved[name]!r} (study used {expected[name]!r})"
+                for name in changed
+            )
+            raise SystemExit(
+                "a tuning search must be selected with the objective protocol "
+                f"that guided its trials: {details}"
+            )
+    return (
+        resolved["metric"], resolved["view"], resolved["aggregation"],
+        resolved["tie_break"],
+    )
 
 
 if __name__ == "__main__":

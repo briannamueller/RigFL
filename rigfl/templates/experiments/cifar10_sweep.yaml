@@ -1,0 +1,16 @@
+name: cifar10_sweep
+algorithms: [local, fedavg]
+
+base:
+  experiment:
+    dataset: cifar10
+    model: fedavg_cnn
+    rounds: 100
+
+replicates:
+  - {partition_seed: 0, split_seed: 0, experiment_seed: 0}
+  - {partition_seed: 1, split_seed: 1, experiment_seed: 1}
+  - {partition_seed: 2, split_seed: 2, experiment_seed: 2}
+
+sweep:
+  algorithm.lr: [0.01, 0.03]

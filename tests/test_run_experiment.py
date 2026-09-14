@@ -26,7 +26,7 @@ def test_cifar10_example_configuration_loads():
     experiment, algorithm = run_module.load_run_config(str(config))
 
     assert experiment["dataset"] == "cifar10"
-    assert experiment["out_dir"] == "results/cifar10_run"
+    assert experiment["out_dir"] == "results"
     assert algorithm == {"local_epochs": 1, "lr": 0.01}
 
 

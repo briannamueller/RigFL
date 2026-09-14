@@ -8,13 +8,26 @@ from __future__ import annotations
 
 import pytest
 
-from rigfl.experiment.collect import (_field, _records_supporting,
-                                      _rows_by_algorithm, _rows_by_group)
+from rigfl.eval.transfer import (
+    format_negative_transfer_profile,
+    format_negative_transfer_table,
+)
+from rigfl.experiment.collect import (
+    _field,
+    _records_supporting,
+    _rows_by_algorithm,
+    _rows_by_group,
+)
 from tests.helpers import resolved_experiment
 
 # Selection policy is fixed here on purpose: these tests are about grouping and
 # pairing, not about which metric selects.
-_SEL = dict(metric="accuracy", view="global", aggregation="mean", tie_break="earliest")
+_SEL = {
+    "metric": "accuracy",
+    "view": "global",
+    "aggregation": "mean",
+    "tie_break": "earliest",
+}
 
 
 def _history(*client_values):
@@ -131,28 +144,46 @@ def _cond_rec(algorithm, seed, *, dataset="cifar10", partition_id="partition-a",
     return {"algorithm": algorithm,
             "config": {"experiment": {
                 "dataset": dataset, "partition_id": partition_id, "seed": seed,
+                "partition_seed": 0, "split_seed": 0,
                 "data_backend": "flower", "partition_scheme": "dirichlet",
-                "num_clients": 20, "num_classes": 10,
+                "num_clients": len(accs), "num_classes": 10,
                 "validation_fraction": 0.2, "input_kind": "image",
             },
                        "algorithm": algorithm_cfg},
+            "partition": {
+                "generated": {
+                    "partition_id": partition_id,
+                    "settings": {
+                        "source_dataset": dataset,
+                        "partition": {
+                            "scheme": "dirichlet",
+                            "num_clients": len(accs),
+                            "configuration": partition_id,
+                            "partition_seed": 0,
+                            "split_seed": 0,
+                        },
+                    },
+                }
+            },
             "result": _history(*accs)}
 
 
 def test_algorithms_with_different_configs_share_an_experiment():
     """Local and FedDES configure differently by nature; that must not separate
-    them, or win-rate has nothing to pair against."""
+    them, or Local-relative reporting has nothing to pair against."""
     from rigfl.experiment.collect import experiment_condition
     assert experiment_condition(_cond_rec("local", 0)) == experiment_condition(_cond_rec("feddes", 0))
 
 
-def test_win_rate_is_computed_across_algorithms():
+def test_negative_transfer_is_computed_across_algorithms():
     rows = _rows({
         "local":  [_cond_rec("local", 0, accs=(0.9, 0.9))],
         "feddes": [_cond_rec("feddes", 0, accs=(0.5, 0.5))],
     })
-    feddes = [k for k in rows if k.startswith("feddes")][0]
-    assert "win" in rows[feddes] and rows[feddes]["win"] == 0.0     # paired, and loses
+    feddes = next(k for k in rows if k.startswith("feddes"))
+    transfer = rows[feddes]["negative_transfer"]
+    assert transfer["negative_transfer_rate"]["estimate"] == 1.0
+    assert transfer["negative_transfer_magnitude"]["estimate"] == pytest.approx(0.4)
 
 
 def test_client_model_pool_is_part_of_the_experiment_condition():
@@ -167,7 +198,7 @@ def test_client_model_pool_is_part_of_the_experiment_condition():
     rows = _rows({"local": [local], "feddes": [feddes]})
     feddes_row = next(value for key, value in rows.items()
                        if key.startswith("feddes"))
-    assert "win" not in feddes_row
+    assert "negative_transfer" not in feddes_row
 
 
 def test_mixed_model_capabilities_share_the_requested_experiment_condition():
@@ -185,6 +216,10 @@ def test_mixed_model_capabilities_share_the_requested_experiment_condition():
     b["config"]["experiment"] = heterogeneous.model_dump(mode="json")
 
     assert experiment_condition(a) == experiment_condition(b)
+    rows = _rows({"local": [a], "feddes": [b]})
+    comparison = rows["feddes"]["negative_transfer"]
+    assert comparison["available"] is False
+    assert "resolved client-model assignment" in comparison["reason"]
 
 
 def test_experiments_are_not_averaged_together():
@@ -204,10 +239,10 @@ def test_local_is_paired_within_its_own_experiment():
         "feddes": [_cond_rec("feddes", 0, accs=(0.5, 0.5)),
                    _cond_rec("feddes", 0, dataset="mnist", accs=(0.5, 0.5))],
     })
-    cifar = [k for k in rows if k.startswith("feddes") and "cifar10" in k][0]
-    mnist = [k for k in rows if k.startswith("feddes") and "mnist" in k][0]
-    assert rows[cifar]["win"] == 0.0        # paired with cifar's local
-    assert "win" not in rows[mnist]          # no local ran in that experiment
+    cifar = next(k for k in rows if k.startswith("feddes") and "cifar10" in k)
+    mnist = next(k for k in rows if k.startswith("feddes") and "mnist" in k)
+    assert rows[cifar]["negative_transfer"]["negative_transfer_rate"]["estimate"] == 1.0
+    assert "negative_transfer" not in rows[mnist]  # no Local run in that experiment
 
 
 def test_one_algorithm_swept_over_its_own_settings_gets_separate_rows():
@@ -249,6 +284,113 @@ def test_group_by_still_separates_experiments():
     rows = _rows(recs, ["algorithm.graphroute.graph.k"])
     assert len(rows) == 2, rows                  # distinct partitions stay apart
     assert sorted(s["seeds"] for s in rows.values()) == [1, 2]
+
+
+def test_zipped_data_and_training_replicates_form_one_result_row():
+    records = []
+    for seed in range(3):
+        record = _cond_rec(
+            "feddes",
+            seed,
+            partition_id=f"partition-{seed}",
+            algorithm_cfg=_feddes_config(5),
+        )
+        experiment = record["config"]["experiment"]
+        experiment["partition_seed"] = seed
+        experiment["split_seed"] = seed
+        settings = record["partition"]["generated"]["settings"]["partition"]
+        settings["partition_seed"] = seed
+        settings["split_seed"] = seed
+        settings.pop("configuration")
+        records.append(record)
+
+    rows = _rows({"feddes": records}, ["algorithm.graphroute.graph.k"])
+
+    assert len(rows) == 1
+    summary = next(iter(rows.values()))
+    assert summary["seeds"] == 3
+    assert summary["independent_replicates"] is True
+    assert summary["test_ci"] is not None
+
+
+@pytest.mark.parametrize("drop_one", [False, True])
+def test_crossed_collection_omits_performance_and_transfer_intervals(drop_one):
+    by_algorithm = {"local": [], "feddes": []}
+    for partition_seed in range(2):
+        for split_seed in range(2):
+            for experiment_seed in range(2):
+                partition_id = (
+                    f"partition-{partition_seed}-{split_seed}"
+                )
+                for algorithm, accuracy in (("local", 0.5), ("feddes", 0.6)):
+                    record = _cond_rec(
+                        algorithm,
+                        experiment_seed,
+                        partition_id=partition_id,
+                        accs=(accuracy, accuracy),
+                    )
+                    experiment = record["config"]["experiment"]
+                    experiment["partition_seed"] = partition_seed
+                    experiment["split_seed"] = split_seed
+                    settings = record["partition"]["generated"]["settings"][
+                        "partition"
+                    ]
+                    settings["partition_seed"] = partition_seed
+                    settings["split_seed"] = split_seed
+                    settings.pop("configuration")
+                    by_algorithm[algorithm].append(record)
+
+    if drop_one:
+        by_algorithm["local"].pop()
+        by_algorithm["feddes"].pop()
+
+    rows = _rows_by_algorithm(
+        by_algorithm,
+        "accuracy",
+        view="global",
+        aggregation="mean",
+        tie_break="earliest",
+        transfer_profile=(0.05,),
+    )
+    feddes = rows["feddes"]
+
+    assert feddes["runs"] == (7 if drop_one else 8)
+    assert feddes["seeds"] == 2
+    assert feddes["test_ci"] is None
+    transfer = feddes["negative_transfer"]
+    assert transfer["negative_transfer_rate"]["estimate"] == 0.0
+    assert transfer["negative_transfer_rate"]["ci_low"] is None
+    assert transfer["uncertainty"]["reason"] == (
+        "experiment seeds are reused across run conditions"
+    )
+    assert "feddes §" in format_negative_transfer_table(rows)
+    assert "feddes §" in format_negative_transfer_profile(rows)
+
+
+def test_zipped_collection_keeps_transfer_intervals():
+    by_algorithm = {
+        "local": [
+            _cond_rec("local", seed, accs=(0.5, 0.5)) for seed in range(3)
+        ],
+        "feddes": [
+            _cond_rec("feddes", seed, accs=(0.6, 0.4)) for seed in range(3)
+        ],
+    }
+    rows = _rows_by_algorithm(
+        by_algorithm,
+        "accuracy",
+        view="global",
+        aggregation="mean",
+        tie_break="earliest",
+        transfer_profile=(0.05,),
+    )
+    transfer = rows["feddes"]["negative_transfer"]
+
+    assert transfer["uncertainty"]["available"] is True
+    assert transfer["negative_transfer_rate"]["ci_low"] is not None
+    assert "[" in format_negative_transfer_table(rows)
+    assert "§" not in format_negative_transfer_table(rows)
+    assert "NTR (δ=0.05)" in format_negative_transfer_profile(rows)
 
 
 def test_experiments_differing_only_in_an_unlabelled_field_stay_apart():
@@ -307,8 +449,12 @@ def test_rows_are_uniquely_labelled_when_only_early_stopping_differs():
 
 def test_the_three_condition_helpers_agree_on_their_fields():
     """Condition grouping and display labels use the same fields."""
-    from rigfl.experiment.collect import (condition_fields, describe_condition,
-                                          experiment_condition, varying_fields)
+    from rigfl.experiment.collect import (
+        condition_fields,
+        describe_condition,
+        experiment_condition,
+        varying_fields,
+    )
     a = _es_rec(0, enabled=True, metric="accuracy", patience=5)
     b = _es_rec(0, enabled=True, metric="accuracy", patience=20)
     assert experiment_condition(a) != experiment_condition(b)

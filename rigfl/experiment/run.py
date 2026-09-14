@@ -17,25 +17,51 @@ from typing import Any
 
 import numpy as np
 import torch
+from pydantic import ValidationError
 
-from rigfl.data.partitions import build_partition_clients, load_partition
-from rigfl.data.config import (BioSiloDatasetSettings, DatasetSettings,
-                               FlowerDatasetSettings, dataset_settings)
-from rigfl.experiment.artifacts import (ResultValidationError, existing_result_decision,
-                                        make_run_record, write_run_record)
-from rigfl.experiment.config import (ExperimentConfig, ResolvedExperimentConfig,
-                                     result_filename)
+from rigfl.data.config import (
+    BioSiloDatasetSettings,
+    DatasetSettings,
+    FlowerDatasetSettings,
+    dataset_settings,
+)
+from rigfl.data.partitions import (
+    build_partition_clients,
+    generate_partition,
+)
+from rigfl.eval.resources import ResourceMonitor
+from rigfl.experiment.artifacts import (
+    ResultValidationError,
+    existing_result_decision,
+    make_run_record,
+    write_run_record,
+)
+from rigfl.experiment.config import (
+    ExperimentConfig,
+    ResolvedExperimentConfig,
+    RunFileConfig,
+    result_filename,
+)
 from rigfl.experiment.device import resolve_device
 from rigfl.experiment.env import capture_env
-from rigfl.experiment.paths import (filter_for_model, flatten_mapping,
-                                    model_paths, nested_set)
-from rigfl.experiment.registry import (BASELINES, adapter_factory,
-                                       algorithm_run_fingerprint, algorithm_spec,
-                                       build_algorithm, config_class,
-                                       resolve_algorithm_config,
-                                       resolve_algorithm_models)
+from rigfl.experiment.paths import (
+    filter_for_model,
+    flatten_mapping,
+    model_paths,
+    nested_set,
+)
+from rigfl.experiment.registry import (
+    BASELINES,
+    adapter_factory,
+    algorithm_run_fingerprint,
+    algorithm_spec,
+    build_algorithm,
+    config_class,
+    resolve_algorithm_config,
+    resolve_algorithm_models,
+)
+from rigfl.experiment.storage import run_store
 from rigfl.experiment.tracking import make_tracker
-from rigfl.eval.resources import ResourceMonitor
 from rigfl.models.registry import instantiate_backbones, resolve_models
 
 
@@ -96,11 +122,28 @@ def resolve_experiment_data(
     experiment_input = {
         name: getattr(exp, name) for name in ExperimentConfig.model_fields
     }
+    experiment_input.pop("partition_seed")
+    experiment_input.pop("split_seed")
     settings = dataset_settings(exp.dataset, exp.dataset_config)
 
     if isinstance(settings, FlowerDatasetSettings):
-        artifact = load_partition(
-            exp.dataset, config_path=exp.dataset_config, data_dir=exp.data_dir
+        overrides = {
+            name: value
+            for name, value in {
+                "partition_seed": exp.partition_seed,
+                "split_seed": exp.split_seed,
+            }.items()
+            if value is not None
+        }
+        if overrides:
+            settings = settings.model_copy(
+                update={"partition": settings.partition.model_copy(update=overrides)}
+            )
+        artifact, _ = generate_partition(
+            exp.dataset,
+            config_path=exp.dataset_config,
+            data_dir=exp.data_dir,
+            settings=settings,
         )
         target_spec = artifact.manifest["target_spec"]
         if artifact.manifest["task"] != "classification":
@@ -116,6 +159,8 @@ def resolve_experiment_data(
             **experiment_input,
             data_backend="flower",
             partition_id=artifact.partition_id,
+            partition_seed=settings.partition.partition_seed,
+            split_seed=settings.partition.split_seed,
             partition_scheme=settings.partition.scheme,
             num_clients=artifact.manifest["num_clients"],
             num_classes=target_spec["num_classes"],
@@ -135,20 +180,43 @@ def resolve_experiment_data(
         return resolved, ResolvedData(settings=settings, artifact=artifact)
 
     if isinstance(settings, BioSiloDatasetSettings):
-        from rigfl.data.biosilo import (biosilo_input_spec,
-                                        load_biosilo_partition)
+        from rigfl.data.biosilo import (
+            biosilo_input_spec,
+            load_biosilo_partition,
+        )
+
+        overrides = {}
+        if exp.partition_seed is not None:
+            overrides["parameters"] = {
+                **settings.parameters,
+                "seed": exp.partition_seed,
+            }
+        if exp.split_seed is not None:
+            overrides["split_seed"] = exp.split_seed
+        if overrides:
+            settings = settings.model_copy(update=overrides)
 
         handle = load_biosilo_partition(
             settings,
             data_dir=exp.data_dir,
             dataset_name=exp.dataset,
             dataset_config=exp.dataset_config,
+            partition_seed_override=exp.partition_seed,
         )
         input_kind, input_spec = biosilo_input_spec(handle)
+        partition_seed = handle.settings.get("seed")
+        if (
+            not isinstance(partition_seed, int)
+            or isinstance(partition_seed, bool)
+            or partition_seed < 0
+        ):
+            partition_seed = None
         resolved = ResolvedExperimentConfig(
             **experiment_input,
             data_backend="biosilo",
             partition_id=handle.partition_id,
+            partition_seed=partition_seed,
+            split_seed=settings.split_seed,
             partition_scheme=None,
             num_clients=handle.num_clients,
             num_classes=handle.num_classes,
@@ -199,6 +267,7 @@ def run_one(name, exp: ExperimentConfig, cfg, device, *, data: ResolvedData | No
             shared_dim=exp.shared_dim,
             batch=exp.batch,
             seed=exp.seed,
+            split_seed=exp.split_seed,
             adapter=adapter,
             backbones=backbones,
             validation_fraction=exp.validation_fraction,
@@ -246,7 +315,7 @@ def run_one(name, exp: ExperimentConfig, cfg, device, *, data: ResolvedData | No
 
 
 #: Sections accepted by a single-run YAML file.
-_CONFIG_SECTIONS = ("experiment", "algorithm")
+_CONFIG_SECTIONS = tuple(RunFileConfig.model_fields)
 #: Prefixes accepted by ``--set``.
 _SET_SECTIONS = {"exp": "experiment", "algorithm": "algorithm"}
 
@@ -262,18 +331,28 @@ def load_run_config(path: str) -> tuple[dict, dict]:
         raise SystemExit(f"{path}: the config must be a mapping with "
                          f"{' and '.join(_CONFIG_SECTIONS)} sections, "
                          f"got {type(loaded).__name__}")
-    unknown = sorted(set(loaded) - set(_CONFIG_SECTIONS))
+    known = _CONFIG_SECTIONS
+    unknown = sorted(set(loaded) - set(known))
     if unknown:
         raise SystemExit(
             f"{path}: unknown top-level section(s): {', '.join(unknown)}"
-            f"{_suggest(unknown[0], _CONFIG_SECTIONS)}\n"
-            f"Known: {', '.join(_CONFIG_SECTIONS)}. (Sweep files with base/sweep "
+            f"{_suggest(unknown[0], known)}\n"
+            f"Known: {', '.join(known)}. (Sweep files with base/sweep "
             f"sections go to rigfl.experiment.launch, not here.)")
-    for section in _CONFIG_SECTIONS:
-        if section in loaded and not isinstance(loaded[section], dict):
-            raise SystemExit(f"{path}: '{section}' must be a mapping, "
-                             f"got {type(loaded[section]).__name__}")
-    return dict(loaded.get("experiment") or {}), dict(loaded.get("algorithm") or {})
+    try:
+        parsed = RunFileConfig.model_validate(loaded)
+    except ValidationError as error:
+        first = error.errors(include_url=False)[0]
+        location = ".".join(str(part) for part in first["loc"])
+        value = loaded.get(first["loc"][0]) if first["loc"] else loaded
+        if first["type"] in {"dict_type", "model_type"} and first["loc"]:
+            raise SystemExit(
+                f"{path}: '{location}' must be a mapping, "
+                f"got {type(value).__name__}"
+            ) from error
+        raise SystemExit(f"{path}: invalid setting at {location}: {first['msg']}") from error
+    experiment = parsed.experiment.model_dump(exclude_unset=True)
+    return experiment, dict(parsed.algorithm.root)
 
 
 def _suggest(name: str, known) -> str:
@@ -327,7 +406,7 @@ def _run_resolved_experiment(name: str, exp: ResolvedExperimentConfig, cfg, *,
                              data: ResolvedData, force: bool = False) -> Path:
     """Run and save one fully resolved experiment configuration."""
     device = resolve_device(exp.device)
-    out_dir = Path(exp.out_dir)
+    out_dir = run_store(exp.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     fp = algorithm_run_fingerprint(name, exp, cfg.model_dump())
     path = out_dir / result_filename(exp, name, fp)

@@ -6,19 +6,19 @@
 from __future__ import annotations
 
 import torch
-import torch.nn as nn
+from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from rigfl.core import Client, ClientModel, LearnedProjection, iterative
-from rigfl.eval.report import format_table, summarize, win_rate
-from rigfl.algorithms.local import Local, LocalConfig
-from rigfl.algorithms.global_ensemble import GlobalEnsemble, GlobalEnsembleConfig
-from rigfl.algorithms.fedproto import FedProto, FedProtoConfig
 from rigfl.algorithms.fedgh import FedGH, FedGHConfig
-from rigfl.algorithms.lgfedavg import LGFedAvg, LGFedAvgConfig
-from rigfl.algorithms.fml import FML, FMLConfig
 from rigfl.algorithms.fedkd import FedKD, FedKDConfig
+from rigfl.algorithms.fedproto import FedProto, FedProtoConfig
 from rigfl.algorithms.fedtgp import FedTGP, FedTGPConfig
+from rigfl.algorithms.fml import FML, FMLConfig
+from rigfl.algorithms.global_ensemble import GlobalEnsemble, GlobalEnsembleConfig
+from rigfl.algorithms.lgfedavg import LGFedAvg, LGFedAvgConfig
+from rigfl.algorithms.local import Local, LocalConfig
+from rigfl.core import Client, ClientModel, LearnedProjection, iterative
+from rigfl.eval.report import format_table, summarize
 
 NUM_CLASSES = 4
 INPUT_DIM = 32
@@ -28,7 +28,7 @@ SEEDS = [0, 1, 2]
 
 # The synthetic classes are balanced, so reports select on accuracy.
 SELECTION_METRIC = "accuracy"
-_SEL = dict(view="global", aggregation="mean", tie_break="earliest")
+_SEL = {"view": "global", "aggregation": "mean", "tie_break": "earliest"}
 
 # Fixed class centers (independent of the per-seed RNG) so the class structure is
 # stable across seeds while the samples and model init vary.
@@ -66,9 +66,8 @@ def mentee() -> ClientModel:
 def run_all_seeds(make_algorithm) -> list[dict]:
     """One record per seed, shaped like the JSON the experiment layer writes.
 
-    The seed travels with the result because win_rate pairs on it, and the whole
-    evaluation history travels because selection happens afterwards -- the loop
-    marks no round as chosen.
+    The whole evaluation history travels because selection happens afterwards;
+    the loop marks no round as chosen.
     """
     records = []
     for seed in SEEDS:
@@ -113,13 +112,9 @@ if __name__ == "__main__":
             failures.append(name)
             print(f"{name} FAILED: {type(e).__name__}: {e}")
 
-    local = all_results.get("Local")
     rows = {}
     for name, records in all_results.items():
-        s = summarize(records, SELECTION_METRIC, **_SEL)
-        if name != "Local" and local is not None:
-            s["win"] = win_rate(records, local, SELECTION_METRIC, **_SEL)
-        rows[name] = s
+        rows[name] = summarize(records, SELECTION_METRIC, **_SEL)
 
     print(f"\nselection: metric={SELECTION_METRIC}, split=validation, "
           f"view={_SEL['view']}, aggregation={_SEL['aggregation']}, "

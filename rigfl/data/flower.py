@@ -459,12 +459,19 @@ def _merge_source_splits(
     return DatasetDict({_MERGED_SPLIT: merged})
 
 
-def _split_client_partition(partition, settings, target_column: str, seed: int):
+def _split_client_partition(
+    partition,
+    settings,
+    target_column: str,
+    *,
+    test_seed: int,
+    split_seed: int,
+):
     stratify_by = target_column if settings.stratify else None
     try:
         train_validation = partition.train_test_split(
             test_size=settings.test_fraction,
-            seed=seed,
+            seed=test_seed,
             stratify_by_column=stratify_by,
         )
         validation_fraction = settings.validation_fraction / (
@@ -472,7 +479,7 @@ def _split_client_partition(partition, settings, target_column: str, seed: int):
         )
         train_validation_split = train_validation["train"].train_test_split(
             test_size=validation_fraction,
-            seed=seed + 1,
+            seed=split_seed,
             stratify_by_column=stratify_by,
         )
     except ValueError as exc:
@@ -615,7 +622,8 @@ def _client_raw_partitions(
             merged_partition,
             settings.client_split,
             target_column,
-            p.partition_seed + client_id * 17,
+            test_seed=p.partition_seed + client_id * 17,
+            split_seed=p.split_seed + client_id * 17,
         )
     else:
         raw = {
@@ -641,7 +649,7 @@ def _client_raw_partitions(
         for offset, (role, partition) in enumerate(raw.items())
     }
     if not merged_source and "validation" not in raw:
-        generator = torch.Generator().manual_seed(p.partition_seed + client_id)
+        generator = torch.Generator().manual_seed(p.split_seed + client_id)
         train_indices, validation_indices = _train_val_indices(
             len(raw["train"]), None, p.val_frac, generator=generator
         )

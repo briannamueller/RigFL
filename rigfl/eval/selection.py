@@ -66,7 +66,8 @@ def aggregate(values: list[Optional[float]], weights: Optional[list[Optional[flo
 # ── The two views ────────────────────────────────────────────────────────────
 
 def select_global(history: dict, metric: str, *, aggregation: Aggregation = "mean",
-                  tie_break: TieBreak = "earliest", split: str = "validation") -> dict:
+                  tie_break: TieBreak = "earliest", split: str = "validation",
+                  include_test: bool = True) -> dict:
     """One round for every client, chosen on the aggregated validation metric."""
     name = resolve_metric(metric)
     direction = direction_of(name)
@@ -95,7 +96,7 @@ def select_global(history: dict, metric: str, *, aggregation: Aggregation = "mea
             f'No round has a value for "{name}" on the {split} split. '
             + unavailable_reason(name))
 
-    return {
+    selected = {
         "selection_view": "global",
         "selection_metric": name,
         "selection_split": split,
@@ -109,14 +110,19 @@ def select_global(history: dict, metric: str, *, aggregation: Aggregation = "mea
         # one, and a comparison across runs would pair the wrong clients.
         "client_ids": list(clients),
         "validation": _slice(history, best_i, "validation"),
-        "test": _slice(history, best_i, "test"),
-        "sample_counts": _counts_at(history, best_i),
+        "sample_counts": _counts_at(
+            history, best_i, ("validation", "test") if include_test
+            else ("validation",)
+        ),
         "mixed_rounds": False,
     }
+    if include_test:
+        selected["test"] = _slice(history, best_i, "test")
+    return selected
 
 
 def select_per_client(history: dict, metric: str, *, tie_break: TieBreak = "earliest",
-                      split: str = "validation") -> dict:
+                      split: str = "validation", include_test: bool = True) -> dict:
     """Each client's own best round. The aggregate mixes rounds -- see ``mixed_rounds``."""
     name = resolve_metric(metric)
     direction = direction_of(name)
@@ -144,8 +150,9 @@ def select_per_client(history: dict, metric: str, *, tie_break: TieBreak = "earl
             f'No client has a value for "{name}" on the {split} split. '
             + unavailable_reason(name))
 
+    split_names = ("validation", "test") if include_test else ("validation",)
     per_split: dict[str, dict[str, list]] = {}
-    for s in ("validation", "test"):
+    for s in split_names:
         per_split[s] = {}
         for m in _metric_names(history, s):
             per_split[s][m] = [clients[c][s].get(m, [None] * len(rounds))[i]
@@ -153,7 +160,7 @@ def select_per_client(history: dict, metric: str, *, tie_break: TieBreak = "earl
                                for c, i in ((c, chosen.get(c, 0)) for c in clients)]
 
     picked = sorted(rounds[i] for i in chosen.values())
-    return {
+    selected = {
         "selection_view": "per-client",
         "selection_metric": name,
         "selection_split": split,
@@ -167,25 +174,29 @@ def select_per_client(history: dict, metric: str, *, tie_break: TieBreak = "earl
         },
         "client_ids": list(clients),
         "validation": per_split["validation"],
-        "test": per_split["test"],
         "sample_counts": {s: [
             (history.get("client_sample_counts", {}).get(s, {}).get(c) or [None])[chosen[c]]
-            if c in chosen else None for c in clients] for s in ("validation", "test")},
+            if c in chosen else None for c in clients] for s in split_names},
         # Every client is reported from a different round, so this aggregate is
         # not any single system checkpoint. Anything rendering it must say so.
         "mixed_rounds": True,
     }
+    if include_test:
+        selected["test"] = per_split["test"]
+    return selected
 
 
 def select(history: dict, metric: str, *, view: str = "global",
            aggregation: Aggregation = "mean", tie_break: TieBreak = "earliest",
-           split: str = "validation") -> dict:
+           split: str = "validation", include_test: bool = True) -> dict:
     """Both views are always computable; ``view`` chooses what is returned."""
     both = {
         "global": lambda: select_global(history, metric, aggregation=aggregation,
-                                        tie_break=tie_break, split=split),
+                                        tie_break=tie_break, split=split,
+                                        include_test=include_test),
         "per-client": lambda: select_per_client(history, metric, tie_break=tie_break,
-                                                split=split),
+                                                split=split,
+                                                include_test=include_test),
     }
     if view == "both":
         return {"global": both["global"](), "per-client": both["per-client"]()}
@@ -195,11 +206,12 @@ def select(history: dict, metric: str, *, view: str = "global",
     return both[view]()
 
 
-def _counts_at(history: dict, index: int) -> dict[str, list]:
+def _counts_at(history: dict, index: int,
+               splits: tuple[str, ...] = ("validation", "test")) -> dict[str, list]:
     """Per-client sample counts at one round, in client order."""
     per = history.get("client_sample_counts", {})
     return {s: [(per.get(s, {}).get(c) or [None] * (index + 1))[index] for c in history["clients"]]
-            for s in ("validation", "test")}
+            for s in splits}
 
 
 def _metric_names(history: dict, split: str) -> list[str]:

@@ -25,6 +25,7 @@ datasets:
       train_ratio: 0.8
       seed: 1
     validation_fraction: 0.2
+    split_seed: 0
 ```
 
 Install the backend with:
@@ -42,6 +43,10 @@ normal data generation command:
 python -m rigfl.data.generate --dataset tcga_cancer_type
 ```
 
+If an experiment overrides `partition_seed`, generate that partition first with
+the same `--partition-seed` value. Experiment jobs load existing BioSilo
+partitions; they do not generate them.
+
 Entries under `parameters` are passed to BioSilo for the selected
 `source_dataset`. BioSilo derives the partition identity from those parameters,
 and running the command again reuses the same completed partition. RigFL uses
@@ -52,7 +57,8 @@ optional; when omitted, the command's `--data-dir` value is used.
 BioSilo supplies each client's training and test data, and RigFL derives the
 validation set from the training data. When BioSilo supplies subject or patient
 group IDs, whole groups are assigned to either training or validation so the
-same individual cannot appear in both.
+same individual cannot appear in both. `split_seed` controls this division
+without changing BioSilo's test data.
 
 Single-vector BioSilo datasets use RigFL's numeric model architectures, and
 image partitions use its image architectures. Paired time-series and static
@@ -60,6 +66,10 @@ inputs use `temporal_gru`, `temporal_cnn`, or `temporal_lstm`, available togethe
 as `temporal_heterogeneous_3`.
 
 ## Flower sources
+
+Flower partitions are generated automatically when an experiment first needs
+them and reused afterward. Run `python -m rigfl.data.generate --dataset <name>`
+when you want to create them before launching experiments.
 
 For the Flower backend, set `source_dataset` to the Hugging Face Hub dataset id. When a source dataset offers more than one subset or version, RigFL loads the Hub's default unless you specify a different one with `source_subset`. The Hugging Face dataset page lists the available options.
 
@@ -76,6 +86,7 @@ datasets:
       num_clients: 5
       alpha: 0.5
       partition_seed: 0
+      split_seed: 0
 ```
 
 `source_revision` is optional. Set it to a Hugging Face commit hash when the
@@ -109,6 +120,7 @@ Specifying a validation split under source_splits is optional. If left unspecifi
 The default behavior above preserves the dataset's published training and test
 splits. Flower partitions those splits separately, and `partition.val_frac`
 creates validation data from each client's training partition when needed.
+`partition.split_seed` controls that train-validation division.
 
 To define all three client splits yourself, list the dataset splits to combine
 under `merge_splits` and specify the validation and test fractions:
@@ -126,7 +138,8 @@ RigFL merges the listed splits, applies the Flower partitioner once, and then
 divides each client partition. The fractions refer to the client's complete
 partition; the remaining 70% in this example becomes training data. Set
 `stratify` to `true` to preserve class proportions when creating the three
-client splits.
+client splits. `partition_seed` controls client assignment and the test carve;
+`split_seed` controls the subsequent train-validation division.
 
 The per-client sample limits are applied after this division. Set
 `train_per_client`, `validation_per_client`, or `test_per_client` to `null` to
@@ -196,9 +209,11 @@ For the natural-ID schemes, `client_limit` selects a deterministic subset of
 the available clients. The partition manifest records the original natural ID
 or IDs represented by each saved RigFL client.
 
-Every scheme also accepts `partition_seed` and `shuffle`. The partition seed
-controls data shuffling and every random operation exposed by the selected
-partitioner. It is separate from the experiment seed used for model training.
+Every scheme also accepts `partition_seed`, `split_seed`, and `shuffle`. The
+partition seed controls data shuffling, the selected partitioner, and the test
+carve when source splits are merged. The split seed controls validation data
+derived from client training data. Both are separate from the experiment seed
+used for model training.
 When the dataset's published splits are preserved, RigFL applies the same
 partition configuration to the training, validation, and test splits and
 requires each split to produce the same number of clients. For the natural-ID

@@ -9,7 +9,7 @@ base:
     batch: 32
     eval_gap: 1
     device: auto
-    out_dir: results/cifar10_feddes
+    out_dir: results
   algorithm:
     graphroute:
       base:

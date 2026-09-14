@@ -40,7 +40,9 @@ class _ScaledLinear(nn.Module):
         return self.linear(x) * self.scale
 
 
-def _feddes(tmp, *, base=None, graph=None, gnn=None, validation_fraction=0.2):
+def _feddes(
+    tmp, *, base=None, graph=None, gnn=None, validation_fraction=0.2, seed=0
+):
     torch.manual_seed(0)
     factories = [lambda: nn.Linear(4, 3), lambda: nn.Linear(4, 3)]
     return FedDES(
@@ -50,6 +52,7 @@ def _feddes(tmp, *, base=None, graph=None, gnn=None, validation_fraction=0.2):
         ),
         factories, 3,
         data_id=DATA_ID, model_ids=MODEL_IDS,
+        seed=seed,
         validation_fraction=validation_fraction,
     )
 
@@ -93,8 +96,10 @@ def test_graphroute_config_forwards_modeling_settings():
             },
             gnn={"use_edge_attr": True, "use_sample_residual": True,
                  "fallback": "wacc"},
+            seed=7,
         )
         cfg = model._graphroute_config(0, torch.device("cpu"))
+        other_client_cfg = model._graphroute_config(9, torch.device("cpu"))
 
     assert cfg.base.es_patience == 7
     assert cfg.graph.node_feature_source == "feature_space"
@@ -103,16 +108,19 @@ def test_graphroute_config_forwards_modeling_settings():
     assert cfg.gnn.use_edge_attr is True
     assert cfg.gnn.use_sample_residual is True
     assert cfg.gnn.fallback == "wacc"
+    assert cfg.seed == other_client_cfg.seed == model.seed
 
 
 def test_base_training_uses_the_nested_graphroute_settings(monkeypatch):
     captured = {}
+    seed_calls = []
 
     def fake_train(*args, **kwargs):
         captured.update(kwargs)
         return [nn.Linear(4, 3)], torch.zeros(4, 1, 3), torch.zeros(4)
 
     monkeypatch.setattr("graphroute.pool.train_pool_oof", fake_train)
+    monkeypatch.setattr("graphroute.run.seed_everything", seed_calls.append)
     model = _feddes(
         "",
         base={
@@ -126,6 +134,7 @@ def test_base_training_uses_the_nested_graphroute_settings(monkeypatch):
             "weighted_by_class": False,
             "es_metric": "val_bacc",
         },
+        seed=7,
     )
     dataset = TensorDataset(torch.randn(4, 4), torch.randint(0, 3, (4,)))
 
@@ -144,9 +153,10 @@ def test_base_training_uses_the_nested_graphroute_settings(monkeypatch):
         "num_classes": 3,
         "weighted_by_class": False,
         "es_metric": "val_bacc",
-        "seed": 2,
+        "seed": 7,
         "collate_fn": captured["collate_fn"],
     }
+    assert seed_calls == [7]
 
 
 def test_feddes_graphroute_defaults_and_partial_overrides():
@@ -226,6 +236,27 @@ def test_generated_partition_identity_reaches_feddes_cache():
         base_pool=[lambda: nn.Linear(4, 3) for _ in range(3)],
     )
     assert algorithm.data_id == "cifar10-partition-fingerprint"
+
+
+def test_split_seed_reaches_feddes_cache_identity():
+    from rigfl.experiment.registry import build_algorithm, config_class
+
+    factories = [lambda: nn.Linear(4, 3)]
+    cfg = config_class("feddes")()
+    first = build_algorithm(
+        "feddes",
+        resolved_experiment(split_seed=3),
+        cfg,
+        base_pool=factories,
+    )
+    second = build_algorithm(
+        "feddes",
+        resolved_experiment(split_seed=4),
+        cfg,
+        base_pool=factories,
+    )
+
+    assert first.data_id != second.data_id
 
 
 def test_train_or_load_reuses_pool():

@@ -1,52 +1,33 @@
-# Multi-algorithm hyperparameter search. Expand and submit with:
-#   python -m rigfl.experiment.launch --config experiments/cifar10_tune.yaml --queue gpu
-# Algorithm-specific axes apply only to algorithms that define that field.
+name: cifar10_fedprox_grid
+algorithms: [fedprox]
 
-name: cifar10_tune
-algorithms: [fedproto, fedgh, fml, fedkd, fedtgp, feddes]
-
-base:                         # fixed settings for every task
+base:
   experiment:
     dataset: cifar10
     rounds: 100
-    shared_dim: 512
     eval_gap: 5
     model: fedavg_cnn
-    model_family: image_heterogeneous_3
-    # wandb: true             # uncomment to log curves to Weights & Biases
-    # wandb_project: cifar-tune
+  algorithm:
+    local_epochs: 1
 
-sweep:                        # every key is a cartesian axis; algorithm.X auto-scopes
-  seed:  [0, 1, 2]
-  # Algorithm parameters
-  algorithm.lamda:     [0.1, 1.0, 10.0]    # fedproto, fedtgp
-  algorithm.alpha:     [0.3, 0.5, 0.7]     # fml (private-model CE vs distillation)
-  algorithm.beta:      [0.3, 0.5, 0.7]     # fml (meme CE vs distillation)
-  algorithm.t_start:   [0.9, 0.95]         # fedkd (SVD energy-keep schedule)
-  algorithm.t_end:     [0.97, 0.99]        # fedkd
-  algorithm.server_lr: [0.001, 0.01]       # fedgh, fedtgp
-  algorithm.server_epochs: [1, 100]        # fedtgp (paper trains S=100 server epochs/round)
-  # FedDES parameters; its base pool is reused across graph/GNN settings.
-  algorithm.graphroute.gnn.arch:       [gat, graph_gps, mlp]
-  algorithm.graphroute.graph.k:        [3, 5, 10]
-  algorithm.graphroute.gnn.hidden_dim: [64, 128]
+replicates:
+  - {partition_seed: 0, split_seed: 0, experiment_seed: 0}
+  - {partition_seed: 1, split_seed: 1, experiment_seed: 1}
+  - {partition_seed: 2, split_seed: 2, experiment_seed: 2}
 
-# Each complete assignment of the parameters an algorithm defines is a candidate.
-# Seeds are replicates of each complete hyperparameter configuration.
-#   python -m rigfl.experiment.collect --results-dir results/cifar10_tune \
-#       --selection-metric accuracy --selection-view both --rank \
-#       --select-out results/cifar10_tune_selected
 tuning:
-  strategy: grid
-  replicate_axis: seed
-  parameters:
-    - algorithm.lamda
-    - algorithm.alpha
-    - algorithm.beta
-    - algorithm.t_start
-    - algorithm.t_end
-    - algorithm.server_lr
-    - algorithm.server_epochs
-    - algorithm.graphroute.gnn.arch
-    - algorithm.graphroute.graph.k
-    - algorithm.graphroute.gnn.hidden_dim
+  sampler:
+    class: optuna.samplers.GridSampler
+    options:
+      seed: 17
+  metric: accuracy
+  search_space:
+    algorithm.lr:
+      type: categorical
+      values: [0.001, 0.01, 0.03]
+    algorithm.local_epochs:
+      type: categorical
+      values: [1, 3]
+    algorithm.mu:
+      type: categorical
+      values: [0.001, 0.01, 0.1]

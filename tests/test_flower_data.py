@@ -387,7 +387,13 @@ def test_merged_partition_is_split_into_requested_client_fractions():
         stratify=True,
     )
 
-    splits = flower._split_client_partition(dataset, settings, "label", seed=4)
+    splits = flower._split_client_partition(
+        dataset,
+        settings,
+        "label",
+        test_seed=4,
+        split_seed=5,
+    )
 
     assert {name: len(split) for name, split in splits.items()} == {
         "train": 70,
@@ -398,6 +404,94 @@ def test_merged_partition_is_split_into_requested_client_fractions():
     assert set.union(*ids) == set(range(100))
     assert not (ids[0] & ids[1] or ids[0] & ids[2] or ids[1] & ids[2])
     assert all(set(split["label"]) == {0, 1} for split in splits.values())
+
+
+def test_split_seed_changes_train_and_validation_but_not_test():
+    features = Features({
+        "sample_id": Value("int64"),
+        "label": ClassLabel(num_classes=2),
+    })
+    dataset = Dataset.from_dict(
+        {
+            "sample_id": list(range(200)),
+            "label": [index % 2 for index in range(200)],
+        },
+        features=features,
+    )
+    settings = SimpleNamespace(
+        validation_fraction=0.2,
+        test_fraction=0.2,
+        stratify=True,
+    )
+
+    first = flower._split_client_partition(
+        dataset, settings, "label", test_seed=7, split_seed=11
+    )
+    second = flower._split_client_partition(
+        dataset, settings, "label", test_seed=7, split_seed=12
+    )
+    repeated = flower._split_client_partition(
+        dataset, settings, "label", test_seed=7, split_seed=11
+    )
+    other_test = flower._split_client_partition(
+        dataset, settings, "label", test_seed=8, split_seed=11
+    )
+
+    assert set(first["test"]["sample_id"]) == set(second["test"]["sample_id"])
+    assert set(first["validation"]["sample_id"]) != set(
+        second["validation"]["sample_id"]
+    )
+    assert set(first["train"]["sample_id"]) != set(second["train"]["sample_id"])
+    assert {
+        name: set(split["sample_id"]) for name, split in first.items()
+    } == {
+        name: set(split["sample_id"]) for name, split in repeated.items()
+    }
+    assert set(first["test"]["sample_id"]) != set(other_test["test"]["sample_id"])
+
+
+def test_published_test_split_is_independent_of_split_seed():
+    train = Dataset.from_dict(
+        {"sample_id": list(range(100)), "label": [index % 2 for index in range(100)]}
+    )
+    test = Dataset.from_dict(
+        {"sample_id": list(range(100, 140)), "label": [index % 2 for index in range(40)]}
+    )
+
+    def split(seed):
+        settings = FlowerDatasetSettings(
+            source_dataset="organization/data",
+            partition={
+                "scheme": "iid",
+                "num_clients": 1,
+                "partition_seed": 7,
+                "split_seed": seed,
+                "train_per_client": None,
+                "validation_per_client": None,
+                "test_per_client": None,
+                "val_frac": 0.2,
+            },
+        )
+        return flower._client_raw_partitions(
+            None,
+            partition_id=0,
+            client_id=0,
+            merged_source=False,
+            initial_merged=None,
+            initial_partitions={"train": train, "test": test},
+            role_to_source={"train": "train", "test": "test"},
+            settings=settings,
+            target_column="label",
+        )
+
+    first = split(11)
+    second = split(12)
+
+    assert set(first["test"]["sample_id"]) == set(second["test"]["sample_id"])
+    assert set(first["validation"]["sample_id"]) != set(
+        second["validation"]["sample_id"]
+    )
+    assert set(first["train"]["sample_id"]) != set(second["train"]["sample_id"])
 
 
 def test_merge_source_splits_uses_every_sample_once():

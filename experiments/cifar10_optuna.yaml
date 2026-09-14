@@ -1,0 +1,50 @@
+name: cifar10_optuna
+algorithms: [fedprox]
+
+base:
+  experiment:
+    dataset: cifar10
+    model: fedavg_cnn
+    rounds: 100
+    eval_gap: 5
+
+replicates:
+  - {partition_seed: 0, split_seed: 0, experiment_seed: 0}
+  - {partition_seed: 1, split_seed: 1, experiment_seed: 1}
+  - {partition_seed: 2, split_seed: 2, experiment_seed: 2}
+
+tuning:
+  trials: 100
+  sampler:
+    class: optuna.samplers.TPESampler
+    options:
+      seed: 17
+  metric: accuracy
+  intensification:
+    top_k: 5
+    replicates:
+      - {partition_seed: 10, split_seed: 10, experiment_seed: 10}
+      - {partition_seed: 11, split_seed: 11, experiment_seed: 11}
+      - {partition_seed: 12, split_seed: 12, experiment_seed: 12}
+      - {partition_seed: 13, split_seed: 13, experiment_seed: 13}
+      - {partition_seed: 14, split_seed: 14, experiment_seed: 14}
+      - {partition_seed: 15, split_seed: 15, experiment_seed: 15}
+    practical_threshold: 0.005
+  search_space:
+    algorithm.lr:
+      type: float
+      low: 0.0001
+      high: 0.1
+      log: true
+    algorithm.local_epochs:
+      type: int
+      low: 1
+      high: 5
+    algorithm.mu:
+      type: float
+      low: 0.0001
+      high: 1.0
+      log: true
+    batch:
+      type: categorical
+      values: [32, 64, 128]

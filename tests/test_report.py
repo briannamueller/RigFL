@@ -1,13 +1,20 @@
-"""Summaries and win rates using explicit round-selection policies."""
+"""Multi-seed summaries using explicit round-selection policies."""
 
 from __future__ import annotations
 
 import pytest
+import torch
 
-from rigfl.eval.report import format_table, selection_for, summarize, win_rate
+from rigfl.eval.report import (
+    format_resource_table,
+    format_table,
+    selection_for,
+    summarize,
+)
+from rigfl.eval.resources import ResourceMonitor
 from rigfl.eval.selection import SelectionError
 
-_SEL = dict(view="global", aggregation="mean", tie_break="earliest")
+_SEL = {"view": "global", "aggregation": "mean", "tie_break": "earliest"}
 
 
 def _record(algorithm, seed, val_series, test_series, rounds=(0, 1, 2), n_clients=2):
@@ -36,15 +43,25 @@ def test_summarize_reports_the_selected_rounds_test_value():
             _record("feddes", 1, [.1, .8, .2], [.5, .9, .6])]
     s = summarize(recs, "accuracy", **_SEL)
     assert s["seeds"] == 2
+    assert s["runs"] == 2
     assert s["selected_rounds"] == [1, 1]          # validation peaks at index 1
     assert abs(s["test_mean"] - 0.8) < 1e-9        # mean of .7 and .9
     assert abs(s["val_mean"] - 0.85) < 1e-9
 
 
-def test_summarize_single_seed_has_zero_spread():
-    s = summarize([_record("local", 0, [.1, .5], [.2, .4], rounds=(0, 1))],
-                  "accuracy", **_SEL)
-    assert s["seeds"] == 1 and s["test_std"] == 0.0 and s["test_ci"] == 0.0
+def test_summarize_single_seed_omits_a_confidence_interval():
+    record = _record("local", 0, [.1, .5], [.2, .4], rounds=(0, 1))
+    record["resources"] = ResourceMonitor(
+        torch.device("cpu"), estimate_flops=True
+    ).to_dict()
+    s = summarize([record], "accuracy", include_resources=True, **_SEL)
+    assert s["seeds"] == 1 and s["test_std"] == 0.0 and s["test_ci"] is None
+    table = format_table({"local": s}, "accuracy")
+    assert "| local ¶ |" in table
+    assert "fewer than two runs" in table
+    resources = format_resource_table({"local": s})
+    assert "| local ¶ | 0.000 | 0.000 | 0.000 | none |" in resources
+    assert "resource confidence intervals are omitted" in resources
 
 
 def _one_shot_record():
@@ -70,7 +87,7 @@ def test_global_request_falls_back_to_and_labels_one_shot_per_client_selection()
 
     table = format_table(
         {"feddes": summarize([record], "accuracy", view="global")}, "accuracy")
-    assert "| feddes † ‡ | per-client |" in table
+    assert "| feddes † ‡ ¶ | per-client |" in table
     assert "global selection was requested" in table
     assert "selected steps are not federated rounds" in table
 
@@ -80,68 +97,85 @@ def test_one_shot_result_cannot_claim_a_different_selection_metric():
         selection_for(_one_shot_record(), "loss", view="global")
 
 
-def test_win_rate_counts_client_seed_pairs():
-    algorithm = [_record("feddes", 0, [.9], [.8], rounds=(0,)),
-              _record("feddes", 1, [.9], [.3], rounds=(0,))]
-    local = [_record("local", 0, [.9], [.5], rounds=(0,)),
-             _record("local", 1, [.9], [.5], rounds=(0,))]
-    # seed 0: both clients win; seed 1: both lose -> 2 of 4
-    assert win_rate(algorithm, local, "accuracy", **_SEL) == 0.5
-
-
-def test_win_rate_ties_lose():
-    algorithm = [_record("feddes", 0, [.9], [.5], rounds=(0,))]
-    local = [_record("local", 0, [.9], [.5], rounds=(0,))]
-    assert win_rate(algorithm, local, "accuracy", **_SEL) == 0.0
-
-
-def test_win_rate_without_a_local_counterpart_is_none():
-    algorithm = [_record("feddes", 0, [.9], [.8], rounds=(0,))]
-    assert win_rate(algorithm, [], "accuracy", **_SEL) is None
-
-
-def test_win_rate_pairs_by_seed_not_position():
-    algorithm = [_record("feddes", 1, [.9], [.8], rounds=(0,))]
-    local = [_record("local", 0, [.9], [.99], rounds=(0,)),   # different seed
-             _record("local", 1, [.9], [.10], rounds=(0,))]   # the real counterpart
-    assert win_rate(algorithm, local, "accuracy", **_SEL) == 1.0
-
-
-def test_win_rate_rejects_multiple_local_configurations():
-    algorithm = [_record("feddes", 0, [.9], [.8], rounds=(0,))]
-    local = [_record("local", 0, [.9], [.5], rounds=(0,)),
-             _record("local", 1, [.9], [.5], rounds=(0,))]
-    local[0]["config"]["algorithm"] = {"lr": 0.01}
-    local[1]["config"]["algorithm"] = {"lr": 0.02}
-
-    with pytest.raises(ValueError, match="one Local configuration"):
-        win_rate(algorithm, local, "accuracy", **_SEL)
-
-
 def test_summarize_rejects_duplicate_seeds():
     records = [_record("feddes", 0, [.9], [.8], rounds=(0,)),
                _record("feddes", 0, [.9], [.7], rounds=(0,))]
 
-    with pytest.raises(ValueError, match="more than one record for seed 0"):
+    with pytest.raises(ValueError, match="more than one record for replicate condition"):
         summarize(records, "accuracy", **_SEL)
 
 
-def test_win_rate_direction_follows_the_metric():
-    """A lower-is-better metric must not be compared as though larger wins."""
-    from rigfl.eval import metrics
-    metrics.register("val_error", "minimize")
-    try:
-        m = _record("feddes", 0, [.9], [.1], rounds=(0,))
-        l = _record("local", 0, [.9], [.9], rounds=(0,))
-        for rec in (m, l):
-            for c in rec["result"]["evaluation_history"]["clients"].values():
-                c["test"]["val_error"] = c["test"]["accuracy"]
-                c["validation"]["val_error"] = c["validation"]["accuracy"]
-        assert win_rate([m], [l], "val_error", **_SEL) == 1.0    # smaller wins
-    finally:
-        metrics.METRICS.pop("val_error", None)
-        if "val_error" in metrics.COMPUTED_METRICS:
-            metrics.COMPUTED_METRICS.remove("val_error")
+def test_summarize_keys_runs_by_the_full_seed_condition():
+    records = []
+    for partition_seed in range(2):
+        record = _record(
+            "feddes",
+            0,
+            [0.5],
+            [0.5 + 0.01 * partition_seed],
+            rounds=(0,),
+        )
+        experiment = record["config"]["experiment"]
+        experiment["partition_seed"] = partition_seed
+        experiment["split_seed"] = partition_seed
+        records.append(record)
+
+    summary = summarize(records, "accuracy", **_SEL)
+
+    assert summary["seeds"] == 1
+    assert summary["runs"] == 2
+    assert summary["test_mean"] == pytest.approx(0.505)
+    assert summary["independent_replicates"] is False
+    assert summary["test_ci"] is None
+    table = format_table({"feddes": summary}, "accuracy")
+    assert "| feddes § |" in table
+    assert "rigfl.experiment.variance" in table
+
+
+def test_crossed_resource_summary_keeps_means_and_omits_intervals():
+    records = []
+    for partition_seed in range(2):
+        record = _record("local", 0, [0.5], [0.5], rounds=(0,))
+        record["config"]["experiment"].update(
+            partition_seed=partition_seed,
+            split_seed=partition_seed,
+        )
+        record["resources"] = ResourceMonitor(
+            torch.device("cpu"), estimate_flops=True
+        ).to_dict()
+        records.append(record)
+
+    summary = summarize(records, "accuracy", include_resources=True, **_SEL)
+    resources = summary["resources"]
+
+    assert resources["communication_bytes_mean"] == 0
+    assert resources["communication_bytes_ci"] is None
+    assert resources["attributed_training_flops_mean"] == 0
+    assert resources["attributed_training_flops_ci"] is None
+    assert resources["attributed_training_wall_seconds_mean"] == 0
+    assert resources["attributed_training_wall_seconds_ci"] is None
+    table = format_resource_table({"local": summary})
+    assert "| local § | 0.000 | 0.000 | 0.000 | none |" in table
+    assert "resource means are shown without" in table
+
+
+def test_zipped_resource_summary_keeps_confidence_intervals():
+    records = []
+    for seed in range(3):
+        record = _record("local", seed, [0.5], [0.5], rounds=(0,))
+        record["config"]["experiment"].update(
+            partition_seed=seed,
+            split_seed=seed,
+        )
+        record["resources"] = ResourceMonitor(
+            torch.device("cpu"), estimate_flops=True
+        ).to_dict()
+        records.append(record)
+
+    summary = summarize(records, "accuracy", include_resources=True, **_SEL)
+
+    assert summary["resources"]["communication_bytes_ci"] == 0
+    assert "| local | 0.000 ± 0.000 |" in format_resource_table({"local": summary})
 
 
 def test_format_table_names_the_metric_and_flags_mixed_rounds():
@@ -204,27 +238,14 @@ def test_lower_is_better_table_omits_tail_columns():
             c["test"]["dev_loss"] = [0.4]
         rows = {"feddes": summarize([rec], "dev_loss", **_SEL)}
         table = format_table(rows, "dev_loss")
-        assert "| algorithm | selection | val dev_loss | test dev_loss | win% | seeds |" in table
+        assert (
+            "| algorithm | selection | val dev_loss | test dev_loss | seeds | runs |"
+            in table
+        )
         assert "p10" not in table and "p90" not in table
         assert "bottom-10%" not in table and "top-10%" not in table
     finally:
         metrics.unregister("dev_loss")
-
-
-def _rec_with_test(algorithm, seed, test_by_client):
-    rec = _record(algorithm, seed, [0.5], [0.5], rounds=(0,), n_clients=len(test_by_client))
-    hist = rec["result"]["evaluation_history"]
-    for i, v in enumerate(test_by_client):
-        hist["clients"][str(i)]["test"]["accuracy"] = [v]
-    return rec
-
-
-def test_win_rate_pairs_by_client_id_not_position():
-    """Win-rate comparisons pair records by client identifier."""
-    algorithm = [_rec_with_test("feddes", 0, [None, 0.90])]
-    local = [_rec_with_test("local", 0, [0.95, 0.10])]
-    assert win_rate(algorithm, local, "accuracy", **_SEL) == 1.0     # client 1 only
-
 
 def test_weighted_mean_without_counts_raises_instead_of_silently_unweighting():
     from rigfl.eval.selection import SelectionError

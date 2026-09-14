@@ -10,6 +10,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from filelock import FileLock
 import torch
 from torch.utils.data import DataLoader
 
@@ -25,8 +26,8 @@ from rigfl.data.flower import generate_flower_partition
 from rigfl.data.transforms import data_transform_identity
 
 
-MANIFEST_SCHEMA_VERSION = 3
-PARTITION_PIPELINE_VERSION = 2
+MANIFEST_SCHEMA_VERSION = 4
+PARTITION_PIPELINE_VERSION = 3
 
 
 @dataclass(frozen=True)
@@ -59,8 +60,10 @@ def expected_partition(
     *,
     config_path: str | Path = DEFAULT_DATASET_CONFIG,
     data_dir: str | Path = DEFAULT_DATA_DIR,
+    settings: FlowerDatasetSettings | None = None,
 ) -> tuple[FlowerDatasetSettings, str, Path]:
-    settings = dataset_settings(dataset, config_path)
+    if settings is None:
+        settings = dataset_settings(dataset, config_path)
     if not isinstance(settings, FlowerDatasetSettings):
         raise ValueError(
             f"dataset {dataset!r} uses the {settings.backend!r} backend and does "
@@ -120,51 +123,67 @@ def generate_partition(
     *,
     config_path: str | Path = DEFAULT_DATASET_CONFIG,
     data_dir: str | Path = DEFAULT_DATA_DIR,
+    settings: FlowerDatasetSettings | None = None,
 ) -> tuple[PartitionArtifact, bool]:
     """Generate and atomically publish the configured partition.
 
     Returns ``(artifact, created)``. A complete existing artifact is reused.
     """
     settings, partition_id, target = expected_partition(
-        dataset, config_path=config_path, data_dir=data_dir
+        dataset, config_path=config_path, data_dir=data_dir, settings=settings
     )
-    if target.exists():
-        return load_partition(dataset, config_path=config_path, data_dir=data_dir), False
     target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = Path(tempfile.mkdtemp(prefix=f".{target.name}.", dir=target.parent))
-    try:
+    with FileLock(f"{target}.lock"):
+        if target.exists():
+            return load_partition(
+                dataset,
+                config_path=config_path,
+                data_dir=data_dir,
+                settings=settings,
+            ), False
+        temporary = Path(
+            tempfile.mkdtemp(prefix=f".{target.name}.", dir=target.parent)
+        )
         try:
-            generator = BACKEND_GENERATORS[settings.backend]
-        except KeyError as exc:
-            raise ValueError(f"unsupported dataset backend: {settings.backend!r}") from exc
-        backend_metadata = generator(settings, temporary)
-        manifest = {
-            "dataset": dataset,
-            "partition_id": partition_id,
-            "backend": backend_metadata["backend"],
-            "task": backend_metadata["task"],
-            "num_clients": backend_metadata["num_clients"],
-            "partition": settings.partition.model_dump(
-                mode="json", exclude_none=True
-            ),
-            "clients": backend_metadata["clients"],
-            "input_spec": backend_metadata["input_spec"],
-            "target_spec": backend_metadata["target_spec"],
-            "source": _omit_none(backend_metadata["source"]),
-            "dataset_configuration": settings.model_dump(
-                mode="json",
-                exclude={"backend", "partition"},
-                exclude_none=True,
-            ),
-            "schema_version": MANIFEST_SCHEMA_VERSION,
-            "pipeline_version": PARTITION_PIPELINE_VERSION,
-        }
-        (temporary / "manifest.json").write_text(_format_json(manifest) + "\n")
-        os.replace(temporary, target)
-    except Exception:
-        shutil.rmtree(temporary, ignore_errors=True)
-        raise
-    return load_partition(dataset, config_path=config_path, data_dir=data_dir), True
+            try:
+                generator = BACKEND_GENERATORS[settings.backend]
+            except KeyError as exc:
+                raise ValueError(
+                    f"unsupported dataset backend: {settings.backend!r}"
+                ) from exc
+            backend_metadata = generator(settings, temporary)
+            manifest = {
+                "dataset": dataset,
+                "partition_id": partition_id,
+                "backend": backend_metadata["backend"],
+                "task": backend_metadata["task"],
+                "num_clients": backend_metadata["num_clients"],
+                "partition": settings.partition.model_dump(
+                    mode="json", exclude_none=True
+                ),
+                "clients": backend_metadata["clients"],
+                "input_spec": backend_metadata["input_spec"],
+                "target_spec": backend_metadata["target_spec"],
+                "source": _omit_none(backend_metadata["source"]),
+                "dataset_configuration": settings.model_dump(
+                    mode="json",
+                    exclude={"backend", "partition"},
+                    exclude_none=True,
+                ),
+                "schema_version": MANIFEST_SCHEMA_VERSION,
+                "pipeline_version": PARTITION_PIPELINE_VERSION,
+            }
+            (temporary / "manifest.json").write_text(_format_json(manifest) + "\n")
+            os.replace(temporary, target)
+        except Exception:
+            shutil.rmtree(temporary, ignore_errors=True)
+            raise
+    return load_partition(
+        dataset,
+        config_path=config_path,
+        data_dir=data_dir,
+        settings=settings,
+    ), True
 
 
 def _read_manifest(path: Path) -> dict:
@@ -188,10 +207,11 @@ def load_partition(
     *,
     config_path: str | Path = DEFAULT_DATASET_CONFIG,
     data_dir: str | Path = DEFAULT_DATA_DIR,
+    settings: FlowerDatasetSettings | None = None,
 ) -> PartitionArtifact:
     """Resolve the configured fingerprint and load its generated manifest."""
     settings, partition_id, path = expected_partition(
-        dataset, config_path=config_path, data_dir=data_dir
+        dataset, config_path=config_path, data_dir=data_dir, settings=settings
     )
     if not path.exists():
         raise FileNotFoundError(

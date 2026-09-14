@@ -11,6 +11,8 @@ decision.
 from __future__ import annotations
 
 import math
+import itertools
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -324,15 +326,52 @@ def test_selecting_on_loss_reads_test_from_the_validation_chosen_round():
 # ── 19-20: hyperparameter ranking on loss ────────────────────────────────────
 
 def _tuning_fixture(val_by_candidate, test_by_candidate):
-    """A 2x2 sweep whose runs carry scripted validation and test loss."""
-    from rigfl.experiment.launch import expand
+    """A 2x2 Optuna grid whose runs carry scripted validation and test loss."""
+    from rigfl.experiment.optimize import _manifest, _tasks, parse_optimization
 
-    spec = {"name": "loss_tune", "algorithms": ["local"],
-            "sweep": {"seed": [0, 1], "algorithm.lr": [0.01, 0.1],
-                      "algorithm.local_epochs": [1, 5]},
-            "tuning": {"strategy": "grid", "replicate_axis": "seed",
-                       "parameters": ["algorithm.lr", "algorithm.local_epochs"]}}
-    grid, manifest = expand(spec)
+    raw = {
+        "name": "loss_tune",
+        "algorithms": ["local"],
+        "replicates": [
+            {
+                "partition_seed": seed,
+                "split_seed": seed,
+                "experiment_seed": seed,
+            }
+            for seed in (0, 1)
+        ],
+        "tuning": {
+            "sampler": {"class": "GridSampler"},
+            "search_space": {
+                "algorithm.lr": {
+                    "type": "categorical",
+                    "values": [0.01, 0.1],
+                },
+                "algorithm.local_epochs": {
+                    "type": "categorical",
+                    "values": [1, 5],
+                },
+            },
+        },
+    }
+    spec = parse_optimization(raw)
+    complete = SimpleNamespace(name="COMPLETE")
+    trials = []
+    for number, values in enumerate(
+        itertools.product([0.01, 0.1], [1, 5])
+    ):
+        trials.append(
+            SimpleNamespace(
+                number=number,
+                state=complete,
+                params=dict(zip(spec.search_space, values)),
+                value=0.0,
+                user_attrs={},
+            )
+        )
+    manifest = _manifest(
+        spec, SimpleNamespace(study_name="loss_tune", trials=trials)
+    )
 
     def history(cid):
         v, t = val_by_candidate[cid], test_by_candidate[cid]
@@ -344,14 +383,13 @@ def _tuning_fixture(val_by_candidate, test_by_candidate):
                                        "client_sample_counts": {s: {"0": [10]}
                                                                 for s in ("validation", "test")}}}
 
-    metadata = {t["task_id"]: t for t in manifest["tasks"]}
     recs = []
-    for task_id, task in enumerate(grid, 1):
-        cid = metadata[task_id]["candidate_id"]
-        recs.append({"algorithm": task["algorithm"],
-                     "config": {"experiment": dict(task["experiment"]),
-                                "algorithm": dict(task["algorithm_config"])},
-                     "result": history(cid)})
+    for candidate in manifest["candidates"]:
+        for task in _tasks(spec, candidate["parameters"]):
+            recs.append({"algorithm": task["algorithm"],
+                         "config": {"experiment": dict(task["experiment"]),
+                                    "algorithm": dict(task["algorithm_config"])},
+                         "result": history(candidate["id"])})
     return recs, dict(manifest, _path="(test)")
 
 
@@ -362,7 +400,7 @@ def test_tuning_ranks_candidates_on_real_validation_loss_and_minimizes_it():
     art = rank(*_tuning_fixture(val, {c: 0.5 for c in val})[::-1][::-1],
                metric="loss", views=["global"])
     ranking = art["groups"][0]["rankings"]["global"]
-    assert art["selection"]["direction"] == "minimize"
+    assert art["selection_protocol"]["direction"] == "minimize"
     assert ranking["selected_candidate"] == 1
     assert ranking["order"] == [1, 2, 3, 0]          # ascending loss
     means = [next(c["views"]["global"]["validation"]["mean"]
@@ -386,7 +424,8 @@ def test_changing_candidate_test_loss_cannot_affect_a_validation_loss_ranking():
             b["groups"][0]["rankings"][view]["order"]
         assert a["groups"][0]["rankings"][view]["selected_candidate"] == \
             b["groups"][0]["rankings"][view]["selected_candidate"] == 1
-    # the test numbers did move
-    ta = a["groups"][0]["candidates"][0]["views"]["global"]["test"]["mean"]
-    tb = b["groups"][0]["candidates"][0]["views"]["global"]["test"]["mean"]
-    assert ta != tb
+    assert a == b
+    assert all(
+        "test" not in candidate["views"]["global"]
+        for candidate in a["groups"][0]["candidates"]
+    )
