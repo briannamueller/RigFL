@@ -71,14 +71,21 @@ python -m rigfl.experiment.run \
 python -m rigfl.experiment.collect
 ```
 
-`rigfl init` creates a starter project with two configuration files. Datasets are configured in `configs/datasets.yaml` (see [Data partitions](#data-partitions)),
-while experiments are configured in YAML files such as
-`experiments/cifar10_run.yaml` (see
+`rigfl init` sets up a starter project with example dataset and experiment
+configurations. Dataset configurations are stored in `configs/datasets.yaml`
+(see [Data partitions](#data-partitions)), while run and sweep configurations
+are stored under `experiments/` (see
 [Configure and run experiments](#configure-and-run-experiments)). The results
 summary produced by `collect` is explained in
 [Evaluation and reporting](#evaluation-and-reporting).
 
 The sections below walk through the same CIFAR-10 example in more detail.
+
+Start with the [configuration guide](https://github.com/briannamueller/RigFL/blob/main/docs/configuration.md) or
+[data guide](https://github.com/briannamueller/RigFL/blob/main/docs/data.md). For exhaustive option lookup, use the references for
+[experiments](https://github.com/briannamueller/RigFL/blob/main/docs/reference/experiment.md),
+[algorithms](https://github.com/briannamueller/RigFL/blob/main/docs/reference/algorithms.md), [data](https://github.com/briannamueller/RigFL/blob/main/docs/reference/data.md), and
+[models](https://github.com/briannamueller/RigFL/blob/main/docs/reference/models.md).
 
 
 ## Data partitions
@@ -127,14 +134,14 @@ to prepare or inspect the partition in advance.
 [`configs/datasets.yaml`](https://github.com/briannamueller/RigFL/blob/main/configs/datasets.yaml) ships with starting points for MNIST, Fashion-MNIST,
 CIFAR-10, CIFAR-100, Tiny ImageNet, FEMNIST, PaySim fraud-detection, and
 phishing URL detection. Add a new dataset by creating another entry. See the
-[data configuration guide](https://github.com/briannamueller/RigFL/blob/main/rigfl/data/README.md)
-for the available settings and guidance for datasets with multiple
-configurations, nonstandard splits, or ambiguous input and target columns.
+[data guide](https://github.com/briannamueller/RigFL/blob/main/docs/data.md)
+for preparing client datasets and the [data reference](https://github.com/briannamueller/RigFL/blob/main/docs/reference/data.md)
+for available settings.
 
 Naturally partitioned biomedical datasets are available through the optional
 BioSilo backend, installed with `pip install "rigfl[biosilo]"`. BioSilo
 partitions are not automatically generated when an experiment runs, so run the generation
-command above first. The data configuration guide covers BioSilo's configuration
+command above first. The data guide covers BioSilo's configuration
 and dataset-specific dependencies.
 
 
@@ -163,15 +170,15 @@ algorithm:
   lr: 0.01
 ```
 
-`dataset` names an entry in configs/datasets.yaml. RigFL derives the partition
+`experiment.dataset` names an entry in `configs/datasets.yaml`. RigFL derives the partition
 fingerprint from that entry and loads the matching partition. By default, RigFL reads dataset configurations from `configs/datasets.yaml` and stores
 partitions under `data/`. Set `experiment.dataset_config` and
 `experiment.data_dir` to override these paths.
 
-Specify the model architecture with `model`. For algorithms that support heterogeneous
-architectures, optionally specify a `model_family`. See the
-[model configuration guide](https://github.com/briannamueller/RigFL/blob/main/rigfl/models/README.md)
-for the available architectures and model families.
+Set `experiment.model` to choose a model architecture. For algorithms that
+support different client architectures, set `experiment.model_family` to choose
+a model family. See the [model reference](https://github.com/briannamueller/RigFL/blob/main/docs/reference/models.md) for the
+available architectures and families.
 
 
 Run the experiment with:
@@ -235,6 +242,7 @@ replicates:
 sweep:
   algorithm.lr: [0.01, 0.03]
 ```
+
 `base` specifies the experiment and algorithm configuration shared by all runs,
 and each entry in `replicates` defines the partition, validation-split, and
 training seeds for one repetition.
@@ -262,14 +270,14 @@ RigFL also supports hyperparameter tuning with Optuna. See the
 ### Variance studies
 
 To measure how much results depend on each source of randomness, vary the seeds
-as sweep axes instead of replicates. Experiment settings take an `exp.` prefix on
+as sweep axes instead of replicates. Experiment settings take an `experiment.` prefix on
 sweep axes:
 
 ```yaml
 sweep:
-  exp.partition_seed: [0, 1, 2]
-  exp.split_seed: [0, 1, 2]
-  exp.seed: [0, 1, 2]
+  experiment.partition_seed: [0, 1, 2]
+  experiment.split_seed: [0, 1, 2]
+  experiment.seed: [0, 1, 2]
 ```
 
 This runs all 27 seed combinations for each configuration. Analyze them with the
@@ -337,7 +345,7 @@ used for timing. Communication measures the algorithm payloads exchanged during
 training; transport and serialization overhead are not included.
 
 FLOP estimation is optional because profiling adds runtime overhead. Enable it
-for an experiment with `experiment.estimate_flops: true` or `--estimate-flops`.
+with `experiment.estimate_flops: true`.
 FLOP estimation requires PyTorch 2.1 or newer and records training and inference
 separately.
 
@@ -440,8 +448,7 @@ pip install "rigfl[wandb]"
 ```
 
 Enable tracking by setting `wandb: true` under `experiment` in the YAML
-configuration file, or pass `--wandb` when running experiments from the command
-line.
+configuration file.
 
 ## Development and testing
 

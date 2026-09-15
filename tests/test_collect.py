@@ -74,8 +74,7 @@ def test_field_reads_algorithm_and_experiment_and_name():
     rec = _rec("feddes", 0, 0.7, **_feddes_config(5))
     assert _field(rec, "algorithm") == "feddes"
     assert _field(rec, "algorithm.graphroute.graph.k") == 5
-    assert _field(rec, "exp.batch") == 32
-    assert _field(rec, "batch") == 32          # bare -> experiment field
+    assert _field(rec, "experiment.batch") == 32
 
 
 def test_missing_flop_setting_matches_the_disabled_default():

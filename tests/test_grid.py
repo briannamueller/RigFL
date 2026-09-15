@@ -45,7 +45,10 @@ def test_no_duplicate_configs():
 def test_relevant_experiment_axis_multiplies_all_algorithms():
     grid = build_grid({
         "algorithms": ["local", "feddes"],
-        "sweep": {"seed": [0, 1], "batch": [16, 32]},    # experiment axes apply to all
+        "sweep": {
+            "experiment.seed": [0, 1],
+            "experiment.batch": [16, 32],
+        },
     })
     counts = _counts(grid)
     assert counts["local"] == 4 and counts["feddes"] == 4  # 2 seeds x 2 batches each
@@ -54,7 +57,7 @@ def test_relevant_experiment_axis_multiplies_all_algorithms():
 def test_shared_dimension_does_not_multiply_feddes_runs():
     grid = build_grid({
         "algorithms": ["local", "feddes"],
-        "sweep": {"shared_dim": [64, 128]},
+        "sweep": {"experiment.shared_dim": [64, 128]},
     })
 
     assert _counts(grid) == {"local": 2, "feddes": 1}
@@ -69,7 +72,7 @@ def test_shared_dimension_axis_is_rejected_for_feddes_only_sweep():
     with pytest.raises(SystemExit, match="does not apply"):
         build_grid({
             "algorithms": ["feddes"],
-            "sweep": {"shared_dim": [64, 128]},
+            "sweep": {"experiment.shared_dim": [64, 128]},
         })
 
 
@@ -102,7 +105,10 @@ def test_misspelt_experiment_axis_is_refused():
 
     from rigfl.experiment.launch import build_grid
     with pytest.raises(SystemExit) as e:
-        build_grid({"algorithms": ["feddes"], "sweep": {"exp.btach": [16, 32]}})
+        build_grid({
+            "algorithms": ["feddes"],
+            "sweep": {"experiment.btach": [16, 32]},
+        })
     assert 'Did you mean "batch"?' in str(e.value)
 
 

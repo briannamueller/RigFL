@@ -267,19 +267,40 @@ def test_named_transform_resolves_ambiguous_columns(monkeypatch):
     assert resolved.target_column == "fine_label"
 
 
-def test_dirichlet_rejects_regression_targets(monkeypatch):
+def test_automatic_task_detection_preserves_regression_internally(monkeypatch):
     _metadata(
         monkeypatch,
         features=Features({"features": Value("float32"), "target": Value("float32")}),
         supervised=("features", "target"),
     )
-    with pytest.raises(ValueError, match="not supported for regression"):
-        flower.inspect_flower_source(
-            FlowerDatasetSettings(source_dataset="organization/data")
+    resolved = flower.inspect_flower_source(
+        FlowerDatasetSettings(
+            source_dataset="organization/data",
+            partition={"scheme": "iid", "num_clients": 2},
+        )
+    )
+
+    assert resolved.task == "regression"
+
+
+def test_generation_rejects_automatically_detected_regression(monkeypatch, tmp_path):
+    _metadata(
+        monkeypatch,
+        features=Features({"features": Value("float32"), "target": Value("float32")}),
+        supervised=("features", "target"),
+    )
+
+    with pytest.raises(ValueError, match="supports classification datasets only"):
+        flower.generate_flower_partition(
+            FlowerDatasetSettings(
+                source_dataset="organization/data",
+                partition={"scheme": "iid", "num_clients": 2},
+            ),
+            tmp_path,
         )
 
 
-def test_merged_split_rejects_stratified_regression(monkeypatch):
+def test_explicit_classification_accepts_numeric_class_labels(monkeypatch):
     _metadata(
         monkeypatch,
         features=Features({"features": Value("float32"), "target": Value("float32")}),
@@ -287,6 +308,7 @@ def test_merged_split_rejects_stratified_regression(monkeypatch):
     )
     settings = FlowerDatasetSettings(
         source_dataset="organization/data",
+        task="classification",
         source_splits={"merge_splits": ["train", "test"]},
         client_split={
             "validation_fraction": 0.1,
@@ -296,8 +318,9 @@ def test_merged_split_rejects_stratified_regression(monkeypatch):
         partition={"scheme": "iid", "num_clients": 2},
     )
 
-    with pytest.raises(ValueError, match="only for classification"):
-        flower.inspect_flower_source(settings)
+    resolved = flower.inspect_flower_source(settings)
+
+    assert resolved.task == "classification"
 
 
 @pytest.mark.parametrize(("scheme", "arguments"), PARTITIONER_CASES.items())

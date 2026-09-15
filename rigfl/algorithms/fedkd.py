@@ -29,11 +29,11 @@ from rigfl.core.model import ClientModel
 
 
 class FedKDConfig(AlgorithmConfig):
-    local_epochs: int = Field(1, ge=1)
-    lr: float = Field(0.01, gt=0)
-    t_start: float = Field(0.95, ge=0, le=1)   # SVD energy-keep schedule (start -> end)
-    t_end: float = Field(0.98, ge=0, le=1)
-    aux_model: str | None = None
+    local_epochs: int = Field(1, ge=1, description="Client training epochs per round.")
+    lr: float = Field(0.01, gt=0, description="Client optimizer learning rate.")
+    t_start: float = Field(0.95, ge=0, le=1, description="Initial SVD energy-retention threshold.")
+    t_end: float = Field(0.98, ge=0, le=1, description="Final SVD energy-retention threshold.")
+    aux_model: str | None = Field(None, description="Architecture used for the shared mentee model.")
 
 
 class FedKD(Algorithm):

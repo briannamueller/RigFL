@@ -37,6 +37,7 @@ from rigfl.experiment.paths import deep_merge
 from rigfl.prediction import Predictions
 
 FEDDES_PREPROCESSING_KEY = "rigfl-feddes-multitensor-collation-v1"
+FEDDES_POOL_POLICY_VERSION = 1
 _OOF_INNER_VAL_RATIO = 0.2
 
 
@@ -55,9 +56,10 @@ def _default_graphroute_settings() -> GraphRouteSettings:
 
 class FedDESConfig(AlgorithmConfig):
     graphroute: GraphRouteSettings = Field(
-        default_factory=_default_graphroute_settings
+        default_factory=_default_graphroute_settings,
+        description="GraphRoute modeling and base-pool settings.",
     )
-    cache_dir: str = "pool_cache"
+    cache_dir: str = Field("pool_cache", description="Directory used to reuse trained base pools; empty disables caching.")
 
     @field_validator("graphroute", mode="before")
     @classmethod
@@ -88,9 +90,8 @@ class FedDES(Algorithm):
                  feature_extractor: Callable | None = None):
         super().__init__(config)
         sources = list(base_factories)
-        # Configuration resolves to actual model templates. A few low-level test
-        # integrations still supply constructors, so materialize those once and
-        # use the resulting templates for both identity and isolated training.
+        # Materialize constructors once so identity and isolated training use the
+        # same templates.
         self.base_models = tuple(
             source if isinstance(source, torch.nn.Module) else source()
             for source in sources
@@ -204,8 +205,11 @@ class FedDES(Algorithm):
     # ── base-pool artifact reuse (train once; reuse across graph/GNN sweeps) ──
     def _pool_fp(self) -> str:
         """Fingerprint the ordered local pool and its complete training policy."""
-        from graphroute.pool_cache import fingerprint_model, fingerprint_pool
-        from rigfl.experiment.env import _package
+        from graphroute.pool_cache import (
+            fingerprint_model,
+            fingerprint_pool,
+            pool_training_code_identity,
+        )
         base = self.graphroute_settings.base
         template_fingerprints = [
             fingerprint_model(model) for model in self.base_models
@@ -222,8 +226,10 @@ class FedDES(Algorithm):
                 "preprocessing": FEDDES_PREPROCESSING_KEY,
             },
             seed=self.seed,
-            code_identity={"graphroute": _package("graphroute"),
-                           "rigfl": _package("rigfl")})
+            code_identity={
+                "graphroute": pool_training_code_identity(),
+                "rigfl_feddes_pool_policy": FEDDES_POOL_POLICY_VERSION,
+            })
 
     def _train(self, tr_ds, va_ds, device, client_id):
         """Return the trained models and out-of-fold logits."""

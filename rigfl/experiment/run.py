@@ -1,8 +1,9 @@
 """Run one experiment and save its resolved configuration and results.
 
-    python -m rigfl.experiment.run --algorithm fedproto --dataset cifar10 --seed 0
+    python -m rigfl.experiment.run --algorithm fedproto --config experiments/cifar10_run.yaml
     python -m rigfl.experiment.run --algorithm fedproto --set algorithm.lamda=10
-    python -m rigfl.experiment.run --algorithm fedtgp --set algorithm.server_epochs=100 --rounds 50
+    python -m rigfl.experiment.run --algorithm fedtgp \
+        --set experiment.rounds=50 algorithm.server_epochs=100
 
 Use :mod:`rigfl.experiment.launch` for multi-configuration sweeps.
 """
@@ -317,7 +318,7 @@ def run_one(name, exp: ExperimentConfig, cfg, device, *, data: ResolvedData | No
 #: Sections accepted by a single-run YAML file.
 _CONFIG_SECTIONS = tuple(RunFileConfig.model_fields)
 #: Prefixes accepted by ``--set``.
-_SET_SECTIONS = {"exp": "experiment", "algorithm": "algorithm"}
+_SET_SECTIONS = {"experiment", "algorithm"}
 
 
 def load_run_config(path: str) -> tuple[dict, dict]:
@@ -362,32 +363,12 @@ def _suggest(name: str, known) -> str:
 
 
 def build_configs(args) -> tuple[ExperimentConfig, dict]:
-    """Resolve the experiment config plus algorithm-config overrides from
-    (optional) YAML, then convenience flags, then --set. Pydantic validates."""
+    """Resolve YAML configuration followed by any ``--set`` overrides."""
     exp_over: dict = {}
     algorithm_over: dict = {}
     if args.config:
         exp_over, algorithm_over = load_run_config(args.config)
-    for flag in ["dataset", "dataset_config", "data_dir", "rounds", "seed",
-                 "shared_dim", "eval_gap", "device", "out_dir"]:
-        v = getattr(args, flag, None)
-        if v is not None:
-            exp_over[flag] = v
-    if args.quiet:
-        exp_over["quiet"] = True
-    elif "quiet" not in exp_over:
-        exp_over["quiet"] = False     # run.py's own default is verbose
-    if args.wandb:
-        exp_over["wandb"] = True
-    if args.wandb_project:
-        exp_over["wandb_project"] = args.wandb_project
-    if getattr(args, "estimate_flops", False):
-        exp_over["estimate_flops"] = True
-    for flag in ["lr", "local_epochs"]:
-        v = getattr(args, flag)
-        if v is not None:
-            algorithm_over[flag] = v
-    for kv in args.set:                              # --set exp.x=1 algorithm.lamda=10
+    for kv in args.set:
         if "=" not in kv or "." not in kv.split("=", 1)[0]:
             raise SystemExit(f"--set {kv}: expected <section>.<field>=<value>, "
                              f"where section is one of {', '.join(sorted(_SET_SECTIONS))}")
@@ -398,7 +379,11 @@ def build_configs(args) -> tuple[ExperimentConfig, dict]:
                 f'--set {kv}: unknown section "{section}".'
                 f'{_suggest(section, _SET_SECTIONS)}\n'
                 f"Use {', '.join(f'{s}.<field>' for s in sorted(_SET_SECTIONS))}.")
-        nested_set(exp_over if section == "exp" else algorithm_over, field, val)
+        nested_set(
+            exp_over if section == "experiment" else algorithm_over,
+            field,
+            val,
+        )
     return ExperimentConfig(**exp_over), algorithm_over
 
 
@@ -454,27 +439,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--algorithm", default="baselines",
                    help="algorithm name, 'baselines', or 'all'")
     p.add_argument("--config", help="YAML with 'experiment:' and 'algorithm:' sections")
-    p.add_argument("--dataset")
-    p.add_argument("--dataset-config")
-    p.add_argument("--data-dir")
     p.add_argument("--set", nargs="*", default=[],
-                   help="overrides, e.g. exp.rounds=50 algorithm.lamda=10")
-    # convenience flags (experiment):
-    p.add_argument("--rounds", type=int)
-    p.add_argument("--seed", type=int)
-    p.add_argument("--shared-dim", type=int)
-    p.add_argument("--eval-gap", type=int)
-    p.add_argument("--device", choices=["auto", "cpu", "mps", "cuda"])
-    p.add_argument("--out-dir")
-    # convenience flags (shared algorithm options):
-    p.add_argument("--lr", type=float)
-    p.add_argument("--local-epochs", type=int)
-    p.add_argument("--quiet", action="store_true", help="suppress per-round logging")
-    p.add_argument("--force", action="store_true", help="re-run even if the result JSON exists")
-    p.add_argument("--wandb", action="store_true", help="log to Weights & Biases (needs rigfl[wandb])")
-    p.add_argument("--wandb-project", help="W&B project name")
-    p.add_argument("--estimate-flops", action="store_true",
-                   help="estimate FLOPs for executed PyTorch operations")
+                   help="overrides, e.g. experiment.rounds=50 algorithm.lamda=10")
+    p.add_argument("--force", action="store_true",
+                   help="re-run even if the result JSON exists")
     return p.parse_args()
 
 

@@ -259,7 +259,7 @@ def load_partition(
             "num_clients value than the partition configuration; regenerate the "
             "configured partition"
         )
-    if manifest.get("task") not in {"classification", "regression"}:
+    if manifest.get("task") != "classification":
         raise ValueError(f"generated partition manifest {path / 'manifest.json'} has no valid task")
     if not isinstance(manifest.get("input_spec"), dict) or not isinstance(
         manifest.get("target_spec"), dict

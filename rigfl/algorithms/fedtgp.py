@@ -42,12 +42,12 @@ class TrainableGlobalPrototypes(nn.Module):
 
 
 class FedTGPConfig(AlgorithmConfig):
-    local_epochs: int = Field(1, ge=1)
-    lr: float = Field(0.01, gt=0)
-    lamda: float = Field(0.1, ge=0)          # client proto-pull weight; paper Eq. 11: 0.1 (official code: 10)
-    server_epochs: int = Field(1, ge=1)      # paper uses S=100 server epochs/round; set it in validation
-    server_lr: float = Field(0.01, gt=0)     # paper ties server lr to the client lr
-    margin_cap: float = Field(100.0, gt=0)   # tau: cap on the adaptive contrastive margin (Eq. 9)
+    local_epochs: int = Field(1, ge=1, description="Client training epochs per round.")
+    lr: float = Field(0.01, gt=0, description="Client optimizer learning rate.")
+    lamda: float = Field(0.1, ge=0, description="Weight of the client prototype loss.")
+    server_epochs: int = Field(1, ge=1, description="Server prototype-training epochs per round.")
+    server_lr: float = Field(0.01, gt=0, description="Server optimizer learning rate.")
+    margin_cap: float = Field(100.0, gt=0, description="Maximum adaptive contrastive margin.")
 
 
 class FedTGP(Algorithm):

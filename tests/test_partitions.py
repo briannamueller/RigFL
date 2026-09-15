@@ -124,7 +124,7 @@ def test_sweep_rejects_varied_data_seeds_that_cannot_change_the_data(tmp_path):
                 "rounds": 1,
             }
         },
-        "sweep": {"partition_seed": [0, 1]},
+        "sweep": {"experiment.partition_seed": [0, 1]},
     }
 
     with pytest.raises(SystemExit, match="does not use the varied replicate"):

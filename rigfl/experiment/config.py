@@ -103,17 +103,33 @@ class EarlyStoppingConfig(BaseModel):
     decides which completed round gets reported. Stopping is disabled by default
     and uses predictive validation loss when enabled unless overridden.
     """
+
     model_config = ConfigDict(extra="forbid")
 
-    enabled: bool = False
+    enabled: bool = Field(
+        False, description="Stop training when validation performance stops improving."
+    )
     # Early stopping is validation-only.
-    split: Literal["validation"] = "validation"
+    split: Literal["validation"] = Field(
+        "validation", description="Data split used for early stopping."
+    )
     # The validator resolves an unset metric to loss only when stopping is enabled.
-    metric: Optional[str] = None
-    direction: Optional[Literal["maximize", "minimize"]] = None   # None -> the metric's own
-    aggregation: Literal["mean", "weighted_mean"] = "mean"
-    patience: int = Field(10, ge=1)
-    min_delta: float = Field(0.0, ge=0)
+    metric: Optional[str] = Field(
+        None, description="Validation metric to monitor; defaults to loss when enabled."
+    )
+    direction: Optional[Literal["maximize", "minimize"]] = Field(
+        None,
+        description="Improvement direction; inferred from the metric when omitted.",
+    )
+    aggregation: Literal["mean", "weighted_mean"] = Field(
+        "mean", description="How client validation values are combined."
+    )
+    patience: int = Field(
+        10, ge=1, description="Evaluations without improvement before stopping."
+    )
+    min_delta: float = Field(
+        0.0, ge=0, description="Smallest change counted as an improvement."
+    )
 
     @model_validator(mode="after")
     def _resolve_when_enabled(self):
@@ -121,8 +137,10 @@ class EarlyStoppingConfig(BaseModel):
         if not self.enabled:
             return self
         from rigfl.eval.metrics import direction_of, require_computable
-        object.__setattr__(self, "metric",
-                           require_computable(self.metric or DEFAULT_METRIC))
+
+        object.__setattr__(
+            self, "metric", require_computable(self.metric or DEFAULT_METRIC)
+        )
         if not self.direction:
             object.__setattr__(self, "direction", direction_of(self.metric))
         return self
@@ -131,27 +149,57 @@ class EarlyStoppingConfig(BaseModel):
 class ExperimentConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    dataset: str = "cifar10"
-    dataset_config: str = "configs/datasets.yaml"
-    data_dir: str = "data"
-    rounds: int = Field(100, ge=1)
-    seed: int = Field(0, ge=0)
-    partition_seed: int | None = Field(None, ge=0)
-    split_seed: int | None = Field(None, ge=0)
-    shared_dim: int = Field(512, ge=1)  # width for algorithms that align representations
-    model: str = "fedavg_cnn"
-    model_family: Optional[str] = None
-    batch: int = Field(32, ge=1)
-    eval_gap: int = Field(1, ge=1)
-    device: Literal["auto", "cpu", "mps", "cuda"] = "auto"
-    out_dir: str = "results"
-    quiet: bool = True
-    wandb: bool = False                             # log to Weights & Biases (needs rigfl[wandb])
-    wandb_project: str = "rigfl"
-    estimate_flops: bool = False
+    dataset: str = Field(
+        "cifar10", description="Dataset name from the dataset configuration file."
+    )
+    dataset_config: str = Field(
+        "configs/datasets.yaml", description="Path to the dataset configuration file."
+    )
+    data_dir: str = Field(
+        "data", description="Directory containing generated client partitions."
+    )
+    rounds: int = Field(100, ge=1, description="Number of communication rounds.")
+    seed: int = Field(
+        0, ge=0, description="Seed for training and model initialization."
+    )
+    partition_seed: int | None = Field(
+        None, ge=0, description="Override for the dataset partition seed."
+    )
+    split_seed: int | None = Field(
+        None, ge=0, description="Override for the client validation-split seed."
+    )
+    shared_dim: int = Field(
+        512,
+        ge=1,
+        description="Shared representation width used by compatible algorithms.",
+    )
+    model: str = Field(
+        "fedavg_cnn", description="Model architecture selected for the experiment."
+    )
+    model_family: Optional[str] = Field(
+        None,
+        description="Model family selected for algorithms that support different client architectures.",
+    )
+    batch: int = Field(32, ge=1, description="Client training batch size.")
+    eval_gap: int = Field(1, ge=1, description="Evaluate every N communication rounds.")
+    device: Literal["auto", "cpu", "mps", "cuda"] = Field(
+        "auto", description="Device used for training and evaluation."
+    )
+    out_dir: str = Field(
+        "results", description="Root directory for experiment results."
+    )
+    quiet: bool = Field(True, description="Suppress per-round progress output.")
+    wandb: bool = Field(False, description="Log training progress to Weights & Biases.")
+    wandb_project: str = Field("rigfl", description="Weights & Biases project name.")
+    estimate_flops: bool = Field(
+        False, description="Estimate executed PyTorch operations."
+    )
 
     #: When to stop early. Off by default: every round is recorded either way.
-    early_stopping: EarlyStoppingConfig = Field(default_factory=EarlyStoppingConfig)
+    early_stopping: EarlyStoppingConfig = Field(
+        default_factory=EarlyStoppingConfig,
+        description="Optional validation-based stopping policy.",
+    )
 
 
 Seed = Annotated[StrictInt, Field(ge=0)]
@@ -162,9 +210,13 @@ class ReplicateCondition(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    partition_seed: Seed
-    split_seed: Seed
-    experiment_seed: Seed
+    partition_seed: Seed = Field(description="Seed used to assign data to clients.")
+    split_seed: Seed = Field(
+        description="Seed used to create client validation splits."
+    )
+    experiment_seed: Seed = Field(
+        description="Seed used for training and model initialization."
+    )
 
 
 class SamplerConfig(BaseModel):
@@ -175,8 +227,11 @@ class SamplerConfig(BaseModel):
     class_path: str = Field(
         alias="class",
         min_length=1,
+        description="Import path of the Optuna sampler class.",
     )
-    options: dict[str, Any] = Field(default_factory=dict)
+    options: dict[str, Any] = Field(
+        default_factory=dict, description="Arguments passed to the sampler constructor."
+    )
 
     @field_validator("class_path")
     @classmethod
@@ -190,17 +245,19 @@ class CategoricalDistribution(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["categorical"]
-    values: Annotated[list[Any], Field(min_length=1)]
+    values: Annotated[list[Any], Field(min_length=1, description="Candidate values.")]
 
 
 class IntegerDistribution(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["int"]
-    low: StrictInt
-    high: StrictInt
-    step: Annotated[StrictInt, Field(ge=1)] = 1
-    log: StrictBool = False
+    low: StrictInt = Field(description="Inclusive lower bound.")
+    high: StrictInt = Field(description="Inclusive upper bound.")
+    step: Annotated[
+        StrictInt, Field(ge=1, description="Spacing between candidate values.")
+    ] = 1
+    log: StrictBool = Field(False, description="Sample on a logarithmic scale.")
 
     @model_validator(mode="after")
     def _validate_range(self):
@@ -215,10 +272,12 @@ class FloatDistribution(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["float"]
-    low: StrictInt | StrictFloat
-    high: StrictInt | StrictFloat
-    step: Annotated[StrictInt | StrictFloat, Field(gt=0)] | None = None
-    log: StrictBool = False
+    low: StrictInt | StrictFloat = Field(description="Inclusive lower bound.")
+    high: StrictInt | StrictFloat = Field(description="Inclusive upper bound.")
+    step: Annotated[StrictInt | StrictFloat, Field(gt=0)] | None = Field(
+        None, description="Spacing between candidate values."
+    )
+    log: StrictBool = Field(False, description="Sample on a logarithmic scale.")
 
     @model_validator(mode="after")
     def _validate_range(self):
@@ -247,9 +306,7 @@ class BaseConfiguration(RootModel[dict[str, Any]]):
         return self
 
 
-class SweepConfiguration(
-    RootModel[dict[str, list[Any] | tuple[Any, ...] | str]]
-):
+class SweepConfiguration(RootModel[dict[str, list[Any] | tuple[Any, ...] | str]]):
     """Cartesian sweep axes accepted from YAML or command-line flags."""
 
     @model_validator(mode="after")
@@ -271,9 +328,12 @@ class RunFileConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    experiment: ExperimentConfig = Field(default_factory=ExperimentConfig)
+    experiment: ExperimentConfig = Field(
+        default_factory=ExperimentConfig, description="Experiment-wide settings."
+    )
     algorithm: AlgorithmConfiguration = Field(
-        default_factory=lambda: AlgorithmConfiguration({})
+        default_factory=lambda: AlgorithmConfiguration({}),
+        description="Settings for the selected algorithm.",
     )
 
 
@@ -282,11 +342,30 @@ class IntensificationConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    top_k: Annotated[StrictInt, Field(ge=2)] = 5
-    replicates: Annotated[list[ReplicateCondition], Field(min_length=1)]
-    practical_threshold: Annotated[StrictInt | StrictFloat, Field(gt=0)]
-    tail_fraction: Annotated[StrictInt | StrictFloat, Field(gt=0, le=1)] = 0.10
-    prefer: Literal["validation", "communication", "flops", "time"] = "validation"
+    top_k: Annotated[
+        StrictInt,
+        Field(
+            ge=2, description="Leading candidates evaluated on additional replicates."
+        ),
+    ] = 5
+    replicates: Annotated[
+        list[ReplicateCondition],
+        Field(min_length=1, description="Additional replicate conditions."),
+    ]
+    practical_threshold: Annotated[
+        StrictInt | StrictFloat,
+        Field(
+            gt=0, description="Largest difference treated as practically equivalent."
+        ),
+    ]
+    tail_fraction: Annotated[
+        StrictInt | StrictFloat,
+        Field(gt=0, le=1, description="Client tail used for worst-tail gain."),
+    ] = 0.10
+    prefer: Literal["validation", "communication", "flops", "time"] = Field(
+        "validation",
+        description="Criterion used among practically equivalent candidates.",
+    )
 
     @model_validator(mode="after")
     def _validate_replicates(self):
@@ -310,18 +389,37 @@ class TuningConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    search_space: Annotated[dict[str, SearchDistribution], Field(min_length=1)]
-    trials: Annotated[StrictInt, Field(ge=1)] = 100
+    search_space: Annotated[
+        dict[str, SearchDistribution],
+        Field(
+            min_length=1, description="Parameters and distributions explored by Optuna."
+        ),
+    ]
+    trials: Annotated[
+        StrictInt, Field(ge=1, description="Target total number of trials.")
+    ] = 100
     sampler: SamplerConfig = Field(
         default_factory=lambda: SamplerConfig.model_validate(
             {"class": "optuna.samplers.TPESampler", "options": {"seed": 0}}
-        )
+        ),
+        description="Optuna sampler and constructor options.",
     )
-    metric: str = "accuracy"
-    selection_view: Literal["global", "per-client"] = "global"
-    selection_aggregation: Literal["mean", "weighted_mean"] = "mean"
-    tie_break: Literal["earliest", "latest"] = "earliest"
-    intensification: IntensificationConfig | None = None
+    metric: str = Field(
+        "accuracy", description="Validation metric optimized by the study."
+    )
+    selection_view: Literal["global", "per-client"] = Field(
+        "global",
+        description="Whether reporting rounds are selected jointly or per client.",
+    )
+    selection_aggregation: Literal["mean", "weighted_mean"] = Field(
+        "mean", description="How client validation values are combined."
+    )
+    tie_break: Literal["earliest", "latest"] = Field(
+        "earliest", description="Round chosen when validation values tie."
+    )
+    intensification: IntensificationConfig | None = Field(
+        None, description="Optional evaluation of leading candidates on new replicates."
+    )
 
 
 class ExperimentFileConfig(BaseModel):
@@ -329,12 +427,23 @@ class ExperimentFileConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str | None = None
-    algorithms: list[str] | str | None = None
-    base: BaseConfiguration = Field(default_factory=lambda: BaseConfiguration({}))
-    sweep: SweepConfiguration | None = None
-    replicates: list[ReplicateCondition] | None = None
-    tuning: TuningConfig | None = None
+    name: str | None = Field(
+        None, description="Name used for the study output directory."
+    )
+    algorithms: list[str] | str | None = Field(
+        None, description="Algorithms included in the sweep or study."
+    )
+    base: BaseConfiguration = Field(
+        default_factory=lambda: BaseConfiguration({}),
+        description="Settings shared by every generated run.",
+    )
+    sweep: SweepConfiguration | None = Field(
+        None, description="Cartesian axes for an ordinary sweep."
+    )
+    replicates: list[ReplicateCondition] | None = Field(
+        None, description="Paired data and training seed conditions."
+    )
+    tuning: TuningConfig | None = Field(None, description="Optuna study settings.")
 
     @model_validator(mode="after")
     def _validate_replicates(self):
@@ -353,6 +462,7 @@ class ExperimentFileConfig(BaseModel):
                 "replicates must use a distinct experiment_seed for each condition"
             )
         return self
+
 
 class ResolvedExperimentConfig(ExperimentConfig):
     """An experiment plus facts read from its selected dataset partition.
@@ -375,8 +485,13 @@ class ResolvedExperimentConfig(ExperimentConfig):
 # ── Run identity ─────────────────────────────────────────────────────────────
 # Execution and output settings do not define the experimental condition.
 _ENV_IRRELEVANT = (
-    "device", "out_dir", "quiet", "wandb", "wandb_project",
-    "dataset_config", "data_dir",
+    "device",
+    "out_dir",
+    "quiet",
+    "wandb",
+    "wandb_project",
+    "dataset_config",
+    "data_dir",
 )
 # Cache location does not define an algorithm configuration.
 _ALGORITHM_ENV_IRRELEVANT = ("cache_dir",)
@@ -384,8 +499,9 @@ _ALGORITHM_ENV_IRRELEVANT = ("cache_dir",)
 
 def algorithm_identity(algorithm_dump: dict) -> dict:
     """An algorithm's config, minus values that only locate stored artifacts."""
-    return {k: v for k, v in algorithm_dump.items()
-            if k not in _ALGORITHM_ENV_IRRELEVANT}
+    return {
+        k: v for k, v in algorithm_dump.items() if k not in _ALGORITHM_ENV_IRRELEVANT
+    }
 
 
 def run_fingerprint(
@@ -412,8 +528,9 @@ def run_fingerprint(
     e["early_stopping"] = normalize_early_stopping(e.get("early_stopping"))
     if not e.get("estimate_flops"):
         e.pop("estimate_flops", None)
-    return fingerprint({"experiment": e,
-                        "algorithm": algorithm_identity(algorithm_dump)})
+    return fingerprint(
+        {"experiment": e, "algorithm": algorithm_identity(algorithm_dump)}
+    )
 
 
 def result_filename(exp: "ResolvedExperimentConfig", algorithm: str, fp: str) -> str:

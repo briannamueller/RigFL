@@ -192,8 +192,8 @@ def test_ordinary_sweeps_execute_without_creating_a_tuning_study():
         {
             "algorithms": ["local", "fedavg"],
             "sweep": {
-                "dataset": ["cifar10", "mnist"],
-                "seed": [0, 1],
+                "experiment.dataset": ["cifar10", "mnist"],
+                "experiment.seed": [0, 1],
                 "algorithm.local_epochs": [1, 2],
             },
         }

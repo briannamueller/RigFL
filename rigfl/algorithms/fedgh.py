@@ -28,10 +28,10 @@ Prototypes = dict[int, torch.Tensor]
 
 
 class FedGHConfig(AlgorithmConfig):
-    local_epochs: int = Field(1, ge=1)
-    lr: float = Field(0.01, gt=0)
-    server_epochs: int = Field(1, ge=1)
-    server_lr: float = Field(0.01, gt=0)
+    local_epochs: int = Field(1, ge=1, description="Client training epochs per round.")
+    lr: float = Field(0.01, gt=0, description="Client optimizer learning rate.")
+    server_epochs: int = Field(1, ge=1, description="Server header-training epochs per round.")
+    server_lr: float = Field(0.01, gt=0, description="Server optimizer learning rate.")
 
 
 class FedGH(Algorithm):

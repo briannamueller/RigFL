@@ -24,7 +24,7 @@ dependencies = [
     "pyarrow<15",
     "pillow<11",
     "pandas<2.3",
-    "graphroute>=0.1.4,<0.2",
+    "graphroute>=0.1.5,<0.2",
 ]
 
 [project.urls]
@@ -35,7 +35,7 @@ Issues = "https://github.com/briannamueller/RigFL/issues"
 rigfl = "rigfl.cli:main"
 
 [project.optional-dependencies]
-wandb = ["wandb"]                # optional experiment tracking (rigfl.experiment.run --wandb)
+wandb = ["wandb"]                # optional experiment tracking
 biosilo = ["biosilo>=0.1.2,<0.2"]
 hpo = ["optuna>=4,<5"]
 test = ["pytest"]

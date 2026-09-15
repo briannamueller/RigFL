@@ -121,7 +121,7 @@ def parse_optimization(spec: dict) -> OptimizationSpec:
             "an Optuna study requires top-level replicates with paired "
             "partition_seed, split_seed, and experiment_seed values"
         )
-    replicate_axis = "exp.seed"
+    replicate_axis = "experiment.seed"
     if experiment_file.sweep and experiment_file.sweep.root:
         raise SystemExit(
             "an Optuna configuration does not use sweep; searched parameters "
@@ -148,15 +148,15 @@ def parse_optimization(spec: dict) -> OptimizationSpec:
         if path in search_space:
             raise SystemExit(f"duplicate search parameter: {path}")
         section, name = path.split(".", 1)
-        if section == "exp" and name not in experiment_paths:
+        if section == "experiment" and name not in experiment_paths:
             raise SystemExit(f"unknown experiment search parameter: {path}")
-        if section == "exp" and name in _FORBIDDEN_EXPERIMENT_SEARCH_FIELDS:
+        if section == "experiment" and name in _FORBIDDEN_EXPERIMENT_SEARCH_FIELDS:
             raise SystemExit(
                 f"{path} cannot be optimized; it identifies the dataset, a "
                 "replicate condition, or the execution environment"
             )
         if (
-            section == "exp"
+            section == "experiment"
             and name in algorithm_spec(algorithm).ignored_experiment_fields
         ):
             raise SystemExit(f"{path} does not apply to {algorithm}")
@@ -247,7 +247,9 @@ def _tasks(spec: OptimizationSpec, parameters: dict) -> list[dict]:
         for path, value in parameters.items():
             section, name = path.split(".", 1)
             nested_set(
-                experiment if section == "exp" else algorithm_config, name, value
+                experiment if section == "experiment" else algorithm_config,
+                name,
+                value,
             )
         tasks.append(
             {
@@ -371,7 +373,11 @@ def _manifest(spec: OptimizationSpec, study, target_trials: int | None = None) -
         "replicate_axis": spec.replicate_axis,
         "replicate_values": list(spec.replicates),
         "replicate_fields": (
-            ["exp.partition_seed", "exp.split_seed", "exp.seed"]
+            [
+                "experiment.partition_seed",
+                "experiment.split_seed",
+                "experiment.seed",
+            ]
             if spec.replicate_conditions
             else [spec.replicate_axis]
         ),

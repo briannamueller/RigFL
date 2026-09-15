@@ -167,7 +167,7 @@ def test_optuna_parameters_are_not_cartesian_sweep_axes():
 def test_optuna_cannot_optimize_data_or_replicate_identity(field):
     raw = _with_zipped_replicates(_spec())
     raw["tuning"]["search_space"] = {
-        field: {"type": "categorical", "values": [0, 1]}
+        f"experiment.{field}": {"type": "categorical", "values": [0, 1]}
     }
 
     with pytest.raises(SystemExit, match="cannot be optimized"):
@@ -178,7 +178,7 @@ def test_optuna_cannot_optimize_data_or_replicate_identity(field):
     "change, message",
     [
         (("algorithms", ["local", "fedavg"]), "exactly one algorithm"),
-        (("sweep", {"batch": [16, 32]}), "does not use sweep"),
+        (("sweep", {"experiment.batch": [16, 32]}), "does not use sweep"),
     ],
 )
 def test_optimization_rejects_ambiguous_study_scopes(change, message):

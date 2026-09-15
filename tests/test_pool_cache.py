@@ -65,6 +65,25 @@ def test_pool_fp_is_deterministic_and_client_paths_are_distinct():
         assert root / "client_0" != root / "client_1"
 
 
+def test_pool_fp_ignores_package_versions(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        model = _feddes(tmp)
+        first = model._pool_fp()
+        monkeypatch.setattr("importlib.metadata.version", lambda name: "999.0")
+
+        assert model._pool_fp() == first
+
+
+def test_pool_fp_tracks_the_feddes_pool_policy(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp:
+        model = _feddes(tmp)
+        first = model._pool_fp()
+        monkeypatch.setattr(
+            "rigfl.algorithms.feddes.FEDDES_POOL_POLICY_VERSION", 2)
+
+        assert model._pool_fp() != first
+
+
 def test_pool_fp_ignores_gnn_but_tracks_base():
     with tempfile.TemporaryDirectory() as tmp:
         base = _feddes(tmp)._pool_fp()
@@ -157,6 +176,18 @@ def test_base_training_uses_the_nested_graphroute_settings(monkeypatch):
         "collate_fn": captured["collate_fn"],
     }
     assert seed_calls == [7]
+
+
+def test_graphroute_base_fields_are_accounted_for_by_feddes():
+    from graphroute.config import BaseConfig
+
+    forwarded = {
+        "oof_folds", "es_metric", "es_patience", "lr", "optimizer",
+        "weight_decay", "weighted_by_class", "epochs", "batch_size",
+    }
+    controlled = {"models", "split_mode"}
+
+    assert set(BaseConfig.model_fields) == forwarded | controlled
 
 
 def test_feddes_graphroute_defaults_and_partial_overrides():

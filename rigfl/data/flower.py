@@ -664,9 +664,15 @@ def generate_flower_partition(
     output_directory: Path,
 ) -> dict:
     """Generate client tensor files and return metadata for the artifact manifest."""
+    resolved = inspect_flower_source(settings)
+    if resolved.task != "classification":
+        raise ValueError(
+            "RigFL currently supports classification datasets only; "
+            f"target column {resolved.target_column!r} was identified as regression"
+        )
+
     from flwr_datasets import FederatedDataset
 
-    resolved = inspect_flower_source(settings)
     partition_factory = FLOWER_PARTITIONERS[settings.partition.scheme]
     merged_source = isinstance(resolved.splits, MergedSourceSplits)
     if merged_source:

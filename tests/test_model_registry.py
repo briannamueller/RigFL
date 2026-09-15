@@ -157,7 +157,7 @@ def test_model_family_sweep_does_not_duplicate_homogeneous_algorithms(monkeypatc
     grid = build_grid({
         "algorithms": ["fedavg", "fedproto"],
         "base": {"experiment": {"model": "fedavg_cnn"}},
-        "sweep": {"model_family": [
+        "sweep": {"experiment.model_family": [
             "image_pair", "image_heterogeneous_3"
         ]},
     })

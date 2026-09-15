@@ -45,6 +45,6 @@ tuning:
       low: 0.0001
       high: 1.0
       log: true
-    batch:
+    experiment.batch:
       type: categorical
       values: [32, 64, 128]

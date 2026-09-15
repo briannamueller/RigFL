@@ -55,7 +55,7 @@ tuning:
       low: 0.0001
       high: 1.0
       log: true
-    exp.batch:
+    experiment.batch:
       type: categorical
       values: [32, 64, 128]
 ```
@@ -66,7 +66,7 @@ score. Using the same replicate conditions for every trial makes the candidate
 comparisons paired.
 
 Search paths beginning with `algorithm.` refer to fields in the selected
-algorithm's configuration. Paths beginning with `exp.` refer to experiment
+algorithm's configuration. Paths beginning with `experiment.` refer to experiment
 fields. Dataset identity, replicate seeds, output locations, and execution
 settings cannot be optimized.
 

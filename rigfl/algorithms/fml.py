@@ -24,11 +24,11 @@ from rigfl.core.model import ClientModel
 
 
 class FMLConfig(AlgorithmConfig):
-    local_epochs: int = Field(1, ge=1)
-    lr: float = Field(0.01, gt=0)
-    alpha: float = Field(0.5, ge=0, le=1)    # private-model CE vs. distillation weight (official 0.5)
-    beta: float = Field(0.5, ge=0, le=1)     # meme CE vs. distillation weight (official 0.5)
-    aux_model: str | None = None
+    local_epochs: int = Field(1, ge=1, description="Client training epochs per round.")
+    lr: float = Field(0.01, gt=0, description="Client optimizer learning rate.")
+    alpha: float = Field(0.5, ge=0, le=1, description="Private-model classification weight.")
+    beta: float = Field(0.5, ge=0, le=1, description="Meme-model classification weight.")
+    aux_model: str | None = Field(None, description="Architecture used for the shared meme model.")
 
 
 class FML(Algorithm):

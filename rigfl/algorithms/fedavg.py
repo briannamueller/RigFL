@@ -23,8 +23,8 @@ from rigfl.prediction import Predictions
 
 
 class FedAvgConfig(AlgorithmConfig):
-    local_epochs: int = Field(1, ge=1)
-    lr: float = Field(0.01, gt=0)
+    local_epochs: int = Field(1, ge=1, description="Client training epochs per round.")
+    lr: float = Field(0.01, gt=0, description="Client optimizer learning rate.")
 
 
 @dataclass(frozen=True)

@@ -40,7 +40,7 @@ from rigfl.experiment.paths import (
 from rigfl.experiment.registry import algorithm_spec, config_class
 
 #: Bumped when the study layout changes in a way a reader must notice.
-MANIFEST_SCHEMA_VERSION = 4
+MANIFEST_SCHEMA_VERSION = 5
 MANIFEST_NAME = "study.json"
 MANIFEST_KIND = "rigfl.tuning_study"
 
@@ -61,18 +61,13 @@ class TuningError(ValueError):
 # ── Axis paths ───────────────────────────────────────────────────────────────
 
 def canonical_axis(path: str) -> str:
-    """``batch`` / ``exp.batch`` -> ``exp.batch``; ``algorithm.lr`` stays unchanged.
-
-    Sweep files may spell an experiment axis either way. One spelling internally
-    means a tuning parameter and the axis it names cannot fail to match because
-    of how they were written.
-    """
+    """Require an explicit experiment or algorithm configuration path."""
     p = str(path).strip()
-    if p.startswith("algorithm."):
+    if p.startswith(("experiment.", "algorithm.")):
         return p
-    if p.startswith("exp."):
-        return p
-    return f"exp.{p}"
+    raise SystemExit(
+        f"Configuration path {p!r} must start with 'experiment.' or 'algorithm.'."
+    )
 
 
 def _split(path: str) -> tuple[str, str]:
@@ -191,7 +186,7 @@ def applicable_parameters(algorithm: str, parameters: list[str]) -> list[str]:
             config_class(algorithm), name
         ):
             continue
-        if section == "exp" and name in ignored_experiment_fields:
+        if section == "experiment" and name in ignored_experiment_fields:
             continue
         out.append(p)
     return out
@@ -319,7 +314,7 @@ def effective_condition(record: dict, manifest: dict) -> dict:
     tuned = list(manifest["tuning_parameters"]) + list(
         manifest.get("replicate_fields", [manifest["replicate_axis"]])
     )
-    drop_exp = {_split(p)[1] for p in tuned if _split(p)[0] == "exp"}
+    drop_exp = {_split(p)[1] for p in tuned if _split(p)[0] == "experiment"}
     drop_algorithm = {_split(p)[1] for p in tuned
                       if _split(p)[0] == "algorithm"}
 

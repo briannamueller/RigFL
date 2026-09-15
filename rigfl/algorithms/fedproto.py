@@ -77,9 +77,9 @@ def resolve_num_classes(declared, model, global_protos) -> int:
 
 
 class FedProtoConfig(AlgorithmConfig):
-    local_epochs: int = Field(1, ge=1)
-    lr: float = Field(0.01, gt=0)
-    lamda: float = Field(0.1, ge=0)          # proto-alignment weight; paper: 0.1 (CIFAR-10), 1.0 (MNIST)
+    local_epochs: int = Field(1, ge=1, description="Client training epochs per round.")
+    lr: float = Field(0.01, gt=0, description="Client optimizer learning rate.")
+    lamda: float = Field(0.1, ge=0, description="Weight of the prototype-alignment loss.")
 
 
 class FedProto(Algorithm):

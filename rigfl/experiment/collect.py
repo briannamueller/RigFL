@@ -158,10 +158,16 @@ def describe_condition(rec: dict, fields: list[str] | None = None) -> str:
 
 
 def _field(rec: dict, key: str):
-    """Value of a group-by key: 'algorithm' | 'algorithm.<f>' | 'exp.<f>' | bare exp field."""
+    """Value of an algorithm or explicitly scoped configuration field."""
     if key == "algorithm":
         return rec["algorithm"]
-    section, field = key.split(".", 1) if "." in key else ("exp", key)
+    if "." not in key:
+        raise ValueError(
+            f"group-by field {key!r} must start with 'experiment.' or 'algorithm.'"
+        )
+    section, field = key.split(".", 1)
+    if section not in {"experiment", "algorithm"}:
+        raise ValueError(f"unknown group-by section {section!r}")
     cfg = rec["config"]["algorithm"] if section == "algorithm" else rec["config"]["experiment"]
     return nested_get(cfg, field)
 

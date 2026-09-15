@@ -12,9 +12,9 @@ from rigfl.algorithms.fedavg import FedAvg
 
 
 class FedProxConfig(AlgorithmConfig):
-    local_epochs: int = Field(1, ge=1)
-    lr: float = Field(0.01, gt=0)
-    mu: float = Field(0.01, ge=0)
+    local_epochs: int = Field(1, ge=1, description="Client training epochs per round.")
+    lr: float = Field(0.01, gt=0, description="Client optimizer learning rate.")
+    mu: float = Field(0.01, ge=0, description="Weight of the proximal penalty.")
 
 
 def proximal_penalty(model, reference: Mapping[str, torch.Tensor], mu: float) -> torch.Tensor:

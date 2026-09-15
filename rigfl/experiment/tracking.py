@@ -1,6 +1,6 @@
 """Optional experiment tracking. The loop calls a Tracker; the default does nothing.
 
-Tracking is off unless you ask for it (``--wandb``), and W&B is an optional
+Tracking is off unless enabled in the experiment configuration, and W&B is an optional
 dependency -- so the repo runs, and the loop stays clean, with zero W&B setup.
 ``core.round`` only ever touches the tiny :class:`Tracker` interface below.
 """
@@ -26,11 +26,11 @@ class Tracker:
 class WandbTracker(Tracker):
     """Log config and per-round metrics to Weights & Biases.
 
-    ``pip install rigfl[wandb]``; run with ``--wandb`` (and ``--wandb-project``).
+    Install with ``pip install rigfl[wandb]`` and enable it in the experiment configuration.
     """
 
     def __init__(self, project: str, config: dict, name: str | None = None):
-        import wandb                          # lazy -- only needed when --wandb is used
+        import wandb                          # lazy -- only needed when tracking is enabled
         self.run = wandb.init(project=project, config=config, name=name)
         self.resources = None
 

@@ -98,7 +98,7 @@ def _validate_axes(exp_axes: dict, algorithm_axes: dict, algorithms: list[str],
     for field in exp_axes:
         if field not in known_exp:
             raise SystemExit(
-                f'Unknown sweep axis: exp.{field}\n'
+                f'Unknown sweep axis: experiment.{field}\n'
                 f'ExperimentConfig has no field "{field}".'
                 f'{_suggest(field, known_exp)}\n\n'
                 f'Known experiment fields: {", ".join(sorted(known_exp))}')
@@ -107,7 +107,7 @@ def _validate_axes(exp_axes: dict, algorithm_axes: dict, algorithms: list[str],
             for name in algorithms
         ):
             raise SystemExit(
-                f"Sweep axis exp.{field} does not apply to any selected algorithm."
+                f"Sweep axis experiment.{field} does not apply to any selected algorithm."
             )
 
     # Fixed algorithm settings follow the same validation as algorithm axes.
@@ -121,9 +121,9 @@ def _validate_axes(exp_axes: dict, algorithm_axes: dict, algorithms: list[str],
 
 
 _REPLICATE_PATHS = {
-    "partition_seed": "exp.partition_seed",
-    "split_seed": "exp.split_seed",
-    "experiment_seed": "exp.seed",
+    "partition_seed": "experiment.partition_seed",
+    "split_seed": "experiment.split_seed",
+    "experiment_seed": "experiment.seed",
 }
 
 
@@ -270,8 +270,8 @@ def _validate_biosilo_partitions(grid: list[dict]) -> None:
 def build_grid(spec: dict) -> list[dict]:
     """Expand a sweep spec into a flat list of per-task configs.
 
-    Each task = {algorithm, experiment: {...}, algorithm_config: {...}}. Axis keys: 'algorithm',
-    an experiment field (bare or 'exp.x'), or 'algorithm.x' (algorithm-specific).
+    Each task = {algorithm, experiment: {...}, algorithm_config: {...}}. Axis keys
+    use 'experiment.x' or 'algorithm.x'.
 
     An ``algorithm.x`` axis only multiplies the grid for algorithms that actually have
     field ``x``; for algorithms without it, that axis collapses to a single entry. So
@@ -323,8 +323,8 @@ def expand(spec: dict) -> tuple[list[dict], dict | None]:
         declared_axes.add(axis)
         if axis.startswith("algorithm."):
             algorithm_axes[axis[len("algorithm."):]] = resolved_values
-        elif axis.startswith("exp."):
-            exp_axes[axis[len("exp."):]] = resolved_values
+        elif axis.startswith("experiment."):
+            exp_axes[axis[len("experiment."):]] = resolved_values
         else:
             raise SystemExit(f"Internal error: non-canonical sweep axis {axis!r}.")
 
@@ -339,7 +339,11 @@ def expand(spec: dict) -> tuple[list[dict], dict | None]:
             if model_has_path(config_model, k)
         }
         ignored = set(algorithm_spec(algorithm).ignored_experiment_fields)
-        axes = {f"exp::{k}": v for k, v in exp_axes.items() if k not in ignored}
+        axes = {
+            f"experiment::{k}": v
+            for k, v in exp_axes.items()
+            if k not in ignored
+        }
         axes.update({f"algorithm::{k}": v for k, v in m_axes.items()})
         keys = list(axes)
         for combo in itertools.product(*(axes[k] for k in keys)):   # () once when no axes
@@ -351,7 +355,7 @@ def expand(spec: dict) -> tuple[list[dict], dict | None]:
                 mcfg = filter_for_model(base_algorithm, config_model)
                 for key, val in zip(keys, combo):
                     kind, field = key.split("::", 1)
-                    if kind == "exp":
+                    if kind == "experiment":
                         nested_set(exp, field, val)
                     else:
                         nested_set(mcfg, field, val)
@@ -440,7 +444,10 @@ def run_config(task: dict, out_dir: Path, *, dry_run: bool = False,
     cfg = resolve_algorithm_config(name, exp, cfg)
     out_dir.mkdir(parents=True, exist_ok=True)
     if dry_run:
-        print(f"{task_label}: {name}  exp={exp.model_dump()}  algorithm={cfg.model_dump()}")
+        print(
+            f"{task_label}: {name}  experiment={exp.model_dump()}  "
+            f"algorithm={cfg.model_dump()}"
+        )
         return None
     # Non-dry tasks resolved the experiment data (including canonical client
     # models) above; only that resolved form is eligible for run identity.
@@ -479,7 +486,7 @@ def _spec_from_args(args) -> dict:
         spec = yaml.safe_load(Path(args.config).read_text()) or {}
         spec.setdefault("name", Path(args.config).stem)
         return spec
-    sweep = {"seed": args.seeds}
+    sweep = {"experiment.seed": args.seeds}
     for s in args.sweep:                                     # --sweep algorithm.lamda=0.1,1,10
         key, vals = s.split("=", 1)
         sweep[key] = vals

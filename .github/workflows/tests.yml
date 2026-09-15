@@ -58,6 +58,25 @@ jobs:
           test -f /tmp/rigfl-wheel-project/experiments/cifar10_run.yaml
           test -f /tmp/rigfl-wheel-project/.gitignore
 
+  configuration-docs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test,hpo]" "graphroute==0.1.5"
+
+      - name: Check generated configuration reference
+        run: |
+          python scripts/generate_config_reference.py --check
+          pytest -q tests/test_config_docs.py
+
   biosilo:
     runs-on: ubuntu-latest
 
