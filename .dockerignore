@@ -2,15 +2,10 @@
 .github
 .pytest_cache
 .ruff_cache
-.terraform
-**/.terraform
 .venv
 __pycache__
 *.egg-info
 *.py[cod]
-*.tfplan
-*.tfstate
-*.tfstate.*
 
 artifacts
 build

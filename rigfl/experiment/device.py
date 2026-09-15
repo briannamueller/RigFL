@@ -1,7 +1,7 @@
 """Resolve a device string to a ``torch.device``.
 
-``auto`` prefers CUDA (the HPC), then Apple MPS (local Mac), then CPU -- so the
-same command runs unchanged on the cluster and on a laptop.
+``auto`` prefers CUDA, then Apple MPS, then CPU, allowing the same configuration
+to run across supported hardware.
 """
 
 from __future__ import annotations

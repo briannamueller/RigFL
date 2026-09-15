@@ -1,12 +1,6 @@
 # Python
 __pycache__/
 
-# Terraform working data and state
-**/.terraform/*
-*.tfstate
-*.tfstate.*
-*.tfplan
-crash.log
 *.py[cod]
 *.egg-info/
 .eggs/
@@ -32,7 +26,7 @@ checkpoints/
 pool_cache/
 .pytest_cache/
 
-# Data & model artifacts (datasets stay on the HPC; never local)
+# Generated data and model artifacts
 /data/
 *.pt
 *.pth

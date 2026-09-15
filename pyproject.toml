@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rigfl"
-version = "0.1.3"
+version = "0.1.4"
 description = "A modular research framework for rigorous federated learning experimentation"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
@@ -13,7 +13,7 @@ license-files = ["LICENSE", "licenses/*", "THIRD_PARTY_NOTICES.md"]
 authors = [{ name = "Brianna Mueller" }]
 dependencies = [
     "numpy<2",               # torch 2.0.x is built against numpy 1.x
-    "torch",                 # on the HPC, install the CUDA build that matches the cluster first
+    "torch",
     "filelock",
     "flwr-datasets[vision]>=0.6,<0.7",
     "pydantic>=2",           # typed, validated config (experiment + per-algorithm)
@@ -38,7 +38,6 @@ rigfl = "rigfl.cli:main"
 wandb = ["wandb"]                # optional experiment tracking (rigfl.experiment.run --wandb)
 biosilo = ["biosilo>=0.1.2,<0.2"]
 hpo = ["optuna>=4,<5"]
-aws = ["boto3>=1.43,<2"]
 test = ["pytest"]
 
 [tool.setuptools.packages.find]
