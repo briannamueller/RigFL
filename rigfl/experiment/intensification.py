@@ -40,6 +40,37 @@ def _validation_value(record: dict, selection: dict, view: str) -> float:
     return float(value)
 
 
+def _replicate_validation(record: dict, selection: dict, view: str) -> dict:
+    experiment = record["config"]["experiment"]
+    return {
+        "partition_seed": experiment.get("partition_seed"),
+        "split_seed": experiment.get("split_seed"),
+        "experiment_seed": experiment["seed"],
+        "value": _validation_value(record, selection, view),
+    }
+
+
+def _screening_records(item: dict, results_dir: Path) -> list[dict]:
+    """The screening runs that put one candidate on the shortlist.
+
+    Pooled ranking reads them again; missing files are fatal rather than a
+    quiet fall back to fewer replicates, which would rank candidates against
+    unequal evidence.
+    """
+    records = []
+    for source in item["screening_result_files"]:
+        path = results_dir / Path(source).name
+        if not path.exists():
+            raise SystemExit(
+                f"pooled ranking needs screening run {path.name} for candidate "
+                f"{item['candidate_id']}, which is not in {results_dir}"
+            )
+        record = read_json(path)
+        record["_source_file"] = str(path)
+        records.append(record)
+    return records
+
+
 def _resource_mean(records: list[dict], preference: str) -> float | None:
     values = []
     for record in records:
@@ -137,6 +168,9 @@ def _intensify_shortlist(
     *,
     run_missing: bool,
 ) -> dict:
+    view = shortlist["selection_view"]
+    pooled = plan["ranking"] == "pooled"
+    basis = "pooled_validation" if pooled else "intensification_validation"
     candidates = []
     for item in shortlist["configurations"]:
         records = _run_configuration(
@@ -146,19 +180,9 @@ def _intensify_shortlist(
             run_missing=run_missing,
         )
         candidate = dict(item)
-        validation_by_replicate = []
-        for record in records:
-            experiment = record["config"]["experiment"]
-            validation_by_replicate.append(
-                {
-                    "partition_seed": experiment.get("partition_seed"),
-                    "split_seed": experiment.get("split_seed"),
-                    "experiment_seed": experiment["seed"],
-                    "value": _validation_value(
-                        record, selection, shortlist["selection_view"]
-                    ),
-                }
-            )
+        validation_by_replicate = [
+            _replicate_validation(record, selection, view) for record in records
+        ]
         candidate["intensification_validation"] = {
             "mean": statistics.mean(
                 replicate["value"] for replicate in validation_by_replicate
@@ -169,24 +193,36 @@ def _intensify_shortlist(
             record["_source_file"] for record in records
         ]
         candidate["_records"] = records
+        ranking_records = records
+        if pooled:
+            screening = _screening_records(item, results_dir)
+            by_replicate = [
+                _replicate_validation(record, selection, view)
+                for record in screening
+            ] + validation_by_replicate
+            candidate["pooled_validation"] = {
+                "mean": statistics.mean(
+                    replicate["value"] for replicate in by_replicate
+                ),
+                "per_replicate": by_replicate,
+            }
+            ranking_records = screening + records
+        candidate["_ranking_records"] = ranking_records
         candidates.append(candidate)
 
     reverse = selection["direction"] == "maximize"
-    candidates.sort(
-        key=lambda item: item["intensification_validation"]["mean"],
-        reverse=reverse,
-    )
+    candidates.sort(key=lambda item: item[basis]["mean"], reverse=reverse)
     leader = candidates[0]
     comparisons = []
     for candidate in candidates[1:]:
         comparisons.append(
             compare_configurations(
-                leader["_records"],
-                candidate["_records"],
+                leader["_ranking_records"],
+                candidate["_ranking_records"],
                 selection["metric"],
                 left_label=f"candidate_{leader['candidate_id']}",
                 right_label=f"candidate_{candidate['candidate_id']}",
-                view=shortlist["selection_view"],
+                view=view,
                 aggregation=selection["client_aggregation"],
                 tie_break=selection["round_tie_break"],
                 practical_threshold=plan["practical_threshold"],
@@ -242,18 +278,24 @@ def _intensify_shortlist(
                 scored, key=lambda item: (item[0], item[1]["candidate_id"])
             )[1]
 
+    basis_label = (
+        "pooled screening and intensification validation score"
+        if pooled
+        else "intensification validation score"
+    )
     selected_because = (
         f"lowest {plan['prefer']} among candidates demonstrated to be practically "
         "equivalent to the validation leader"
         if selected["candidate_id"] != leader["candidate_id"]
-        else "highest intensification validation score"
+        else f"highest {basis_label}"
         if selection["direction"] == "maximize"
-        else "lowest intensification validation score"
+        else f"lowest {basis_label}"
     )
     clean_candidates = []
     for candidate in candidates:
         saved = dict(candidate)
         saved.pop("_records")
+        saved.pop("_ranking_records")
         clean_candidates.append(saved)
     return {
         "group_id": shortlist["group_id"],
@@ -305,7 +347,7 @@ def finalize_intensification(
             for path in group["selected_result_files"]
         ]
     artifact = {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "rigfl.tuning_intensification_evaluation",
         "ranking": str(ranking_path),
         "selection_protocol": {
@@ -315,6 +357,7 @@ def finalize_intensification(
             "practical_threshold": plan["practical_threshold"],
             "tail_fraction": plan["tail_fraction"],
             "equivalent_preference": plan["prefer"],
+            "ranking_basis": plan["ranking"],
         },
         "groups": groups,
     }

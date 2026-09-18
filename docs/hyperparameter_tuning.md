@@ -192,6 +192,7 @@ tuning:
       - {partition_seed: 12, split_seed: 12, experiment_seed: 12}
     practical_threshold: 0.005
     prefer: validation
+    ranking: pooled
 ```
 
 After the initial study, RigFL writes the additional tasks to:
@@ -225,8 +226,14 @@ python -m rigfl.experiment.intensification \
   --ranking results/<study-name>/ranking.json
 ```
 
-The leading candidate is determined from validation performance on the new
-replicates. `practical_threshold` defines how close another candidate must be to
+`ranking` sets which replicates the shortlisted candidates are ranked on.
+`pooled`, the default, ranks each candidate on its screening and intensification
+replicates together. `intensification` ranks on the new replicates alone, which
+keeps shortlisting and ranking on separate data conditions at the cost of half
+the evidence. Pooled ranking reads the screening results again, so they must
+still be in `results/runs/`.
+
+`practical_threshold` defines how close another candidate must be to
 the leader to be treated as practically equivalent. `prefer` may remain
 `validation`, or may select the lowest communication, FLOPs, or runtime among
 the candidates found to be practically equivalent. Runtime can be compared only
