@@ -324,15 +324,13 @@ def _point_metrics(
     ]
     harm = [-gain for gain in gains if gain < -threshold]
     benefit_count = sum(gain > threshold for gain in gains)
-    harm_count = len(harm)
     count = len(gains)
     tail_count = max(1, math.ceil(tail_fraction * count))
     return {
         "mean_gain": statistics.mean(run_gains),
         "median_gain": statistics.median(run_gains),
         "benefit_rate": benefit_count / count,
-        "neutral_rate": (count - benefit_count - harm_count) / count,
-        "harm_rate": harm_count / count,
+        "harm_rate": len(harm) / count,
         "harm_magnitude": statistics.mean(harm) if harm else None,
         "harm_burden": sum(harm) / count,
         "worst_tail_gain": statistics.mean(sorted(gains)[:tail_count]),
@@ -740,12 +738,6 @@ def format_comparisons(comparisons: list[dict]) -> str:
             )
             + " |"
         )
-    impact = [
-        "",
-        "### Client impact",
-        "| data | contrast | benefit | neutral | harm | harm magnitude | harm burden | worst-tail gain |",
-        "|---|---|---:|---:|---:|---:|---:|---:|",
-    ]
     resources = [
         "",
         "### Resource differences",
@@ -756,26 +748,6 @@ def format_comparisons(comparisons: list[dict]) -> str:
     for comparison in comparisons:
         left = comparison["left"]["label"]
         right = comparison["right"]["label"]
-        effect = comparison["effects"]
-        impact.append(
-            "| "
-            + " | ".join(
-                [
-                    (
-                        f"{comparison['data_condition']['dataset']} / "
-                        f"{comparison['data_condition']['configuration_hash']}"
-                    ),
-                    f"{left} − {right}",
-                    f"{effect['benefit_rate']['estimate'] * 100:.1f}%",
-                    f"{effect['neutral_rate']['estimate'] * 100:.1f}%",
-                    f"{effect['harm_rate']['estimate'] * 100:.1f}%",
-                    _format_optional(effect["harm_magnitude"]["estimate"]),
-                    _format_optional(effect["harm_burden"]["estimate"]),
-                    _format_optional(effect["worst_tail_gain"]["estimate"]),
-                ]
-            )
-            + " |"
-        )
         resource_values = []
         for name in ("communication_bytes", "flops", "wall_seconds"):
             value = comparison["resources"].get(name, {})
@@ -799,10 +771,9 @@ def format_comparisons(comparisons: list[dict]) -> str:
             )
             + " |"
         )
-    rendered = [*out, *impact]
     if any_resources:
-        rendered.extend(resources)
-    return "\n".join(rendered)
+        out.extend(resources)
+    return "\n".join(out)
 
 
 def _format_optional(value) -> str:

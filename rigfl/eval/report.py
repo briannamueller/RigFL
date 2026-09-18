@@ -169,7 +169,7 @@ def summarize(records: list[dict], metric: str, *, view: str = "global",
     """
     if len({_algorithm_configuration(record) for record in records}) > 1:
         raise ValueError("summary requires one algorithm configuration")
-    _records_by_seed(records, "summary")
+    replicates = _records_by_seed(records, "summary")
     name = canonical(metric)
     sels = [selection_for(r, name, view=view, aggregation=aggregation,
                           tie_break=tie_break) for r in records]
@@ -221,6 +221,11 @@ def summarize(records: list[dict], metric: str, *, view: str = "global",
         "selected_steps": steps,
         "seeds": len(experiment_seeds),
         "runs": len(records),
+        "replicate_conditions": [
+            {"partition_seed": partition, "split_seed": split,
+             "experiment_seed": seed}
+            for partition, split, seed in sorted(replicates, key=str)
+        ],
         "independent_replicates": replicate_independence,
         "confidence_intervals_available": intervals_available,
         "confidence_interval_reason": (
@@ -365,18 +370,20 @@ def format_table(rows: dict, metric: str) -> str:
     )
     any_single = any(s.get("confidence_interval_reason") == "fewer than two runs"
                      for s in rows.values())
+    has_grid = any(s.get("expected_runs") is not None for s in rows.values())
+    runs_heading = "runs (done/expected)" if has_grid else "runs"
 
     if higher_better:
         out = [
             (
                 f"| algorithm | selection | val {name} | test {name} | p10 | "
-                "bottom-10% | seeds | runs |"
+                f"bottom-10% | seeds | {runs_heading} |"
             ),
             "|---|---|---|---|---|---|---:|---:|",
         ]
     else:
         out = [
-            f"| algorithm | selection | val {name} | test {name} | seeds | runs |",
+            f"| algorithm | selection | val {name} | test {name} | seeds | {runs_heading} |",
             "|---|---|---|---|---:|---:|",
         ]
     for label, s in rows.items():
@@ -395,7 +402,10 @@ def format_table(rows: dict, metric: str) -> str:
             bulk = s.get(f"bottom_10pct_mean_{name}")
             cells.extend([f"{tail:.3f}" if tail is not None else "—",
                           f"{bulk:.3f}" if bulk is not None else "—"])
-        cells.extend([str(s["seeds"]), str(s["runs"])])
+        runs = str(s["runs"])
+        if s.get("expected_runs") is not None:
+            runs += f"/{s['expected_runs']}"
+        cells.extend([str(s["seeds"]), runs])
         out.append("| " + " | ".join(cells) + " |")
     if any_mixed:
         out += [
@@ -441,6 +451,23 @@ def format_table(rows: dict, metric: str) -> str:
             ),
         ]
     return "\n".join(out)
+
+
+def format_replicate_details(rows: dict) -> str:
+    """List completed and missing seed combinations for each result row."""
+    lines = ["Completed seeds (partition, split, experiment):"]
+
+    def render(conditions: list[dict]) -> str:
+        return ", ".join(
+            f"({item['partition_seed']}, {item['split_seed']}, {item['experiment_seed']})"
+            for item in conditions
+        ) or "none"
+
+    for label, summary in rows.items():
+        lines.append(f"- {label}: {render(summary['replicate_conditions'])}")
+        if summary.get("missing_replicates"):
+            lines.append(f"  - missing: {render(summary['missing_replicates'])}")
+    return "\n".join(lines)
 
 
 def _format_interval(mean: float, interval: float | None) -> str:

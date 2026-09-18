@@ -87,7 +87,6 @@ def test_profile_separates_frequency_magnitude_and_burden():
     )
 
     assert _estimate(summary, "benefit_rate") == 0.25
-    assert _estimate(summary, "neutral_rate") == 0.5
     assert _estimate(summary, "negative_transfer_rate") == 0.25
     assert _estimate(summary, "negative_transfer_magnitude") == pytest.approx(0.2)
     assert _estimate(summary, "negative_transfer_burden") == pytest.approx(0.05)
@@ -235,7 +234,7 @@ def test_tables_present_the_summary_and_optional_profile():
     )
     rows = {"fedavg": {"negative_transfer": summary}}
     table = format_negative_transfer_table(rows)
-    assert "negative transfer" in table
+    assert "| benefit rate | NTR | NTM | NTB |" in table
     assert "100.0%" in table
     assert "worst-10% gain" in table
     profile = format_negative_transfer_profile(rows)

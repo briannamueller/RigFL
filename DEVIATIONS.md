@@ -8,7 +8,7 @@ affect interpretation or comparability are listed here.
 | **FedAvg / FedProx** | Every client participates in every round. | The current shared round loop has no client-sampling policy. The update is faithful to full-participation FedAvg/FedProx, but experiments do not reproduce partial-participation settings from the papers. |
 | **FedAvg / FedProx** | Non-floating model state is copied from the client with the largest local sample count (first client wins ties). | Integer buffers such as BatchNorm's `num_batches_tracked` cannot be sample-weight averaged without inventing a non-client integer value. Floating parameters and buffers remain sample-count weighted. |
 | **FedProx** | Clients perform a fixed configured number of local epochs. | This implements the proximal objective but not the paper's systems-heterogeneity experiments with variable work or its abstract gamma-inexact local solver. |
-| **FedProto / FedTGP** | Predictive probabilities are `softmax(-d)` over Euclidean prototype distances. | The papers define nearest-prototype labels but not probabilities. This preserves the paper's decision rule and supplies a predictive loss for evaluation and early stopping. Its scale follows the learned representation, so compare this loss within a run rather than as a calibrated score across algorithms or architectures. |
+| **FedProto / FedTGP** | RigFL adds predictive probabilities that the papers do not specify. | See [Prototype loss interpretation](#prototype-loss-interpretation) for how these probabilities affect evaluation. |
 | **FedProto** | Prototypes are computed in a clean pass after local training. | Some implementations accumulate them during training, which averages features from a model that was still moving. |
 | **FedGH** | The global header is trained on the server, per Algorithm 1 / Eq. 4. | Comparisons should verify that the server optimizer updates the header. |
 | **LG-FedAvg** | Trains from scratch. | The original's released scripts warm-start from an 800–1800-round FedAvg checkpoint and then run 500 LG rounds. From-scratch is a weaker configuration, so this number is not comparable to the paper's. |
@@ -19,11 +19,6 @@ affect interpretation or comparability are listed here.
 | **FedKD** | SGD rather than Adam. | The paper's learning rates (2e-6 / 5e-6) are tuned for a Transformer on NLP tasks and do not transfer to a CNN pool. |
 | **FML / FedKD** | Applied to a heterogeneous architecture pool. | Both originals assume an identical shared component across clients (a meme model, a mentee). Using them across genuinely different backbones is a generalization beyond their original setting. |
 | **LG-FedAvg** | Applied to a heterogeneous architecture pool. | The original's main experiments use one architecture for every client. |
-
-## Configuration
-
-Optimizer hyperparameters are set per experiment and may be overridden by a
-sweep. The resolved values are stored with each result.
 
 ## Prototype loss interpretation
 

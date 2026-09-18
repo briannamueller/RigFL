@@ -1,8 +1,8 @@
-"""Aggregate completed runs into multi-seed tables and tuning rankings.
+"""Aggregate completed runs into multi-seed tables.
 
     python -m rigfl.experiment.collect
 
-Use ``--group-by`` to label hyperparameter variants:
+Use ``--group-by`` to choose explicit labels for hyperparameter variants:
 
     python -m rigfl.experiment.collect --results-dir results/runs \
         --group-by algorithm.graphroute.graph.k algorithm.graphroute.gnn.arch
@@ -17,6 +17,7 @@ from pathlib import Path
 
 from rigfl.eval.metrics import direction_of
 from rigfl.eval.report import (
+    format_replicate_details,
     format_resource_table,
     format_table,
     independent_replicates,
@@ -45,7 +46,7 @@ from rigfl.experiment.config import (
 from rigfl.experiment.config import hashable as _hashable
 from rigfl.experiment.paths import nested_get
 from rigfl.experiment.registry import ALL_ALGORITHMS
-from rigfl.experiment.storage import records_for_grid
+from rigfl.experiment.storage import read_grid_tasks, record_matches_task
 
 
 def load_results(results_dir: Path, dataset: str | None, *, ignore_invalid: bool = False,
@@ -81,17 +82,10 @@ def load_results(results_dir: Path, dataset: str | None, *, ignore_invalid: bool
     if problems:
         listing = "\n".join(f"  {name}\n    {reason}" for name, reason in problems)
         if not ignore_invalid:
+            noun = "file" if len(problems) == 1 else "files"
             raise SystemExit(
-                f"[collect] {len(problems)} result file(s) in {results_dir} cannot be "
-                f"read as completed runs:\n{listing}\n\n"
-                f"No table or ranking was produced: a summary computed over an "
-                f"unknown subset of the runs is not the summary it claims to be. "
-                f"The files were not modified. Re-run those configurations, or pass "
-                f"--ignore-invalid to proceed with the rest -- the ignored files and "
-                f"reasons are then recorded in every artifact this produces.")
-        print(f"\n!! [collect] --ignore-invalid: {len(problems)} result file(s) were "
-              f"NOT read:\n{listing}\n!! Any candidate whose replicate is among "
-              f"them stays missing, not complete.\n")
+                f"[collect] strict mode stopped: {len(problems)} invalid result "
+                f"{noun} in {results_dir}:\n{listing}")
     return by_algorithm
 
 
@@ -138,6 +132,32 @@ def algorithm_variant(rec: dict) -> tuple:
     return tuple(sorted((k, _hashable(v)) for k, v in cfg.items()))
 
 
+def algorithm_fields(rec: dict) -> dict[str, object]:
+    """Flatten an algorithm's settings for row labels."""
+    fields: dict[str, object] = {}
+
+    def add(path: str, value: object) -> None:
+        if isinstance(value, dict) and value:
+            for key, child in value.items():
+                add(f"{path}.{key}", child)
+        else:
+            fields[path] = value
+
+    for key, value in algorithm_identity(rec.get("config", {}).get("algorithm", {})).items():
+        add(key, value)
+    return fields
+
+
+def varying_algorithm_fields(records: list[dict]) -> list[str]:
+    """Algorithm settings that differ among configurations of one experiment."""
+    flattened = [algorithm_fields(rec) for rec in records]
+    keys = set().union(*(fields.keys() for fields in flattened))
+    return sorted(
+        key for key in keys
+        if len({(key in fields, _hashable(fields.get(key))) for fields in flattened}) > 1
+    )
+
+
 def varying_fields(records: list[dict]) -> list[str]:
     """Condition fields that differ across these records."""
     seen: dict[str, set] = {}
@@ -172,8 +192,57 @@ def _field(rec: dict, key: str):
     return nested_get(cfg, field)
 
 
+def _add_row_details(summary: dict, records: list[dict],
+                     grid_tasks: list[dict] | None) -> None:
+    representative = records[0]
+    summary["dataset"] = representative.get("config", {}).get("experiment", {}).get("dataset")
+    summary["data_configuration_id"] = result_data_configuration_id(representative)
+    if grid_tasks is None:
+        return
+
+    seed_fields = {"partition_seed", "split_seed", "seed"}
+    expected = []
+    for task in grid_tasks:
+        without_seeds = {
+            **task,
+            "experiment": {
+                key: value for key, value in task.get("experiment", {}).items()
+                if key not in seed_fields
+            },
+        }
+        if record_matches_task(representative, without_seeds):
+            expected.append(task)
+
+    summary["expected_runs"] = len(expected)
+    summary["missing_replicates"] = [
+        {
+            "partition_seed": task.get("experiment", {}).get("partition_seed"),
+            "split_seed": task.get("experiment", {}).get("split_seed"),
+            "experiment_seed": task.get("experiment", {}).get("seed"),
+        }
+        for task in expected
+        if not any(record_matches_task(record, task) for record in records)
+    ]
+
+
+def _sort_rows_by_validation(rows: dict[str, dict], metric: str) -> dict[str, dict]:
+    """Sort scores only within each seed-independent data configuration."""
+    sign = -1 if direction_of(metric) == "maximize" else 1
+    return dict(sorted(
+        rows.items(),
+        key=lambda item: (
+            item[1].get("dataset") or "",
+            item[1]["data_configuration_id"],
+            item[1]["selection_view"],
+            sign * item[1]["val_mean"],
+            item[0],
+        ),
+    ))
+
+
 def _rows_by_algorithm(by_algorithm: dict[str, list[dict]], metric: str, *, view: str,
                     aggregation: str, tie_break: str,
+                    grid_tasks: list[dict] | None = None,
                     include_resources: bool = False,
                     include_transfer: bool = True,
                     transfer_threshold: float = 0.0,
@@ -201,11 +270,18 @@ def _rows_by_algorithm(by_algorithm: dict[str, list[dict]], metric: str, *, view
             variants: dict[tuple, list[dict]] = defaultdict(list)
             for r in recs:
                 variants[algorithm_variant(r)].append(r)
-            for i, (_, vrecs) in enumerate(sorted(variants.items(), key=lambda kv: str(kv[0]))):
-                label = name + (f" (variant {i + 1})" if len(variants) > 1 else "") + exp_suffix
+            changed = varying_algorithm_fields([records[0] for records in variants.values()])
+            for _, vrecs in sorted(variants.items(), key=lambda kv: str(kv[0])):
+                algorithm_values = algorithm_fields(vrecs[0])
+                details = " ".join(
+                    f"{key}={algorithm_values.get(key, '<unset>')}"
+                    for key in changed
+                )
+                label = name + (f" {details}" if details else "") + exp_suffix
                 summary = summarize(vrecs, metric, view=view, aggregation=aggregation,
                                     tie_break=tie_break,
                                     include_resources=include_resources)
+                _add_row_details(summary, vrecs, grid_tasks)
                 if include_transfer and local_records and name != "local":
                     summary["negative_transfer"] = _negative_transfer(
                         vrecs,
@@ -220,12 +296,13 @@ def _rows_by_algorithm(by_algorithm: dict[str, list[dict]], metric: str, *, view
                         include_uncertainty=independent_replicates(vrecs),
                     )
                 rows[label] = summary
-    return rows
+    return _sort_rows_by_validation(rows, metric)
 
 
 def _rows_by_group(by_algorithm: dict[str, list[dict]], group_by: list[str], metric: str,
-                   *, view: str, aggregation: str, tie_break: str,
-                   include_resources: bool = False,
+                    *, view: str, aggregation: str, tie_break: str,
+                    grid_tasks: list[dict] | None = None,
+                    include_resources: bool = False,
                    include_transfer: bool = True,
                    transfer_threshold: float = 0.0,
                    transfer_profile: tuple[float, ...] = (),
@@ -258,6 +335,7 @@ def _rows_by_group(by_algorithm: dict[str, list[dict]], group_by: list[str], met
             records, metric, view=view, aggregation=aggregation,
             tie_break=tie_break, include_resources=include_resources,
         )
+        _add_row_details(summary, records, grid_tasks)
         if include_transfer and records[0]["algorithm"] != "local":
             condition = experiment_condition(records[0])
             local_records = [
@@ -279,7 +357,7 @@ def _rows_by_group(by_algorithm: dict[str, list[dict]], group_by: list[str], met
                     include_uncertainty=independent_replicates(records),
                 )
         rows[label] = summary
-    return rows
+    return _sort_rows_by_validation(rows, metric)
 
 
 def _records_supporting(by_algorithm: dict[str, list[dict]], view: str) -> dict[str, list[dict]]:
@@ -293,12 +371,6 @@ def _records_supporting(by_algorithm: dict[str, list[dict]], view: str) -> dict[
                 "selection_views_supported", ["global", "per-client"])
         ])
     }
-
-
-def rank_candidates(rows: dict, metric: str, direction: str) -> list[tuple[str, float]]:
-    """Order hyperparameter candidates by validation score."""
-    scored = [(label, s["val_mean"]) for label, s in rows.items()]
-    return sorted(scored, key=lambda kv: kv[1], reverse=(direction == "maximize"))
 
 
 def _nonnegative_float(value: str) -> float:
@@ -327,6 +399,14 @@ def _collection_rows(rows: dict) -> tuple[dict, dict]:
     return performance, transfer
 
 
+def _invalid_results_notice(ignored: list[dict]) -> str:
+    noun = "file" if len(ignored) == 1 else "files"
+    return (f"**Warning:** Excluded {len(ignored)} invalid result {noun}. "
+            "The report uses the remaining runs.\n\n" + "\n".join(
+                f"- `{item['file']}` — {item['reason']}" for item in ignored
+            ))
+
+
 def _negative_transfer(algorithm_records: list[dict], local_records: list[dict],
                        metric: str, **options) -> dict:
     try:
@@ -348,9 +428,8 @@ def main() -> None:
     p.add_argument("--grid", help="include only runs in this saved grid.jsonl")
     p.add_argument("--dataset", default=None)
     p.add_argument("--group-by", nargs="*", default=None,
-                   help="fields to group rows by, e.g. algorithm.graphroute.graph.k "
-                        "algorithm.graphroute.gnn.arch "
-                        "(default: one row per algorithm)")
+                   help="override automatic row labels with these fields; include "
+                        "every differing algorithm setting")
     p.add_argument("--selection-metric", default=None,
                    help="metric that chooses the reported round, on VALIDATION. "
                         "Default: accuracy. accuracy | balanced_accuracy | "
@@ -363,21 +442,17 @@ def main() -> None:
     p.add_argument("--selection-aggregation", choices=["mean", "weighted_mean"],
                    default=None, help="how the global view combines clients")
     p.add_argument("--tie-break", choices=["earliest", "latest"], default=None)
-    p.add_argument("--rank", action="store_true",
-                   help="order the displayed result rows by validation score")
-    p.add_argument("--ignore-invalid", action="store_true",
-                   help="proceed when some result files cannot be read as completed "
-                        "runs. Off by default: a table over an unknown subset of the "
-                        "runs is not the table it claims to be. The ignored files and "
-                        "reasons are recorded in every artifact produced.")
+    p.add_argument("--strict-results", action="store_true",
+                   help="stop if any result file is invalid")
     p.add_argument("--out", default=None, help="also write the markdown table here")
     p.add_argument("--out-json", default=None,
                    help="write the collection artifact (both views, full provenance)")
     p.add_argument("--include-resources", action="store_true",
                    help="print communication, estimated FLOPs, and training time")
-    p.add_argument("--negative-transfer-threshold", type=_nonnegative_float,
+    p.add_argument("--performance-margin", type=_nonnegative_float,
                    default=0.0, metavar="DELTA",
-                   help="smallest change treated as a benefit or harm, in metric "
+                   help="smallest difference from Local counted as a benefit or "
+                        "negative transfer, in metric "
                         "units (default: 0)")
     p.add_argument("--negative-transfer-profile", nargs="*", type=_nonnegative_float,
                    default=[], metavar="DELTA",
@@ -389,19 +464,28 @@ def main() -> None:
 
     invalid: list[tuple[str, str]] = []
     by_algorithm = load_results(Path(args.results_dir), args.dataset,
-                                ignore_invalid=args.ignore_invalid, invalid=invalid)
+                                ignore_invalid=not args.strict_results, invalid=invalid)
+    grid_tasks = None
     if args.grid:
         try:
-            filtered = records_for_grid(
-                [record for records in by_algorithm.values() for record in records],
-                args.grid,
-            )
+            grid_tasks = read_grid_tasks(args.grid)
         except ValueError as error:
             raise SystemExit(f"[collect] {error}") from error
+        filtered = [
+            record for records in by_algorithm.values() for record in records
+            if any(record_matches_task(record, task) for task in grid_tasks)
+        ]
         by_algorithm = defaultdict(list)
         for record in filtered:
             by_algorithm[record["algorithm"]].append(record)
     ignored = [{"file": name, "reason": reason} for name, reason in invalid]
+    if ignored:
+        listing = "\n".join(
+            f"  {item['file']}\n    {item['reason']}" for item in ignored
+        )
+        noun = "file" if len(ignored) == 1 else "files"
+        print(f"\n[collect] WARNING: excluded {len(ignored)} invalid result "
+              f"{noun}; the report uses the remaining runs:\n{listing}\n")
     if not by_algorithm:
         print(f"no results found in {args.results_dir}")
         return
@@ -419,14 +503,16 @@ def main() -> None:
         rows = (_rows_by_group(
                     source, args.group_by, metric, view=v,
                     aggregation=aggregation, tie_break=tie_break,
-                    transfer_threshold=args.negative_transfer_threshold,
+                    grid_tasks=grid_tasks,
+                    transfer_threshold=args.performance_margin,
                     transfer_profile=tuple(args.negative_transfer_profile),
                     transfer_tail=args.negative_transfer_tail)
                 if args.group_by else
                 _rows_by_algorithm(
                     source, metric, view=v,
                     aggregation=aggregation, tie_break=tie_break,
-                    transfer_threshold=args.negative_transfer_threshold,
+                    grid_tasks=grid_tasks,
+                    transfer_threshold=args.performance_margin,
                     transfer_profile=tuple(args.negative_transfer_profile),
                     transfer_tail=args.negative_transfer_tail))
         tables[v] = rows
@@ -434,29 +520,26 @@ def main() -> None:
               f"direction={direction_of(metric)}, aggregation={aggregation}, "
               f"tie_break={tie_break})")
         print(format_table(rows, metric))
+        print("\n" + format_replicate_details(rows))
         transfer_table = format_negative_transfer_table(rows)
         if transfer_table:
-            print("\n### negative transfer relative to Local")
+            print("\n### Client-level performance analysis")
             print(transfer_table)
         transfer_profile = format_negative_transfer_profile(rows)
         if transfer_profile:
             print("\n### negative-transfer rate profile")
             print(transfer_profile)
-        if args.rank:
-            print("\nranked by VALIDATION (test never ranks):")
-            for i, (label, score) in enumerate(rank_candidates(
-                    rows, metric, direction_of(metric)), 1):
-                print(f"  {i}. {label}  val {metric}={score:.4f}")
-
     resource_rows = None
     if args.include_resources:
         resource_rows = (
             _rows_by_group(by_algorithm, args.group_by, metric, view="global",
                            aggregation=aggregation, tie_break=tie_break,
+                           grid_tasks=grid_tasks,
                            include_resources=True, include_transfer=False)
             if args.group_by else
             _rows_by_algorithm(by_algorithm, metric, view="global",
                                aggregation=aggregation, tie_break=tie_break,
+                               grid_tasks=grid_tasks,
                                include_resources=True, include_transfer=False)
         )
         print("\n### resources: attributed training")
@@ -465,11 +548,12 @@ def main() -> None:
     if args.out:
         sections = []
         for v, rows in tables.items():
-            sections.append(f"### selection-view: {v}\n" + format_table(rows, metric))
+            sections.append(f"### selection-view: {v}\n" + format_table(rows, metric)
+                            + "\n\n" + format_replicate_details(rows))
             transfer_table = format_negative_transfer_table(rows)
             if transfer_table:
                 sections.append(
-                    f"### negative transfer relative to Local: {v}\n"
+                    f"### Client-level performance analysis: {v}\n"
                     + transfer_table
                 )
             transfer_profile = format_negative_transfer_profile(rows)
@@ -479,13 +563,11 @@ def main() -> None:
                     + transfer_profile
                 )
         body = "\n\n".join(sections)
+        if ignored:
+            body = _invalid_results_notice(ignored) + "\n\n" + body
         if resource_rows is not None:
             body += ("\n\n### resources: attributed training\n" +
                      format_resource_table(resource_rows))
-        if ignored:
-            body += ("\n\n**Ignored (--ignore-invalid):**\n"
-                     + "\n".join(
-                         f"- `{i['file']}` — {i['reason']}" for i in ignored))
         atomic_write_text(Path(args.out), body)
         print(f"\nwrote {args.out}")
 
@@ -507,15 +589,17 @@ def main() -> None:
             source = _records_supporting(by_algorithm, v)
             rows = (_rows_by_group(source, args.group_by, metric, view=v,
                                    aggregation=aggregation, tie_break=tie_break,
+                                   grid_tasks=grid_tasks,
                                    include_resources=args.include_resources,
-                                   transfer_threshold=args.negative_transfer_threshold,
+                                   transfer_threshold=args.performance_margin,
                                    transfer_profile=tuple(args.negative_transfer_profile),
                                    transfer_tail=args.negative_transfer_tail)
                     if args.group_by else
                     _rows_by_algorithm(source, metric, view=v,
                                        aggregation=aggregation, tie_break=tie_break,
+                                       grid_tasks=grid_tasks,
                                        include_resources=args.include_resources,
-                                       transfer_threshold=args.negative_transfer_threshold,
+                                       transfer_threshold=args.performance_margin,
                                        transfer_profile=tuple(args.negative_transfer_profile),
                                        transfer_tail=args.negative_transfer_tail))
             performance, transfer = _collection_rows(rows)

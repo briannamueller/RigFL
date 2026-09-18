@@ -6,7 +6,6 @@ import json
 from collections.abc import Mapping
 from pathlib import Path
 
-
 RUNS_DIRECTORY = "runs"
 
 
@@ -57,13 +56,18 @@ def record_matches_task(record: dict, task: dict) -> bool:
     )
 
 
-def records_for_grid(records: list[dict], grid_path: str | Path) -> list[dict]:
-    """Keep completed runs represented by a grid.jsonl task list."""
+def read_grid_tasks(grid_path: str | Path) -> list[dict]:
+    """Read the tasks in a saved sweep grid."""
     path = Path(grid_path)
     try:
-        tasks = [json.loads(line) for line in path.read_text().splitlines() if line]
+        return [json.loads(line) for line in path.read_text().splitlines() if line]
     except (OSError, json.JSONDecodeError) as error:
         raise ValueError(f"cannot read sweep grid {path}: {error}") from error
+
+
+def records_for_grid(records: list[dict], grid_path: str | Path) -> list[dict]:
+    """Keep completed runs represented by a grid.jsonl task list."""
+    tasks = read_grid_tasks(grid_path)
     return [
         record
         for record in records

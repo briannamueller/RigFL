@@ -198,7 +198,6 @@ def negative_transfer_summary(
         "uncertainty": uncertainty,
         "paired_gains": pairs,
         "benefit_rate": effects["benefit_rate"],
-        "neutral_rate": effects["neutral_rate"],
         "negative_transfer_rate": effects["harm_rate"],
         "negative_transfer_magnitude": effects["harm_magnitude"],
         "negative_transfer_burden": effects["harm_burden"],
@@ -255,15 +254,12 @@ def format_negative_transfer_table(rows: dict) -> str:
         else "worst-tail gain"
     )
     out = [
-        (
-            "| algorithm | selection | pairs | benefit | neutral | negative "
-            f"transfer | magnitude | burden | {tail_label} |"
-        ),
-        "|---|---|---:|---:|---:|---:|---:|---:|---:|",
+        f"| algorithm | selection | pairs | benefit rate | NTR | NTM | NTB | {tail_label} |",
+        "|---|---|---:|---:|---:|---:|---:|---:|",
     ]
     for label, summary in available:
         if not summary.get("available", True):
-            out.append(f"| {label} | — | — | — | — | — | — | — | — |")
+            out.append(f"| {label} | — | — | — | — | — | — | — |")
             continue
         marker = " §" if summary.get("uncertainty", {}).get("reason") == (
             "experiment seeds are reused across run conditions"
@@ -276,7 +272,6 @@ def format_negative_transfer_table(rows: dict) -> str:
                     summary["selection_view"],
                     str(summary["pair_count"]),
                     _interval(summary["benefit_rate"], percent=True),
-                    _interval(summary["neutral_rate"], percent=True),
                     _interval(summary["negative_transfer_rate"], percent=True),
                     _interval(summary["negative_transfer_magnitude"]),
                     _interval(summary["negative_transfer_burden"]),
@@ -292,7 +287,7 @@ def format_negative_transfer_table(rows: dict) -> str:
     )
     if computed:
         threshold = computed[0]["threshold"]
-        note = f"Rates use a practical threshold of {threshold:g} metric units."
+        note = f"Performance margin: {threshold:g} metric units."
         if not suppressed:
             note += (
                 " Intervals resample replicate conditions and clients; they "

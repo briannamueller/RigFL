@@ -1,4 +1,4 @@
-"""Grouping for the results table: default (per algorithm) vs --group-by hyperparameter.
+"""Grouping for the results table: automatic labels and --group-by overrides.
 
 The property that matters: on a sweep of an algorithm-specific field, each setting gets
 its OWN row (its own mean ± CI), rather than being averaged together as extra seeds.
@@ -6,18 +6,23 @@ its OWN row (its own mean ± CI), rather than being averaged together as extra s
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from rigfl.eval.transfer import (
     format_negative_transfer_profile,
     format_negative_transfer_table,
 )
+from rigfl.experiment import collect as collect_module
 from rigfl.experiment.collect import (
     _field,
     _records_supporting,
     _rows_by_algorithm,
     _rows_by_group,
+    _sort_rows_by_validation,
 )
+from rigfl.experiment.collect import main as collect_main
 from tests.helpers import resolved_experiment
 
 # Selection policy is fixed here on purpose: these tests are about grouping and
@@ -249,7 +254,190 @@ def test_one_algorithm_swept_over_its_own_settings_gets_separate_rows():
         _cond_rec("feddes", 0, algorithm_cfg=_feddes_config(3)),
         _cond_rec("feddes", 0, algorithm_cfg=_feddes_config(9)),
     ]})
-    assert len(rows) == 2 and all("variant" in k for k in rows)
+    assert set(rows) == {
+        "feddes graphroute.graph.k=3",
+        "feddes graphroute.graph.k=9",
+    }
+
+
+def test_default_labels_show_each_varying_algorithm_setting():
+    rows = _rows({"fedavg": [
+        _rec("fedavg", 0, 0.60, lr=0.01, local_epochs=1),
+        _rec("fedavg", 1, 0.62, lr=0.01, local_epochs=1),
+        _rec("fedavg", 0, 0.80, lr=0.03, local_epochs=2),
+    ]})
+    assert set(rows) == {
+        "fedavg local_epochs=1 lr=0.01",
+        "fedavg local_epochs=2 lr=0.03",
+    }
+    assert rows["fedavg local_epochs=1 lr=0.01"]["seeds"] == 2
+
+
+def test_default_rows_order_by_validation_within_a_data_configuration():
+    lower = _cond_rec("feddes", 0, accs=(0.6, 0.6), algorithm_cfg=_feddes_config(3))
+    higher = _cond_rec("feddes", 0, accs=(0.8, 0.8), algorithm_cfg=_feddes_config(9))
+    lower["config"]["experiment"]["rounds"] = 50
+    higher["config"]["experiment"]["rounds"] = 100
+
+    rows = _rows({"feddes": [lower, higher]})
+
+    assert "rounds=100" in next(iter(rows))
+    assert [row["val_mean"] for row in rows.values()] == [0.8, 0.6]
+
+
+def test_validation_order_keeps_different_reporting_views_separate():
+    rows = {
+        "per-client": {"dataset": "cifar10", "data_configuration_id": "same",
+                       "selection_view": "per-client", "val_mean": 0.9},
+        "global": {"dataset": "cifar10", "data_configuration_id": "same",
+                   "selection_view": "global", "val_mean": 0.6},
+    }
+    assert list(_sort_rows_by_validation(rows, "accuracy")) == ["global", "per-client"]
+
+
+def test_validation_order_respects_metric_direction_and_data_setup():
+    rows = {
+        "higher loss": {"dataset": "cifar10", "data_configuration_id": "a",
+                        "selection_view": "global", "val_mean": 0.8},
+        "other data": {"dataset": "cifar10", "data_configuration_id": "b",
+                       "selection_view": "global", "val_mean": 0.1},
+        "lower loss": {"dataset": "cifar10", "data_configuration_id": "a",
+                       "selection_view": "global", "val_mean": 0.2},
+    }
+    assert list(_sort_rows_by_validation(rows, "loss")) == [
+        "lower loss", "higher loss", "other data"
+    ]
+
+
+def test_saved_grid_shows_completed_and_missing_seed_combinations():
+    from rigfl.eval.report import format_replicate_details, format_table
+
+    record = _cond_rec("feddes", 0, algorithm_cfg=_feddes_config(3))
+    tasks = [
+        {"algorithm": "feddes",
+         "experiment": {"dataset": "cifar10", "partition_seed": 0,
+                        "split_seed": 0, "seed": seed},
+         "algorithm_config": _feddes_config(3)}
+        for seed in range(3)
+    ]
+
+    rows = _rows_by_algorithm(
+        {"feddes": [record]}, "accuracy", view="global", aggregation="mean",
+        tie_break="earliest", grid_tasks=tasks,
+    )
+
+    summary = next(iter(rows.values()))
+    assert summary["runs"] == 1
+    assert summary["expected_runs"] == 3
+    assert summary["replicate_conditions"] == [
+        {"partition_seed": 0, "split_seed": 0, "experiment_seed": 0}
+    ]
+    assert [item["experiment_seed"] for item in summary["missing_replicates"]] == [1, 2]
+    assert "| 1/3 |" in format_table(rows, "accuracy")
+    assert "missing: (0, 0, 1), (0, 0, 2)" in format_replicate_details(rows)
+
+
+def test_saved_grid_counts_each_configuration_separately():
+    records = [
+        _rec("fedavg", 0, 0.6, lr=0.01),
+        _rec("fedavg", 0, 0.8, lr=0.03),
+        _rec("fedavg", 1, 0.8, lr=0.03),
+    ]
+    tasks = [
+        {"algorithm": "fedavg", "experiment": {"seed": seed},
+         "algorithm_config": {"lr": lr}}
+        for lr in (0.01, 0.03) for seed in range(3)
+    ]
+    rows = _rows_by_algorithm(
+        {"fedavg": records}, "accuracy", view="global", aggregation="mean",
+        tie_break="earliest", grid_tasks=tasks,
+    )
+    assert rows["fedavg lr=0.01"]["expected_runs"] == 3
+    assert rows["fedavg lr=0.01"]["runs"] == 1
+    assert rows["fedavg lr=0.03"]["expected_runs"] == 3
+    assert rows["fedavg lr=0.03"]["runs"] == 2
+
+
+def test_collect_help_has_no_separate_rank_flag(monkeypatch, capsys):
+    monkeypatch.setattr("sys.argv", ["collect", "--help"])
+    with pytest.raises(SystemExit) as exit_info:
+        collect_main()
+    assert exit_info.value.code == 0
+    help_text = capsys.readouterr().out
+    assert "--rank" not in help_text
+    assert "--ignore-invalid" not in help_text
+    assert "--strict-results" in help_text
+    assert "--performance-margin" in help_text
+    assert "--negative-transfer-threshold" not in help_text
+
+
+def test_collect_reports_invalid_files_and_keeps_valid_runs(tmp_path, monkeypatch, capsys):
+    def load(_directory, _dataset, *, ignore_invalid, invalid):
+        assert ignore_invalid is True
+        invalid.append(("broken.json", "missing evaluation history"))
+        return {"feddes": [_cond_rec("feddes", 0)]}
+
+    monkeypatch.setattr(collect_module, "load_results", load)
+    report = tmp_path / "summary.md"
+    artifact = tmp_path / "summary.json"
+    monkeypatch.setattr("sys.argv", [
+        "collect", "--out", str(report), "--out-json", str(artifact)
+    ])
+
+    collect_main()
+
+    assert "WARNING: excluded 1 invalid result file" in capsys.readouterr().out
+    assert report.read_text().startswith("**Warning:** Excluded 1 invalid result file")
+    assert "broken.json" in report.read_text()
+    assert json.loads(artifact.read_text())["ignored_invalid_results"] == [
+        {"file": "broken.json", "reason": "missing evaluation history"}
+    ]
+
+
+def test_collect_labels_client_level_performance_analysis(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(
+        collect_module,
+        "load_results",
+        lambda *_args, **_kwargs: {
+            "local": [_cond_rec("local", 0)],
+            "fedavg": [_cond_rec("fedavg", 0)],
+        },
+    )
+    report = tmp_path / "summary.md"
+    monkeypatch.setattr("sys.argv", ["collect", "--out", str(report)])
+
+    collect_main()
+
+    assert "### Client-level performance analysis" in capsys.readouterr().out
+    assert "### Client-level performance analysis: global" in report.read_text()
+
+
+def test_collect_strict_results_stops_on_invalid_file(monkeypatch):
+    def load(_directory, _dataset, *, ignore_invalid, invalid):
+        assert ignore_invalid is False
+        raise SystemExit("invalid result")
+
+    monkeypatch.setattr(collect_module, "load_results", load)
+    monkeypatch.setattr("sys.argv", ["collect", "--strict-results"])
+    with pytest.raises(SystemExit, match="invalid result"):
+        collect_main()
+
+
+def test_loader_can_skip_invalid_file_without_losing_valid_runs(tmp_path, monkeypatch):
+    (tmp_path / "broken.json").write_text("{")
+    (tmp_path / "valid.json").write_text(json.dumps({
+        "algorithm": "fedavg", "config": {"experiment": {"dataset": "cifar10"}}
+    }))
+    monkeypatch.setattr(collect_module, "is_run_result", lambda _record: True)
+    monkeypatch.setattr(collect_module, "validate_run_record", lambda _record, path: None)
+
+    with pytest.raises(SystemExit, match="strict mode stopped"):
+        collect_module.load_results(tmp_path, None)
+
+    invalid = []
+    rows = collect_module.load_results(tmp_path, None, ignore_invalid=True, invalid=invalid)
+    assert len(rows["fedavg"]) == 1
+    assert invalid[0][0] == "broken.json"
 
 
 def test_sweep_task_rejects_an_unknown_setting(tmp_path):

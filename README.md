@@ -9,10 +9,8 @@ machinery.
 - **Stable experiment and partition identity.** RigFL derives two separate
   fingerprints: one identifying a result from its distinct experiment
   configuration, the other identifying a partitioned dataset from its data
-  configuration. A change to either produces a new identity, so earlier generated
-  results and partitions are never overwritten. An experiment whose result
-  already exists is not rerun—expanding or changing a sweep will only execute new
-  combinations.
+  configuration. An experiment whose result already exists is not
+  rerun—expanding or changing a sweep will only execute new combinations.
 
 - **Client-centered performance reporting.** Evaluation metrics that reveal
   whether the benefits of collaboration are broadly shared across clients,
@@ -192,8 +190,7 @@ python -m rigfl.experiment.run \
 This trains FedAvg for two communication rounds and writes the result under
 `results/runs`. RigFL records accuracy, balanced accuracy, macro F1, and predictive log loss for
 each client at every evaluation round, together with the corresponding sample
-counts. Each result file contains the resolved experiment and algorithm configurations and
-the complete per-client evaluation history.
+counts.
 
 
 
@@ -269,26 +266,9 @@ RigFL also supports hyperparameter tuning with Optuna. See the
 
 ### Variance studies
 
-To measure how much results depend on each source of randomness, vary the seeds
-as sweep axes instead of replicates. Experiment settings take an `experiment.` prefix on
-sweep axes:
-
-```yaml
-sweep:
-  experiment.partition_seed: [0, 1, 2]
-  experiment.split_seed: [0, 1, 2]
-  experiment.seed: [0, 1, 2]
-```
-
-This runs all 27 seed combinations for each configuration. Analyze them with the
-variance command rather than `collect`, which would treat the crossed runs as
-independent replicates:
-
-```bash
-python -m rigfl.experiment.variance \
-  --grid results/<sweep-name>/grid.jsonl \
-  --out-json results/variance.json
-```
+To examine how results vary with partition, split, and training seeds, use a
+crossed seed sweep. The [results guide](https://github.com/briannamueller/RigFL/blob/main/docs/results.md)
+shows the sweep configuration and analysis command.
 
 
 ## Evaluation and reporting
@@ -308,13 +288,18 @@ By default, `rigfl.experiment.collect` reports test performance at the round wit
 `--selection-metric`, `--selection-view`, and `--selection-aggregation` to
 change how the reporting round is chosen.
 
-Collection summarizes every result under `results/runs` in a table with one row
-per configuration, showing validation and test performance at the reporting
-round, aggregated across clients. When a configuration has been run under
-multiple replicates, as in a sweep, its row reports the mean across replicates
-with a 95% confidence interval.
+Collection reads completed runs under `results/runs`. Runs with the same
+settings apart from their replicate seeds are summarized together: the row
+reports mean validation and test performance, with a 95% confidence interval
+when the replicates have distinct experiment seeds.
 
-### Client-centered metrics
+When matching Local runs are available, `collect` also prints a client-level
+performance analysis below the run summary.
+
+See the [results guide](https://github.com/briannamueller/RigFL/blob/main/docs/results.md)
+for filtering and saving reports or comparing algorithms and settings.
+
+### Client-level performance analysis
 
 Aggregate performance metrics can signal that collaborative learning improves
 upon local training on average, even though collaboration worsens performance at
@@ -322,8 +307,8 @@ some individual clients. RigFL provides evaluation metrics that surface unevenly
 distributed benefits.
 
 - **Negative-transfer rate:** the fraction of matched client-and-seed pairs that
-  perform worse than Local by more than the selected threshold. Benefit and
-  neutral rates are reported alongside it.
+  perform worse than Local by more than the selected threshold. The benefit rate
+  counts pairs that improve by more than the threshold.
 
 - **Negative-transfer magnitude:** the average performance loss among the pairs
   whose loss relative to Local exceeds the selected threshold.
@@ -357,87 +342,9 @@ python -m rigfl.experiment.collect --include-resources
 
 ## Adding an algorithm
 
-Extend RigFL by adding a module under `rigfl/algorithms/` containing:
-
-- A configuration class that inherits from `AlgorithmConfig`.
-- An algorithm class that inherits from `Algorithm`.
-
-The algorithm class must define four operations:
-
-1. `init_globals()` initializes the shared state, which represents the
-   information the server maintains and distributes to clients at the start of
-   each round. The shared state may take the form of a global model, model
-   parameters, prototypes, a classifier head, or another algorithm-specific
-   structure.
-2. `local_train(...)` is called once per client per round. It receives the client
-   and shared state, performs the client-side computation, and returns the
-   client's upload, which represents the information the client sends to the
-   server. The upload may have the same form as the shared state, be a different
-   structure entirely, or carry additional information required for server-side
-   computation.
-3. `aggregate(...)` receives all client uploads, performs the server-side
-   computation, and returns the shared state for the next round. This may involve
-   averaging parameters, combining prototypes, or training a server-side
-   component.
-4. `predict(...)` performs inference for the supplied inputs and returns a
-   `Predictions` object.
-
-Tensor and encoded-byte payloads are measured automatically for communication
-reporting. Override `communication_payload_bytes(...)` if the algorithm exchanges
-another payload representation.
-
-Declare all of the relevant arguments for the algorithm in its configuration
-class.
-
-```python
-from rigfl.core import Algorithm, Predictions
-from rigfl.core.config import AlgorithmConfig
-
-
-class NewAlgorithmConfig(AlgorithmConfig):
-    local_epochs: int = 1
-    lr: float = 0.01
-    # ...additional arguments
-
-
-class NewAlgorithm(Algorithm):
-    def init_globals(self):
-        ...
-
-    def local_train(self, client, shared_state):
-        ...
-
-    def aggregate(self, client_uploads, shared_state):
-        ...
-
-    def predict(self, client, x, shared_state) -> Predictions:
-        ...
-```
-
-In `local_train(...)` and `predict(...)`, `client` refers to the
-`Client` instance being processed. The client's local model and training data loader are accessed
-through `client.model` and `client.train_loader`, respectively. `client.state` is
-a dictionary that can carry any additional client-specific information that must
-persist across rounds.
-
-Access the arguments defined in the algorithm’s configuration class through self.config, such as self.config.lr.
-
-Register both classes in `rigfl/experiment/registry.py`:
-
-```python
-REGISTRY = {
-    "local": AlgorithmSpec(Local, LocalConfig),
-    "fedavg": AlgorithmSpec(FedAvg, FedAvgConfig),
-    # ...other algorithms
-    "new_algorithm": AlgorithmSpec(NewAlgorithm, NewAlgorithmConfig),
-}
-```
-
-> **Runner note:** `AlgorithmSpec` uses the `iterative` runner by default. If an
-> algorithm genuinely cannot be expressed as repeated local training followed
-> by aggregation, define a different runner and matching operation protocol
-> instead of changing the meaning of the standard operations. FedDES is one
-> such exception and uses `p2p_one_shot`.
+See [Extending RigFL](https://github.com/briannamueller/RigFL/blob/main/docs/extensibility.md)
+for the algorithm interface, registration, communication measurements, and
+testing requirements.
 
 ## Experiment tracking with Weights & Biases
 

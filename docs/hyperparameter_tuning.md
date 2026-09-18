@@ -70,27 +70,8 @@ algorithm's configuration. Paths beginning with `experiment.` refer to experimen
 fields. Dataset identity, replicate seeds, output locations, and execution
 settings cannot be optimized.
 
-The available distributions are:
-
-```yaml
-categorical_parameter:
-  type: categorical
-  values: [value_a, value_b]
-
-integer_parameter:
-  type: int
-  low: 1
-  high: 10
-  step: 1
-
-continuous_parameter:
-  type: float
-  low: 0.0001
-  high: 0.1
-  log: true
-```
-
-`step` and `log: true` cannot be combined for integer or floating-point
+The [search-parameter reference](reference/experiment.md#categorical-search-parameters)
+lists the fields and constraints for categorical, integer, and floating-point
 distributions.
 
 ## Run or resume the study
@@ -234,32 +215,21 @@ when its recorded hardware and software information matches.
 
 ## Study files
 
-A study without intensification produces:
+Completed experiments are stored in `results/runs`. The study's other files are
+under `results/<study-name>/`:
 
 ```text
-results/
-├── runs/                         # completed experiments shared by all workflows
-└── <study-name>/
-    ├── optuna.db                 # resumable Optuna study
-    ├── study.json                # study definition, trials, and result references
-    ├── ranking.json              # validation ranking for every candidate
-    ├── selection.json            # selected configuration and supporting evidence
-    └── selected.yaml             # runnable form of the selected configuration
-```
-
-When intensification is configured, `ranking.json` and
-`intensification/grid.jsonl` are written first. Completing intensification adds:
-
-```text
-results/<study-name>/
-├── intensification/
-│   ├── grid.jsonl
-│   └── evaluation.json
+<study-name>/
+├── optuna.db
+├── study.json
+├── ranking.json
 ├── selection.json
-└── selected.yaml
+├── selected.yaml
+└── intensification/       # when configured
+    ├── grid.jsonl
+    └── evaluation.json
 ```
 
-`selected.yaml` records the complete selected configuration and its replicate
-conditions. It can be passed to `rigfl.experiment.launch`, but rerunning it is
-not required to obtain test results: the completed runs referenced by
-`selection.json` already contain them.
+When intensification is configured, `selection.json` and `selected.yaml` appear
+after its tasks finish. `selected.yaml` can be passed to
+`rigfl.experiment.launch`, but the selected runs already contain test results.

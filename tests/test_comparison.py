@@ -11,6 +11,7 @@ from rigfl.eval.comparison import (
     ConfigurationComparisonError,
     apply_holm,
     compare_configurations,
+    format_comparisons,
 )
 from rigfl.eval.metrics import register, unregister
 from rigfl.experiment import compare as compare_module
@@ -133,7 +134,6 @@ def test_comparison_pairs_clients_and_orients_gain():
     )
     assert _estimate(result, "mean_gain") == pytest.approx(0.05)
     assert _estimate(result, "benefit_rate") == 0.5
-    assert _estimate(result, "neutral_rate") == 0.25
     assert _estimate(result, "harm_rate") == 0.25
     assert result["uncertainty"]["available"] is True
     assert result["effects"]["mean_gain"]["ci_low"] is not None
@@ -155,6 +155,34 @@ def test_comparison_is_reproducible_and_changes_sign_when_swapped():
     )
     assert first["effects"] == again["effects"]
     assert _estimate(first, "mean_gain") == -_estimate(swapped, "mean_gain")
+
+
+def test_comparison_table_includes_local_contrasts_without_client_analysis():
+    local = [_record("local", 0, [[0.5], [0.7]], setting=1)]
+    feddes = [_record("feddes", 0, [[0.6], [0.5]], setting=2)]
+    fml = [_record("fml", 0, [[0.7], [0.68]], setting=3)]
+
+    method_comparison = compare_configurations(
+        feddes, fml, "accuracy", left_label="feddes", right_label="fml",
+        practical_threshold=0.05,
+    )
+    comparisons = [
+        method_comparison,
+        compare_configurations(
+            feddes, local, "accuracy", left_label="feddes", right_label="local",
+            practical_threshold=0.05,
+        ),
+        compare_configurations(
+            local, fml, "accuracy", left_label="local", right_label="fml",
+            practical_threshold=0.05,
+        ),
+    ]
+    table = format_comparisons(comparisons)
+    assert "feddes − fml" in table
+    assert "feddes − local" in table
+    assert "local − fml" in table
+    assert "Negative transfer analysis" not in table
+    assert "| benefit rate | NTR | NTM | NTB |" not in table
 
 
 def test_lower_is_better_metric_is_oriented_as_left_gain():

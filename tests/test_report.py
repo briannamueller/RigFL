@@ -198,7 +198,7 @@ def test_summarize_requires_a_metric():
 
 def test_summary_aggregates_the_way_selection_did():
     """A round chosen on a weighted validation mean must be reported as a
-    weighted mean -- otherwise --rank orders by a number the selection never
+    weighted mean -- otherwise row ordering uses a number the selection never
     optimised."""
     rec = _record("feddes", 0, [.5], [.5], rounds=(0,), n_clients=2)
     hist = rec["result"]["evaluation_history"]
