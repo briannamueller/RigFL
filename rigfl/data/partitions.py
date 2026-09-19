@@ -15,7 +15,12 @@ import torch
 from torch.utils.data import DataLoader
 
 from rigfl.core import Client, LearnedProjection, assemble_model
-from rigfl.data.builder import _ArrayDataset, _client_generator, _collate
+from rigfl.data.builder import (
+    _ArrayDataset,
+    _stream_generator,
+    _collate,
+    _train_val_indices,
+)
 from rigfl.data.config import (
     DEFAULT_DATASET_CONFIG,
     DEFAULT_DATA_DIR,
@@ -26,8 +31,8 @@ from rigfl.data.flower import generate_flower_partition
 from rigfl.data.transforms import data_transform_identity
 
 
-MANIFEST_SCHEMA_VERSION = 4
-PARTITION_PIPELINE_VERSION = 3
+MANIFEST_SCHEMA_VERSION = 5
+PARTITION_PIPELINE_VERSION = 5
 
 
 @dataclass(frozen=True)
@@ -39,12 +44,32 @@ class PartitionArtifact:
     manifest: dict
 
 
+#: Settings that define the validation split, which is carved when clients are
+#: built rather than stored, so they identify a run and not a partition.
+_DEFERRED_SPLIT_FIELDS = (
+    ("partition", ("split_seed", "val_frac")),
+    ("client_split", ("validation_fraction",)),
+)
+
+
+def stored_settings(settings: FlowerDatasetSettings, **dump_options) -> dict:
+    """Settings that determine what a partition stores."""
+    dumped = settings.model_dump(mode="json", **dump_options)
+    for section, fields in _DEFERRED_SPLIT_FIELDS:
+        values = dumped.get(section)
+        if isinstance(values, dict):
+            for field in fields:
+                values.pop(field, None)
+    return dumped
+
+
 def partition_fingerprint(dataset: str, settings: FlowerDatasetSettings) -> str:
     """Stable identity derived only from settings that determine partition data."""
+    dumped = stored_settings(settings)
     payload = {
         "pipeline_version": PARTITION_PIPELINE_VERSION,
         "dataset": dataset,
-        **settings.model_dump(mode="json"),
+        **dumped,
         "data_transform": data_transform_identity(settings.data_transform),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
@@ -158,17 +183,13 @@ def generate_partition(
                 "backend": backend_metadata["backend"],
                 "task": backend_metadata["task"],
                 "num_clients": backend_metadata["num_clients"],
-                "partition": settings.partition.model_dump(
-                    mode="json", exclude_none=True
-                ),
+                "partition": stored_settings(settings, exclude_none=True)["partition"],
                 "clients": backend_metadata["clients"],
                 "input_spec": backend_metadata["input_spec"],
                 "target_spec": backend_metadata["target_spec"],
                 "source": _omit_none(backend_metadata["source"]),
-                "dataset_configuration": settings.model_dump(
-                    mode="json",
-                    exclude={"backend", "partition"},
-                    exclude_none=True,
+                "dataset_configuration": stored_settings(
+                    settings, exclude={"backend", "partition"}, exclude_none=True
                 ),
                 "schema_version": MANIFEST_SCHEMA_VERSION,
                 "pipeline_version": PARTITION_PIPELINE_VERSION,
@@ -223,11 +244,9 @@ def load_partition(
         "dataset": dataset,
         "partition_id": partition_id,
         "pipeline_version": PARTITION_PIPELINE_VERSION,
-        "partition": settings.partition.model_dump(mode="json", exclude_none=True),
-        "dataset_configuration": settings.model_dump(
-            mode="json",
-            exclude={"backend", "partition"},
-            exclude_none=True,
+        "partition": stored_settings(settings, exclude_none=True)["partition"],
+        "dataset_configuration": stored_settings(
+            settings, exclude={"backend", "partition"}, exclude_none=True
         ),
     }
     for key, value in expected.items():
@@ -267,7 +286,7 @@ def load_partition(
         raise ValueError(f"generated partition manifest {path / 'manifest.json'} lacks data specs")
     for cid in range(num_clients):
         client_dir = path / "clients" / f"client_{cid}"
-        for split in ("train", "validation", "test"):
+        for split in ("train", "test"):
             split_path = client_dir / f"{split}.pt"
             if not split_path.exists():
                 raise ValueError(
@@ -297,6 +316,8 @@ def build_partition_clients(
     shared_dim: int,
     batch: int,
     seed: int = 0,
+    split_seed: int = 0,
+    validation_fraction: float = 0.2,
     adapter=None,
     backbones=None,
     build_models: bool = True,
@@ -323,12 +344,32 @@ def build_partition_clients(
         if artifact.manifest["input_spec"]["kind"] == "token_sequence"
         else torch.float32
     )
+    # client_split fractions are shares of the whole client partition, and test
+    # is already carved off, so rescale against what train.pt actually holds.
+    client_split = (artifact.manifest.get("source") or {}).get("client_split")
+    pool_fraction = validation_fraction
+    if client_split:
+        pool_fraction = validation_fraction / (1 - client_split["test_fraction"])
+
     clients = []
     for cid in range(num_clients):
         directory = artifact.path / "clients" / f"client_{cid}"
         x_train, y_train = _load_split(directory / "train.pt")
-        x_validation, y_validation = _load_split(directory / "validation.pt")
         x_test, y_test = _load_split(directory / "test.pt")
+        stored_validation = directory / "validation.pt"
+        if stored_validation.exists():
+            x_validation, y_validation = _load_split(stored_validation)
+            train_indices = range(len(y_train))
+            validation_indices = range(len(y_validation))
+        else:
+            # Train and validation share one stored tensor and differ only by index.
+            x_validation, y_validation = x_train, y_train
+            train_indices, validation_indices = _train_val_indices(
+                len(y_train),
+                None,
+                pool_fraction,
+                generator=_stream_generator(split_seed, 0),
+            )
         model = None
         if build_models:
             backbone = backbones[cid % len(backbones)]()
@@ -342,24 +383,24 @@ def build_partition_clients(
                     _ArrayDataset(
                         x_train,
                         y_train,
-                        range(len(y_train)),
+                        train_indices,
                         input_dtype=input_dtype,
                     ),
                     batch_size=batch,
                     shuffle=True,
                     collate_fn=_collate,
-                    generator=_client_generator(seed, cid, 1),
+                    generator=_stream_generator(seed, 1),
                 ),
                 DataLoader(
                     _ArrayDataset(
                         x_validation,
                         y_validation,
-                        range(len(y_validation)),
+                        validation_indices,
                         input_dtype=input_dtype,
                     ),
                     batch_size=batch,
                     collate_fn=_collate,
-                    generator=_client_generator(seed, cid, 2),
+                    generator=_stream_generator(seed, 2),
                 ),
                 DataLoader(
                     _ArrayDataset(
@@ -370,7 +411,7 @@ def build_partition_clients(
                     ),
                     batch_size=batch,
                     collate_fn=_collate,
-                    generator=_client_generator(seed, cid, 3),
+                    generator=_stream_generator(seed, 3),
                 ),
             )
         )

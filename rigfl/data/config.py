@@ -88,11 +88,6 @@ class PartitionSettingsBase(BaseModel):
         ge=1,
         description="Maximum training samples saved per client; null keeps all samples.",
     )
-    validation_per_client: int | None = Field(
-        None,
-        ge=1,
-        description="Maximum validation samples saved per client; null keeps all samples.",
-    )
     test_per_client: int | None = Field(
         500,
         ge=1,
@@ -449,7 +444,6 @@ def inactive_replicate_seed_fields(settings: DatasetSettings) -> set[str]:
         getattr(partition, name) is not None
         for name in (
             "train_per_client",
-            "validation_per_client",
             "test_per_client",
         )
     )

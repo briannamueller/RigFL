@@ -85,7 +85,6 @@ def test_inactive_data_replicate_seeds_are_identified():
             "partition_by": "client_id",
             "shuffle": False,
             "train_per_client": None,
-            "validation_per_client": None,
             "test_per_client": None,
         },
     )
@@ -112,7 +111,6 @@ def test_sweep_rejects_varied_data_seeds_that_cannot_change_the_data(tmp_path):
         "      partition_by: client_id\n"
         "      shuffle: false\n"
         "      train_per_client: null\n"
-        "      validation_per_client: null\n"
         "      test_per_client: null\n"
     )
     spec = {
@@ -163,7 +161,7 @@ def _fake_flower_backend(settings, output_directory):
         summary = {"client_id": cid}
         sizes = {}
         label_counts = {}
-        for split, n in (("train", 9), ("validation", 3), ("test", 6)):
+        for split, n in (("train", 12), ("test", 6)):
             inputs = torch.rand(n, 3, 32, 32)
             targets = (torch.arange(n) + cid) % 3
             torch.save((inputs, targets), directory / f"{split}.pt")
@@ -209,16 +207,20 @@ def test_partition_fingerprint_is_stable_and_tracks_generation_settings(tmp_path
     assert partition_fingerprint(DATASET, first) != partition_fingerprint(DATASET, second)
 
 
-def test_partition_fingerprint_tracks_split_seed():
+def test_partition_fingerprint_ignores_the_validation_split_settings():
     first = FlowerDatasetSettings(
         source_dataset="organization/source-data",
         partition={"scheme": "iid", "num_clients": 2, "split_seed": 3},
     )
     second = first.model_copy(
-        update={"partition": first.partition.model_copy(update={"split_seed": 4})}
+        update={
+            "partition": first.partition.model_copy(
+                update={"split_seed": 4, "val_frac": 0.3}
+            )
+        }
     )
 
-    assert partition_fingerprint(DATASET, first) != partition_fingerprint(
+    assert partition_fingerprint(DATASET, first) == partition_fingerprint(
         DATASET, second
     )
 
@@ -255,7 +257,7 @@ def test_partition_fingerprint_tracks_merged_and_client_split_settings():
 
     assert baseline == partition_fingerprint(DATASET, settings(["train", "test"]))
     assert baseline != partition_fingerprint(DATASET, settings(["test", "train"]))
-    assert baseline != partition_fingerprint(
+    assert baseline == partition_fingerprint(
         DATASET, settings(["train", "test"], validation_fraction=0.15)
     )
     assert baseline != partition_fingerprint(
@@ -342,11 +344,11 @@ def test_generation_dispatches_by_backend_and_reuses_partition(monkeypatch, tmp_
     assert manifest["source"]["dataset"] == "organization/source-data"
     assert "validation" not in manifest["source"]["splits"]
     assert manifest["num_clients"] == 2
-    assert manifest["clients"][0]["sizes"]["validation"] == 3
-    assert manifest["clients"][0]["label_counts"]["train"] == [3, 3, 3]
+    assert manifest["clients"][0]["sizes"] == {"train": 12, "test": 6}
+    assert manifest["clients"][0]["label_counts"]["train"] == [4, 4, 4]
     manifest_text = (artifact.path / "manifest.json").read_text()
     assert manifest_text.index('"dataset"') < manifest_text.index('"clients"')
-    assert '"sizes": {"train": 9, "validation": 3, "test": 6}' in manifest_text
+    assert '"sizes": {"train": 12, "test": 6}' in manifest_text
     assert '"shape": [3, 32, 32]' in manifest_text
 
     reused, created = generate_partition(
@@ -433,7 +435,7 @@ def test_experiment_seed_overrides_generate_and_resolve_the_matching_partition(
     assert data.artifact.path.is_dir()
     assert other_training_seed.partition_id == resolved.partition_id
     assert other_data.artifact.path == data.artifact.path
-    assert other_split_seed.partition_id != resolved.partition_id
+    assert other_split_seed.partition_id == resolved.partition_id
     assert split_data.artifact.path.is_dir()
 
 
@@ -489,9 +491,77 @@ def test_generated_partition_builds_clients_without_repartitioning(monkeypatch, 
         artifact, shared_dim=4, batch=4, backbones=[_Backbone]
     )
     assert len(clients) == 2
-    assert len(clients[0].train_loader.dataset) == 9
-    assert len(clients[0].val_loader.dataset) == 3
+    assert len(clients[0].train_loader.dataset) == 10
+    assert len(clients[0].val_loader.dataset) == 2
     assert len(clients[0].test_loader.dataset) == 6
+
+
+def test_merged_validation_fraction_is_a_share_of_the_whole_client(tmp_path):
+    # 20 samples per client: generation carved off 4 test, so train.pt holds 16.
+    directory = tmp_path / "clients" / "client_0"
+    directory.mkdir(parents=True)
+    for split, n in (("train", 16), ("test", 4)):
+        torch.save(
+            (torch.rand(n, 3, 32, 32), torch.zeros(n, dtype=torch.long)),
+            directory / f"{split}.pt",
+        )
+    artifact = partitions.PartitionArtifact(
+        dataset=DATASET,
+        partition_id="merged",
+        path=tmp_path,
+        settings=None,
+        manifest={
+            "task": "classification",
+            "num_clients": 1,
+            "target_spec": {"num_classes": 2},
+            "input_spec": {"kind": "image"},
+            "source": {
+                "client_split": {"validation_fraction": 0.15, "test_fraction": 0.2}
+            },
+        },
+    )
+
+    clients = build_partition_clients(
+        artifact,
+        shared_dim=4,
+        batch=4,
+        validation_fraction=0.15,
+        backbones=[_Backbone],
+    )
+
+    # 15% of the 20-sample client is 3, not 15% of the 16 stored training samples.
+    assert len(clients[0].val_loader.dataset) == 3
+    assert len(clients[0].train_loader.dataset) == 13
+
+
+def test_split_seed_changes_validation_only(monkeypatch, tmp_path):
+    config = _config(tmp_path / "datasets.yaml")
+    _generate(monkeypatch, config, tmp_path / "data")
+    artifact = load_partition(DATASET, config_path=config, data_dir=tmp_path / "data")
+
+    def build(split_seed):
+        return build_partition_clients(
+            artifact,
+            shared_dim=4,
+            batch=4,
+            split_seed=split_seed,
+            validation_fraction=0.25,
+            backbones=[_Backbone],
+        )
+
+    first = build(11)
+    second = build(12)
+    repeated = build(11)
+
+    def indices(clients, loader):
+        return [set(getattr(client, loader).dataset.indices) for client in clients]
+
+    assert indices(first, "val_loader") != indices(second, "val_loader")
+    assert indices(first, "train_loader") != indices(second, "train_loader")
+    assert indices(first, "val_loader") == indices(repeated, "val_loader")
+    assert indices(first, "test_loader") == indices(second, "test_loader")
+    assert len(first[0].val_loader.dataset) == 3
+    assert len(first[0].train_loader.dataset) == 9
 
 
 def test_generated_partition_can_skip_unused_client_models(monkeypatch, tmp_path):

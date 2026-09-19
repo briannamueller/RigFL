@@ -129,8 +129,10 @@ def _train_val_indices(n: int, groups, val_frac: float, *,
     return train_idx, val_idx
 
 
-def _client_generator(seed: int, client_id: int, stream: int) -> torch.Generator:
-    return torch.Generator().manual_seed(seed + client_id * 4 + stream)
+def _stream_generator(seed: int, stream: int) -> torch.Generator:
+    """One generator per independent stream. Clients share it: they hold different
+    data, so drawing the same positions gives them different samples."""
+    return torch.Generator().manual_seed(seed + stream)
 
 
 def build_clients(source: Source, num_clients: int, num_classes: int,
@@ -160,7 +162,7 @@ def build_clients(source: Source, num_clients: int, num_classes: int,
         x_tr, y_tr, g_tr = source(cid, "train")
         train_idx, val_idx = _train_val_indices(
             len(y_tr), g_tr, val_frac,
-            generator=_client_generator(split_seed, cid, 0),
+            generator=_stream_generator(split_seed, 0),
         )
         x_te, y_te, _ = source(cid, "test")
 
@@ -175,17 +177,17 @@ def build_clients(source: Source, num_clients: int, num_classes: int,
             DataLoader(
                 _ArrayDataset(x_tr, y_tr, train_idx), batch_size=batch,
                 shuffle=True, collate_fn=_collate,
-                generator=_client_generator(seed, cid, 1),
+                generator=_stream_generator(seed, 1),
             ),
             DataLoader(
                 _ArrayDataset(x_tr, y_tr, val_idx), batch_size=batch,
                 collate_fn=_collate,
-                generator=_client_generator(seed, cid, 2),
+                generator=_stream_generator(seed, 2),
             ),
             DataLoader(
                 _ArrayDataset(x_te, y_te, range(len(y_te))), batch_size=batch,
                 collate_fn=_collate,
-                generator=_client_generator(seed, cid, 3),
+                generator=_stream_generator(seed, 3),
             ),
         ))
     return clients

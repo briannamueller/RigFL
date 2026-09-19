@@ -18,7 +18,6 @@ from datasets import (
     load_dataset_builder,
 )
 
-from rigfl.data.builder import _train_val_indices
 from rigfl.data.config import (
     FlowerDatasetSettings,
     MergedSourceSplits,
@@ -465,21 +464,12 @@ def _split_client_partition(
     target_column: str,
     *,
     test_seed: int,
-    split_seed: int,
 ):
     stratify_by = target_column if settings.stratify else None
     try:
-        train_validation = partition.train_test_split(
+        train_test = partition.train_test_split(
             test_size=settings.test_fraction,
             seed=test_seed,
-            stratify_by_column=stratify_by,
-        )
-        validation_fraction = settings.validation_fraction / (
-            1 - settings.test_fraction
-        )
-        train_validation_split = train_validation["train"].train_test_split(
-            test_size=validation_fraction,
-            seed=split_seed,
             stratify_by_column=stratify_by,
         )
     except ValueError as exc:
@@ -489,14 +479,10 @@ def _split_client_partition(
             else ""
         )
         raise ValueError(
-            "Could not divide a client partition into the requested train, validation, "
-            f"and test fractions.{suffix}"
+            "Could not divide a client partition into the requested train and test "
+            f"fractions.{suffix}"
         ) from exc
-    return {
-        "train": train_validation_split["train"],
-        "validation": train_validation_split["test"],
-        "test": train_validation["test"],
-    }
+    return {"train": train_test["train"], "test": train_test["test"]}
 
 
 def _convert_partition(partition, resolved: ResolvedFlowerSource):
@@ -622,8 +608,7 @@ def _client_raw_partitions(
             merged_partition,
             settings.client_split,
             target_column,
-            test_seed=p.partition_seed + client_id * 17,
-            split_seed=p.split_seed + client_id * 17,
+            test_seed=p.partition_seed,
         )
     else:
         raw = {
@@ -635,28 +620,17 @@ def _client_raw_partitions(
             for role, source_split in role_to_source.items()
         }
 
-    limits = {
-        "train": p.train_per_client,
-        "validation": p.validation_per_client,
-        "test": p.test_per_client,
-    }
-    raw = {
+    # A source-provided validation split is stored as-is; otherwise validation is
+    # carved out of train when the clients are built.
+    limits = {"train": p.train_per_client, "test": p.test_per_client}
+    return {
         role: _cap(
             partition,
-            limits[role],
-            p.partition_seed + client_id * 17 + offset,
+            limits.get(role),
+            p.partition_seed + offset,
         )
         for offset, (role, partition) in enumerate(raw.items())
     }
-    if not merged_source and "validation" not in raw:
-        generator = torch.Generator().manual_seed(p.split_seed + client_id)
-        train_indices, validation_indices = _train_val_indices(
-            len(raw["train"]), None, p.val_frac, generator=generator
-        )
-        training = raw["train"]
-        raw["train"] = training.select(train_indices)
-        raw["validation"] = training.select(validation_indices)
-    return raw
 
 
 def generate_flower_partition(
@@ -798,35 +772,20 @@ def generate_flower_partition(
             elif current_input_shape != input_shape or current_target_shape != target_shape:
                 raise ValueError("source splits do not share one input and target shape")
 
-        x_train, y_train = converted["train"]
-        x_validation, y_validation = converted["validation"]
-        train_indices = range(len(y_train))
-        validation_indices = range(len(y_validation))
-        x_test, y_test = converted["test"]
+        targets_by_role = {}
+        for role in ("train", "validation", "test"):
+            if role not in converted:
+                continue
+            x, y = converted[role]
+            _save(client_directory / f"{role}.pt", x, y, range(len(y)))
+            targets_by_role[role] = y
 
-        _save(client_directory / "train.pt", x_train, y_train, train_indices)
-        _save(
-            client_directory / "validation.pt",
-            x_validation,
-            y_validation,
-            validation_indices,
-        )
-        _save(client_directory / "test.pt", x_test, y_test, range(len(y_test)))
-
-        train_targets = y_train[torch.as_tensor(list(train_indices), dtype=torch.long)]
-        validation_targets = y_validation[
-            torch.as_tensor(list(validation_indices), dtype=torch.long)
-        ]
-        observed_targets.extend([train_targets, validation_targets, y_test])
-        client_targets.append(
-            {"train": train_targets, "validation": validation_targets, "test": y_test}
-        )
+        observed_targets.extend(targets_by_role.values())
+        client_targets.append(targets_by_role)
         client = {
             "client_id": cid,
             "sizes": {
-                "train": len(train_targets),
-                "validation": len(validation_targets),
-                "test": len(y_test),
+                role: len(targets) for role, targets in targets_by_role.items()
             },
         }
         if identity_map is not None:
@@ -857,7 +816,7 @@ def generate_flower_partition(
                 role: torch.bincount(
                     targets_by_role[role].long(), minlength=num_classes
                 ).tolist()
-                for role in ("train", "validation", "test")
+                for role in targets_by_role
             }
 
     return {

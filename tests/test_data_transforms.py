@@ -163,7 +163,6 @@ def test_paysim_transform_runs_through_partition_generation(monkeypatch, tmp_pat
             "scheme": "natural_id",
             "partition_by": "BankID",
             "train_per_client": None,
-            "validation_per_client": None,
             "test_per_client": None,
         },
     )
@@ -179,7 +178,7 @@ def test_paysim_transform_runs_through_partition_generation(monkeypatch, tmp_pat
     assert manifest["target_spec"]["class_names"] == ["not_fraud", "fraud"]
     assert transform["fitted_parameters"]["input_dim"] == 15
     assert transform["source"].endswith("fed-fin-fraud/fed_fraud/task.py")
-    assert saved_inputs.shape == (16, 15)
+    assert saved_inputs.shape == (20, 15)
 
 
 def test_phishing_transform_runs_through_partition_generation(monkeypatch, tmp_path):
@@ -234,7 +233,6 @@ def test_phishing_transform_runs_through_partition_generation(monkeypatch, tmp_p
             "scheme": "natural_id",
             "partition_by": "client_id",
             "train_per_client": None,
-            "validation_per_client": None,
             "test_per_client": None,
         },
     )
@@ -251,4 +249,4 @@ def test_phishing_transform_runs_through_partition_generation(monkeypatch, tmp_p
     }
     assert manifest["target_spec"]["class_names"] == ["benign", "phishing"]
     assert saved_inputs.dtype == torch.int16
-    assert saved_inputs.shape == (16, MAX_LENGTH)
+    assert saved_inputs.shape == (20, MAX_LENGTH)

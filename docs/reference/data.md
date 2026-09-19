@@ -48,7 +48,6 @@
 | `partition.split_seed` | integer | `0` | ≥ 0 | Seed used to create client validation splits. |
 | `partition.shuffle` | boolean | `true` | — | Shuffle source rows before partitioning. |
 | `partition.train_per_client` | integer \| null | `2000` | ≥ 1 | Maximum training samples saved per client; null keeps all samples. |
-| `partition.validation_per_client` | integer \| null | `null` | ≥ 1 | Maximum validation samples saved per client; null keeps all samples. |
 | `partition.test_per_client` | integer \| null | `500` | ≥ 1 | Maximum test samples saved per client; null keeps all samples. |
 | `partition.val_frac` | number | `0.2` | > 0; < 1 | Fraction of client training data reserved for validation. |
 

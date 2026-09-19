@@ -91,7 +91,6 @@ datasets:
       partition_seed: 0
       split_seed: 0
       train_per_client: 200
-      validation_per_client: 50
       test_per_client: 50
 
   paysim_fraud:
@@ -105,7 +104,6 @@ datasets:
       partition_seed: 0
       split_seed: 0
       train_per_client: null
-      validation_per_client: null
       test_per_client: null
       val_frac: 0.2
 
@@ -121,6 +119,5 @@ datasets:
       partition_seed: 0
       split_seed: 0
       train_per_client: 2000
-      validation_per_client: null
       test_per_client: 500
       val_frac: 0.2

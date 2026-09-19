@@ -256,6 +256,8 @@ def run_one(name, exp: ExperimentConfig, cfg, device, *, data: ResolvedData | No
             shared_dim=exp.shared_dim,
             batch=exp.batch,
             seed=exp.seed,
+            split_seed=exp.split_seed,
+            validation_fraction=exp.validation_fraction,
             adapter=adapter,
             backbones=backbones,
             build_models=spec.requires_client_model,

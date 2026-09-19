@@ -15,13 +15,15 @@ across clients. Missing Flower partitions are generated automatically when an
 experiment starts.
 
 RigFL normally preserves the source's training and test splits. A published
-validation split can also be used directly; otherwise, validation data is
-derived from each client's training partition.
+validation split is stored as-is; otherwise a partition stores training and test
+data only, and validation is carved from each client's training data when the
+clients are built. `split_seed` and the validation fraction therefore select a
+different validation split without generating another partition.
 
 When the published splits do not match the desired experiment, they can be
 merged before partitioning. RigFL then divides every client partition into new
-training, validation, and test subsets. The data reference documents the
-required `source_splits` and `client_split` fields.
+training and test subsets. The data reference documents the required
+`source_splits` and `client_split` fields.
 
 ### Add a Hugging Face dataset
 

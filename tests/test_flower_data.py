@@ -415,21 +415,19 @@ def test_merged_partition_is_split_into_requested_client_fractions():
         settings,
         "label",
         test_seed=4,
-        split_seed=5,
     )
 
     assert {name: len(split) for name, split in splits.items()} == {
-        "train": 70,
-        "validation": 10,
+        "train": 80,
         "test": 20,
     }
     ids = [set(split["sample_id"]) for split in splits.values()]
     assert set.union(*ids) == set(range(100))
-    assert not (ids[0] & ids[1] or ids[0] & ids[2] or ids[1] & ids[2])
+    assert not ids[0] & ids[1]
     assert all(set(split["label"]) == {0, 1} for split in splits.values())
 
 
-def test_split_seed_changes_train_and_validation_but_not_test():
+def test_client_splits_depend_on_the_test_seed_alone():
     features = Features({
         "sample_id": Value("int64"),
         "label": ClassLabel(num_classes=2),
@@ -447,33 +445,18 @@ def test_split_seed_changes_train_and_validation_but_not_test():
         stratify=True,
     )
 
-    first = flower._split_client_partition(
-        dataset, settings, "label", test_seed=7, split_seed=11
-    )
-    second = flower._split_client_partition(
-        dataset, settings, "label", test_seed=7, split_seed=12
-    )
-    repeated = flower._split_client_partition(
-        dataset, settings, "label", test_seed=7, split_seed=11
-    )
-    other_test = flower._split_client_partition(
-        dataset, settings, "label", test_seed=8, split_seed=11
-    )
+    first = flower._split_client_partition(dataset, settings, "label", test_seed=7)
+    repeated = flower._split_client_partition(dataset, settings, "label", test_seed=7)
+    other = flower._split_client_partition(dataset, settings, "label", test_seed=8)
 
-    assert set(first["test"]["sample_id"]) == set(second["test"]["sample_id"])
-    assert set(first["validation"]["sample_id"]) != set(
-        second["validation"]["sample_id"]
-    )
-    assert set(first["train"]["sample_id"]) != set(second["train"]["sample_id"])
-    assert {
-        name: set(split["sample_id"]) for name, split in first.items()
-    } == {
+    assert set(first) == {"train", "test"}
+    assert {name: set(split["sample_id"]) for name, split in first.items()} == {
         name: set(split["sample_id"]) for name, split in repeated.items()
     }
-    assert set(first["test"]["sample_id"]) != set(other_test["test"]["sample_id"])
+    assert set(first["test"]["sample_id"]) != set(other["test"]["sample_id"])
 
 
-def test_published_test_split_is_independent_of_split_seed():
+def test_generated_partitions_hold_train_and_test_only():
     train = Dataset.from_dict(
         {"sample_id": list(range(100)), "label": [index % 2 for index in range(100)]}
     )
@@ -490,7 +473,6 @@ def test_published_test_split_is_independent_of_split_seed():
                 "partition_seed": 7,
                 "split_seed": seed,
                 "train_per_client": None,
-                "validation_per_client": None,
                 "test_per_client": None,
                 "val_frac": 0.2,
             },
@@ -510,11 +492,10 @@ def test_published_test_split_is_independent_of_split_seed():
     first = split(11)
     second = split(12)
 
-    assert set(first["test"]["sample_id"]) == set(second["test"]["sample_id"])
-    assert set(first["validation"]["sample_id"]) != set(
-        second["validation"]["sample_id"]
-    )
-    assert set(first["train"]["sample_id"]) != set(second["train"]["sample_id"])
+    assert set(first) == {"train", "test"}
+    assert {name: set(part["sample_id"]) for name, part in first.items()} == {
+        name: set(part["sample_id"]) for name, part in second.items()
+    }
 
 
 def test_merge_source_splits_uses_every_sample_once():
@@ -690,7 +671,6 @@ def test_merged_generation_partitions_once_then_splits_each_client(
             "num_clients": 2,
             "partition_seed": 7,
             "train_per_client": None,
-            "validation_per_client": None,
             "test_per_client": None,
         },
     )
@@ -705,17 +685,12 @@ def test_merged_generation_partitions_once_then_splits_each_client(
         "stratify": True,
     }
     assert all(
-        (
-            client["sizes"]["train"],
-            client["sizes"]["validation"],
-            client["sizes"]["test"],
-        )
-        == (14, 2, 4)
+        (client["sizes"]["train"], client["sizes"]["test"]) == (16, 4)
         for client in manifest["clients"]
     )
     observed = []
     for client_id in range(2):
-        for split in ("train", "validation", "test"):
+        for split in ("train", "test"):
             inputs, _ = torch.load(
                 tmp_path / "clients" / f"client_{client_id}" / f"{split}.pt",
                 weights_only=True,
@@ -772,7 +747,6 @@ def test_natural_client_limit_preserves_selected_source_ids(monkeypatch, tmp_pat
             "client_limit": 2,
             "partition_seed": 5,
             "train_per_client": None,
-            "validation_per_client": None,
             "test_per_client": None,
         },
     )
