@@ -543,6 +543,31 @@ def test_grid_sampler_requires_finite_categorical_values():
         parse_optimization(raw)
 
 
+def test_replicate_counts_expand_to_matched_seeds():
+    raw = _spec()
+    raw["replicates"] = 3
+    raw["tuning"]["intensification"] = {
+        "top_k": 2,
+        "replicates": 2,
+        "practical_threshold": 0.01,
+    }
+
+    spec = parse_optimization(raw)
+
+    assert spec.replicate_conditions == [
+        {"partition_seed": seed, "split_seed": seed, "experiment_seed": seed}
+        for seed in (0, 1, 2)
+    ]
+    # An intensification count continues the screening seeds, so its data
+    # conditions are new without being written out.
+    assert [
+        condition.model_dump() for condition in spec.intensification.replicates
+    ] == [
+        {"partition_seed": seed, "split_seed": seed, "experiment_seed": seed}
+        for seed in (3, 4)
+    ]
+
+
 def test_intensification_requires_new_seeds_and_a_practical_threshold():
     raw = _with_zipped_replicates(_spec())
     raw["tuning"]["intensification"] = {

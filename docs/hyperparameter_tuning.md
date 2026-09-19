@@ -28,10 +28,7 @@ base:
     rounds: 100
     eval_gap: 5
 
-replicates:
-  - {partition_seed: 0, split_seed: 0, experiment_seed: 0}
-  - {partition_seed: 1, split_seed: 1, experiment_seed: 1}
-  - {partition_seed: 2, split_seed: 2, experiment_seed: 2}
+replicates: 3
 
 tuning:
   trials: 100
@@ -59,6 +56,10 @@ tuning:
       type: categorical
       values: [32, 64, 128]
 ```
+
+A replicate count expands to that many conditions with matched seeds from zero,
+so `replicates: 3` is the `{partition_seed, split_seed, experiment_seed}` triples
+for 0, 1, and 2. Write the list out to hold a seed constant.
 
 Each trial is one joint assignment of all parameters in `search_space`. RigFL
 runs that assignment under every listed replicate and averages its validation
@@ -167,10 +168,7 @@ tuning:
   # metric, sampler, and search_space omitted here
   intensification:
     top_k: 5
-    replicates:
-      - {partition_seed: 10, split_seed: 10, experiment_seed: 10}
-      - {partition_seed: 11, split_seed: 11, experiment_seed: 11}
-      - {partition_seed: 12, split_seed: 12, experiment_seed: 12}
+    replicates: 3
     practical_threshold: 0.005
     prefer: validation
 ```
@@ -205,6 +203,11 @@ If the grid was executed separately, omit `--run` after all tasks finish:
 python -m rigfl.experiment.intensification \
   --ranking results/<study-name>/ranking.json
 ```
+
+An intensification count continues the screening seeds rather than restarting,
+so three screening replicates followed by `replicates: 3` here uses seeds 3, 4,
+and 5. That satisfies the rule that intensification must not reuse a screening
+data-seed pair; write the list out to choose the seeds yourself.
 
 The leading candidate is determined from validation performance on the new
 replicates. `practical_threshold` defines how close another candidate must be to

@@ -219,6 +219,16 @@ class ReplicateCondition(BaseModel):
     )
 
 
+def replicate_conditions_from_count(count: int, *, start: int = 0) -> list[dict]:
+    """Expand a replicate count into matched seed conditions."""
+    if not isinstance(count, int) or isinstance(count, bool) or count < 1:
+        raise ValueError("a replicate count must be a positive integer")
+    return [
+        {"partition_seed": seed, "split_seed": seed, "experiment_seed": seed}
+        for seed in range(start, start + count)
+    ]
+
+
 class SamplerConfig(BaseModel):
     """An Optuna sampler and its constructor arguments."""
 
@@ -349,8 +359,13 @@ class IntensificationConfig(BaseModel):
         ),
     ] = 5
     replicates: Annotated[
-        list[ReplicateCondition],
-        Field(min_length=1, description="Additional replicate conditions."),
+        int | list[ReplicateCondition],
+        Field(
+            description=(
+                "Additional replicate conditions, or a count continuing the "
+                "top-level replicate seeds."
+            )
+        ),
     ]
     practical_threshold: Annotated[
         StrictInt | StrictFloat,
@@ -369,6 +384,9 @@ class IntensificationConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_replicates(self):
+        if isinstance(self.replicates, int):
+            replicate_conditions_from_count(self.replicates)
+            return self
         conditions = [condition.model_dump() for condition in self.replicates]
         identities = {tuple(condition.values()) for condition in conditions}
         if len(identities) != len(conditions):
@@ -441,8 +459,19 @@ class ExperimentFileConfig(BaseModel):
         None, description="Cartesian axes for an ordinary sweep."
     )
     replicates: list[ReplicateCondition] | None = Field(
-        None, description="Paired data and training seed conditions."
+        None,
+        description=(
+            "Paired data and training seed conditions, or a count expanding to "
+            "that many conditions with matched seeds from zero."
+        ),
     )
+
+    @field_validator("replicates", mode="before")
+    @classmethod
+    def _expand_replicate_count(cls, value):
+        if isinstance(value, int) and not isinstance(value, bool):
+            return replicate_conditions_from_count(value)
+        return value
     tuning: TuningConfig | None = Field(None, description="Optuna study settings.")
 
     @model_validator(mode="after")

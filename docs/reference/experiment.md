@@ -40,7 +40,7 @@ These options configure individual runs, sweeps, and tuning studies.
 | `algorithms` | list[string] \| string \| null | `null` | — | Algorithms included in the sweep or study. |
 | `base` | mapping | `{}` | — | Fixed experiment and algorithm settings shared by generated runs. |
 | `sweep` | mapping \| null | `null` | — | Cartesian axes for an ordinary sweep. |
-| `replicates` | list[replicate settings] \| null | `null` | — | Paired data and training seed conditions. |
+| `replicates` | list[replicate settings] \| null | `null` | — | Paired data and training seed conditions, or a count expanding to that many conditions with matched seeds from zero. |
 | `tuning` | tuning settings \| null | `null` | — | Optuna study settings. |
 
 ## Replicate conditions
@@ -76,7 +76,7 @@ Replicate entries must be unique and use distinct `experiment_seed` values. Repl
 | Setting | Type | Default | Allowed | Description |
 |---|---|---|---|---|
 | `tuning.intensification.top_k` | integer | `5` | ≥ 2 | Leading candidates evaluated on additional replicates. |
-| `tuning.intensification.replicates` | list[replicate settings] | required | non-empty | Additional replicate conditions. |
+| `tuning.intensification.replicates` | integer \| list[replicate settings] | required | — | Additional replicate conditions, or a count continuing the top-level replicate seeds. |
 | `tuning.intensification.practical_threshold` | number | required | > 0 | Largest difference treated as practically equivalent. |
 | `tuning.intensification.tail_fraction` | number | `0.1` | > 0; ≤ 1 | Client tail used for worst-tail gain. |
 | `tuning.intensification.prefer` | string | `validation` | `validation`, `communication`, `flops`, `time` | Criterion used among practically equivalent candidates. |

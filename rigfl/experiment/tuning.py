@@ -27,6 +27,8 @@ from rigfl.experiment.artifacts import (
 from rigfl.experiment.config import (
     ExperimentConfig,
     IntensificationConfig,
+    ReplicateCondition,
+    replicate_conditions_from_count,
     algorithm_identity,
     fingerprint,
     hashable,
@@ -119,6 +121,19 @@ def parse_intensification(
         raise SystemExit(
             "tuning.intensification requires top-level replicates so its data and "
             "training conditions can be checked against the screening conditions"
+        )
+    if isinstance(parsed.replicates, int):
+        # A count continues the screening seeds, so the conditions are new by
+        # construction rather than by the check below.
+        parsed = parsed.model_copy(
+            update={
+                "replicates": [
+                    ReplicateCondition(**condition)
+                    for condition in replicate_conditions_from_count(
+                        parsed.replicates, start=len(screening_conditions)
+                    )
+                ]
+            }
         )
     replicates = [condition.model_dump() for condition in parsed.replicates]
     screening_data = {
