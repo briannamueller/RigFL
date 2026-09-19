@@ -171,6 +171,7 @@ tuning:
     replicates: 3
     practical_threshold: 0.005
     prefer: validation
+    ranking: pooled
 ```
 
 After the initial study, RigFL writes the additional tasks to:
@@ -209,8 +210,14 @@ so three screening replicates followed by `replicates: 3` here uses seeds 3, 4,
 and 5. That satisfies the rule that intensification must not reuse a screening
 data-seed pair; write the list out to choose the seeds yourself.
 
-The leading candidate is determined from validation performance on the new
-replicates. `practical_threshold` defines how close another candidate must be to
+`ranking` sets which replicates the shortlisted candidates are ranked on.
+`pooled`, the default, ranks each candidate on its screening and intensification
+replicates together. `intensification` ranks on the new replicates alone, which
+keeps shortlisting and ranking on separate data conditions at the cost of half
+the evidence. Pooled ranking reads the screening results again, so they must
+still be in `results/runs/`.
+
+`practical_threshold` defines how close another candidate must be to
 the leader to be treated as practically equivalent. `prefer` may remain
 `validation`, or may select the lowest communication, FLOPs, or runtime among
 the candidates found to be practically equivalent. Runtime can be compared only

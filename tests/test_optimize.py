@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -589,6 +590,74 @@ def test_intensification_requires_new_seeds_and_a_practical_threshold():
         parse_optimization(raw)
 
 
+def _run_record(
+    task: dict, *, value: float, test_value: float, communication: int = 100
+) -> dict:
+    """One completed run, as the launcher would have recorded it."""
+    k = task["algorithm_config"]["graphroute"]["graph"]["k"]
+    seed = task["experiment"]["seed"]
+    clients = {
+        str(client): {
+            "validation": {"accuracy": [value]},
+            "test": {"accuracy": [test_value]},
+        }
+        for client in range(2)
+    }
+    counts = {
+        split: {str(client): [10] for client in range(2)}
+        for split in ("validation", "test")
+    }
+    return {
+        "algorithm": "feddes",
+        "config": {
+            "experiment": {
+                "dataset": "cifar10",
+                "partition_id": "partition-a",
+                "partition_scheme": "dirichlet",
+                "data_backend": "flower",
+                "num_clients": 2,
+                "num_classes": 10,
+                "validation_fraction": 0.2,
+                "input_kind": "image",
+                "input_spec": {"shape": [3, 32, 32]},
+                "resolved_models": ["cnn", "cnn"],
+                "rounds": 1,
+                "partition_seed": task["experiment"].get("partition_seed", 0),
+                "split_seed": task["experiment"].get("split_seed", 0),
+                "seed": seed,
+            },
+            "algorithm": task["algorithm_config"],
+        },
+        "result": {
+            "selection_views_supported": ["global", "per-client"],
+            "evaluation_history": {
+                "evaluation_rounds": [0],
+                "clients": clients,
+                "client_sample_counts": counts,
+            },
+        },
+        "resources": {
+            "observed": {"communication_bytes": {"total": communication}},
+            "attributed_training": {
+                "flops": 1000,
+                "wall_seconds": 1.0,
+                "wall_seconds_comparable": True,
+            },
+            "measurement": {"timing": {"hardware": {"device": "cpu"}}},
+        },
+        "_source_file": f"k{k}_seed{seed}.json",
+    }
+
+
+def _write_run_store(root: Path, records: list[dict]) -> Path:
+    """Put screening results where a study's run store would hold them."""
+    runs = root / "runs"
+    runs.mkdir(parents=True, exist_ok=True)
+    for record in records:
+        (runs / Path(record["_source_file"]).name).write_text(json.dumps(record))
+    return runs
+
+
 def test_intensification_shortlists_compares_and_selects_on_validation(
     tmp_path, monkeypatch
 ):
@@ -636,60 +705,12 @@ def test_intensification_shortlists_compares_and_selects_on_validation(
 
     def fake_run(task, out_dir, **_):
         k = task["algorithm_config"]["graphroute"]["graph"]["k"]
-        value = {3: 0.80, 5: 0.80, 7: 0.70}[k]
-        communication = {3: 300, 5: 200, 7: 100}[k]
-        seed = task["experiment"]["seed"]
-        clients = {
-            str(client): {
-                "validation": {"accuracy": [value]},
-                "test": {"accuracy": [0.99 if k == 7 else 0.01]},
-            }
-            for client in range(2)
-        }
-        counts = {
-            split: {str(client): [10] for client in range(2)}
-            for split in ("validation", "test")
-        }
-        return {
-            "algorithm": "feddes",
-            "config": {
-                "experiment": {
-                    "dataset": "cifar10",
-                    "partition_id": "partition-a",
-                    "partition_scheme": "dirichlet",
-                    "data_backend": "flower",
-                    "num_clients": 2,
-                    "num_classes": 10,
-                    "validation_fraction": 0.2,
-                    "input_kind": "image",
-                    "input_spec": {"shape": [3, 32, 32]},
-                    "resolved_models": ["cnn", "cnn"],
-                    "rounds": 1,
-                    "partition_seed": task["experiment"].get("partition_seed", 0),
-                    "split_seed": task["experiment"].get("split_seed", 0),
-                    "seed": seed,
-                },
-                "algorithm": task["algorithm_config"],
-            },
-            "result": {
-                "selection_views_supported": ["global", "per-client"],
-                "evaluation_history": {
-                    "evaluation_rounds": [0],
-                    "clients": clients,
-                    "client_sample_counts": counts,
-                },
-            },
-            "resources": {
-                "observed": {"communication_bytes": {"total": communication}},
-                "attributed_training": {
-                    "flops": 1000,
-                    "wall_seconds": 1.0,
-                    "wall_seconds_comparable": True,
-                },
-                "measurement": {"timing": {"hardware": {"device": "cpu"}}},
-            },
-            "_source_file": f"k{k}_seed{seed}.json",
-        }
+        return _run_record(
+            task,
+            value={3: 0.80, 5: 0.80, 7: 0.70}[k],
+            test_value=0.99 if k == 7 else 0.01,
+            communication={3: 300, 5: 200, 7: 100}[k],
+        )
 
     manifest = _manifest(spec, study)
     screening_records = [
@@ -697,6 +718,7 @@ def test_intensification_shortlists_compares_and_selects_on_validation(
         for trial in study.trials
         for task in _tasks(spec, trial.params)
     ]
+    _write_run_store(tmp_path, screening_records)
     screening = rank(
         screening_records,
         manifest,
@@ -748,6 +770,80 @@ def test_intensification_shortlists_compares_and_selects_on_validation(
     expanded, manifest = expand(selected)
     assert len(expanded) == 5
     assert manifest is None
+
+
+@pytest.mark.parametrize(
+    "ranking, winning_k", [("intensification", 5), ("pooled", 3)]
+)
+def test_ranking_basis_decides_the_shortlist_winner(
+    tmp_path, monkeypatch, ranking, winning_k
+):
+    raw = _with_zipped_replicates(_spec())
+    raw["tuning"]["search_space"] = {
+        "algorithm.graphroute.graph.k": {"type": "categorical", "values": [3, 5]}
+    }
+    raw["tuning"]["intensification"] = {
+        "top_k": 2,
+        "replicates": _intensification_replicates(),
+        "practical_threshold": 0.01,
+        "ranking": ranking,
+    }
+    spec = parse_optimization(raw)
+    complete = SimpleNamespace(name="COMPLETE")
+    study = SimpleNamespace(
+        study_name="adaptive",
+        trials=[
+            SimpleNamespace(
+                number=index,
+                state=complete,
+                params={"algorithm.graphroute.graph.k": k},
+                value=value,
+                user_attrs={},
+            )
+            for index, (k, value) in enumerate(((3, 0.90), (5, 0.80)))
+        ],
+    )
+
+    # k=3 screens better and intensifies worse, so the two bases disagree.
+    screened = {3: 0.90, 5: 0.80}
+    intensified = {3: 0.70, 5: 0.75}
+
+    def fake_run(task, out_dir, **_):
+        k = task["algorithm_config"]["graphroute"]["graph"]["k"]
+        seed = task["experiment"]["seed"]
+        return _run_record(
+            task,
+            value=intensified[k] if seed >= 10 else screened[k],
+            test_value=0.5,
+        )
+
+    manifest = _manifest(spec, study)
+    screening_records = [
+        fake_run(task, tmp_path)
+        for trial in study.trials
+        for task in _tasks(spec, trial.params)
+    ]
+    _write_run_store(tmp_path, screening_records)
+    ranked = rank(screening_records, manifest, metric="accuracy", views=["global"])
+    study_dir = tmp_path / "study"
+    write_ranking(ranked, screening_records, manifest, study_dir)
+
+    monkeypatch.setattr("rigfl.experiment.intensification.run_config", fake_run)
+    artifact = finalize_intensification(study_dir / "ranking.json", run_missing=True)
+    group = artifact["groups"][0]
+    selected = next(
+        candidate
+        for candidate in group["candidates"]
+        if candidate["candidate_id"] == group["selected_candidate"]
+    )
+
+    assert artifact["selection_protocol"]["ranking_basis"] == ranking
+    assert selected["candidate_parameters"]["algorithm.graphroute.graph.k"] == winning_k
+    for candidate in group["candidates"]:
+        if ranking == "pooled":
+            assert len(candidate["pooled_validation"]["per_replicate"]) == 8
+        else:
+            assert "pooled_validation" not in candidate
 
 
 def test_collection_uses_and_enforces_the_adaptive_objective_protocol():

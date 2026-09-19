@@ -381,6 +381,13 @@ class IntensificationConfig(BaseModel):
         "validation",
         description="Criterion used among practically equivalent candidates.",
     )
+    ranking: Literal["pooled", "intensification"] = Field(
+        "pooled",
+        description=(
+            "Replicates a shortlisted candidate is ranked on: the screening and "
+            "intensification replicates together, or intensification only."
+        ),
+    )
 
     @model_validator(mode="after")
     def _validate_replicates(self):

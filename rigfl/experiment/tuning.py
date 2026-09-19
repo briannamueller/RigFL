@@ -42,11 +42,11 @@ from rigfl.experiment.paths import (
 from rigfl.experiment.registry import algorithm_spec, config_class
 
 #: Bumped when the study layout changes in a way a reader must notice.
-MANIFEST_SCHEMA_VERSION = 5
+MANIFEST_SCHEMA_VERSION = 6
 MANIFEST_NAME = "study.json"
 MANIFEST_KIND = "rigfl.tuning_study"
 
-ARTIFACT_SCHEMA_VERSION = 1
+ARTIFACT_SCHEMA_VERSION = 2
 ARTIFACT_KIND = "rigfl.tuning_ranking"
 SELECTION_SCHEMA_VERSION = 1
 SELECTION_KIND = "rigfl.tuning_selection"
@@ -789,6 +789,7 @@ def build_intensification_plan(
         "practical_threshold": intensification["practical_threshold"],
         "tail_fraction": intensification["tail_fraction"],
         "prefer": intensification["prefer"],
+        "ranking": intensification["ranking"],
         "shortlists": shortlists,
     }
 
