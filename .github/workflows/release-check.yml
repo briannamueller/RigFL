@@ -48,7 +48,6 @@ jobs:
                 min_partition_size: 2
                 partition_seed: 0
                 train_per_client: 8
-                validation_per_client: 2
                 test_per_client: 4
             cifar10_pathological:
               backend: flower

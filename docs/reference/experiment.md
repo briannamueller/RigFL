@@ -80,6 +80,7 @@ Replicate entries must be unique and use distinct `experiment_seed` values. Repl
 | `tuning.intensification.practical_threshold` | number | required | > 0 | Largest difference treated as practically equivalent. |
 | `tuning.intensification.tail_fraction` | number | `0.1` | > 0; ≤ 1 | Client tail used for worst-tail gain. |
 | `tuning.intensification.prefer` | string | `validation` | `validation`, `communication`, `flops`, `time` | Criterion used among practically equivalent candidates. |
+| `tuning.intensification.ranking` | string | `pooled` | `pooled`, `intensification` | Replicates a shortlisted candidate is ranked on: the screening and intensification replicates together, or intensification only. |
 
 ## Categorical search parameters
 
