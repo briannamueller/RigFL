@@ -79,13 +79,6 @@ summary produced by `collect` is explained in
 
 The sections below walk through the same CIFAR-10 example in more detail.
 
-Start with the [configuration guide](https://github.com/briannamueller/RigFL/blob/main/docs/configuration.md) or
-[data guide](https://github.com/briannamueller/RigFL/blob/main/docs/data.md). For exhaustive option lookup, use the references for
-[experiments](https://github.com/briannamueller/RigFL/blob/main/docs/reference/experiment.md),
-[algorithms](https://github.com/briannamueller/RigFL/blob/main/docs/reference/algorithms.md), [data](https://github.com/briannamueller/RigFL/blob/main/docs/reference/data.md), and
-[models](https://github.com/briannamueller/RigFL/blob/main/docs/reference/models.md).
-
-
 ## Data partitions
 
 A data partition is the complete set of client datasets produced from one dataset configuration.
@@ -178,6 +171,11 @@ support different client architectures, set `experiment.model_family` to choose
 a model family. See the [model reference](https://github.com/briannamueller/RigFL/blob/main/docs/reference/models.md) for the
 available architectures and families.
 
+See the [configuration guide](https://github.com/briannamueller/RigFL/blob/main/docs/configuration.md)
+for working with run and sweep files. The
+[experiment reference](https://github.com/briannamueller/RigFL/blob/main/docs/reference/experiment.md)
+and [algorithm reference](https://github.com/briannamueller/RigFL/blob/main/docs/reference/algorithms.md)
+document all supported settings, including their defaults and allowed values.
 
 Run the experiment with:
 
@@ -264,13 +262,6 @@ python -m rigfl.experiment.launch \
 RigFL also supports hyperparameter tuning with Optuna. See the
 [hyperparameter-tuning guide](https://github.com/briannamueller/RigFL/blob/main/docs/hyperparameter_tuning.md).
 
-### Variance studies
-
-To examine how results vary with partition, split, and training seeds, use a
-crossed seed sweep. The [results guide](https://github.com/briannamueller/RigFL/blob/main/docs/results.md)
-shows the sweep configuration and analysis command.
-
-
 ## Evaluation and reporting
 
 Summarize results with:
@@ -295,9 +286,6 @@ when the replicates have distinct experiment seeds.
 
 When matching Local runs are available, `collect` also prints a client-level
 performance analysis below the run summary.
-
-See the [results guide](https://github.com/briannamueller/RigFL/blob/main/docs/results.md)
-for filtering and saving reports or comparing algorithms and settings.
 
 ### Client-level performance analysis
 
@@ -339,6 +327,10 @@ Add resource measurements to the report with:
 ```bash
 python -m rigfl.experiment.collect --include-resources
 ```
+
+See the [results guide](https://github.com/briannamueller/RigFL/blob/main/docs/results.md)
+for detailed workflows for summarizing runs, comparing experiments, and
+examining sensitivity to different sources of randomness.
 
 ## Adding an algorithm
 

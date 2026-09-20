@@ -10,7 +10,6 @@ affect interpretation or comparability are listed here.
 | **FedProx** | Clients perform a fixed configured number of local epochs. | This implements the proximal objective but not the paper's systems-heterogeneity experiments with variable work or its abstract gamma-inexact local solver. |
 | **FedProto / FedTGP** | RigFL adds predictive probabilities that the papers do not specify. | See [Prototype loss interpretation](#prototype-loss-interpretation) for how these probabilities affect evaluation. |
 | **FedProto** | Prototypes are computed in a clean pass after local training. | Some implementations accumulate them during training, which averages features from a model that was still moving. |
-| **FedGH** | The global header is trained on the server, per Algorithm 1 / Eq. 4. | Comparisons should verify that the server optimizer updates the header. |
 | **LG-FedAvg** | Trains from scratch. | The original's released scripts warm-start from an 800–1800-round FedAvg checkpoint and then run 500 LG rounds. From-scratch is a weaker configuration, so this number is not comparable to the paper's. |
 | **LG-FedAvg** | Shares exactly one `nn.Linear` (the head). | The original keeps two layers local. RigFL's split point is fixed by `ClientModel`'s structure rather than configurable. |
 | **FedKD** | Averages mentee *parameters*, not gradients. | The paper transmits gradients and applies `Θ_s -= η_s · ḡ`. The two coincide at `local_epochs = 1` and diverge above it. |
