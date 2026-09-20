@@ -78,7 +78,7 @@ def _spec():
 def test_included_tuning_examples_validate(filename):
     import yaml
 
-    path = Path(__file__).parents[1] / "experiments" / filename
+    path = Path(__file__).parents[1] / "configs" / "experiments" / filename
     spec = parse_optimization(yaml.safe_load(path.read_text()))
 
     assert spec.algorithm == "fedprox"

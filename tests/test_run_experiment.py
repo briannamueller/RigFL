@@ -22,7 +22,12 @@ def _resolved(exp):
 
 
 def test_cifar10_example_configuration_loads():
-    config = Path(__file__).parents[1] / "experiments" / "cifar10_run.yaml"
+    config = (
+        Path(__file__).parents[1]
+        / "configs"
+        / "experiments"
+        / "cifar10_run.yaml"
+    )
     experiment, algorithm = run_module.load_run_config(str(config))
 
     assert experiment["dataset"] == "cifar10"

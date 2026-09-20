@@ -16,18 +16,18 @@ def test_init_project_creates_the_packaged_starter_files(tmp_path):
 
     assert created == [
         project / "configs/datasets.yaml",
-        project / "experiments/cifar10_run.yaml",
-        project / "experiments/cifar10_sweep.yaml",
+        project / "configs/experiments/cifar10_run.yaml",
+        project / "configs/experiments/cifar10_sweep.yaml",
         project / ".gitignore",
     ]
     assert (project / "configs/datasets.yaml").read_bytes() == (
         ROOT / "configs/datasets.yaml"
     ).read_bytes()
-    assert (project / "experiments/cifar10_run.yaml").read_bytes() == (
-        ROOT / "experiments/cifar10_run.yaml"
+    assert (project / "configs/experiments/cifar10_run.yaml").read_bytes() == (
+        ROOT / "configs/experiments/cifar10_run.yaml"
     ).read_bytes()
-    assert (project / "experiments/cifar10_sweep.yaml").read_bytes() == (
-        ROOT / "experiments/cifar10_sweep.yaml"
+    assert (project / "configs/experiments/cifar10_sweep.yaml").read_bytes() == (
+        ROOT / "configs/experiments/cifar10_sweep.yaml"
     ).read_bytes()
     assert "data/" in (project / ".gitignore").read_text()
     assert not (project / "data").exists()
@@ -44,7 +44,7 @@ def test_init_project_refuses_all_writes_when_a_target_exists(tmp_path):
         init_project(project)
 
     assert existing.read_text() == "keep me\n"
-    assert not (project / "experiments").exists()
+    assert not (project / "configs/experiments").exists()
     assert not (project / ".gitignore").exists()
 
 

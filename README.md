@@ -64,7 +64,7 @@ cd my-rigfl-project
 
 python -m rigfl.experiment.run \
   --algorithm fedavg \
-  --config experiments/cifar10_run.yaml
+  --config configs/experiments/cifar10_run.yaml
 
 python -m rigfl.experiment.collect
 ```
@@ -72,7 +72,7 @@ python -m rigfl.experiment.collect
 `rigfl init` sets up a starter project with example dataset and experiment
 configurations. Dataset configurations are stored in `configs/datasets.yaml`
 (see [Data partitions](#data-partitions)), while run and sweep configurations
-are stored under `experiments/` (see
+are stored under `configs/experiments/` (see
 [Configure and run experiments](#configure-and-run-experiments)). The results
 summary produced by `collect` is explained in
 [Evaluation and reporting](#evaluation-and-reporting).
@@ -139,7 +139,7 @@ and dataset-specific dependencies.
 ## Configure and run experiments
 
 Configure the experiment in
-[`experiments/cifar10_run.yaml`](https://github.com/briannamueller/RigFL/blob/main/experiments/cifar10_run.yaml).
+[`configs/experiments/cifar10_run.yaml`](https://github.com/briannamueller/RigFL/blob/main/configs/experiments/cifar10_run.yaml).
 
 The YAML has two sections. Entries under `experiment` define the overarching
 configuration for the execution of RigFL’s shared workflow. Entries under
@@ -182,7 +182,7 @@ Run the experiment with:
 ```bash
 python -m rigfl.experiment.run \
   --algorithm fedavg \
-  --config experiments/cifar10_run.yaml
+  --config configs/experiments/cifar10_run.yaml
 ```
 
 This trains FedAvg for two communication rounds and writes the result under
@@ -216,7 +216,7 @@ the sweep into independent tasks that can run sequentially or in parallel, and
 skips tasks whose results already exist, so sweeps can be resumed or extended
 incrementally.
 
-The following sweep defined in `experiments/cifar10_sweep.yaml` runs Local and FedAvg at
+The following sweep defined in `configs/experiments/cifar10_sweep.yaml` runs Local and FedAvg at
 two learning rates across three seed replicates (12 runs):
 
 ```yaml
@@ -245,7 +245,7 @@ training seeds for one repetition.
 Generate the sweep grid with:
 
 ```bash
-python -m rigfl.experiment.launch --config experiments/cifar10_sweep.yaml
+python -m rigfl.experiment.launch --config configs/experiments/cifar10_sweep.yaml
 ```
 
 This writes `results/cifar10_sweep/grid.jsonl`, where each line is one task: a

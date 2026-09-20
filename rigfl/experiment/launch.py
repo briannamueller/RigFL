@@ -4,7 +4,7 @@ Sweep axes form a Cartesian product; zipped replicates do not. Fixed settings
 belong under ``base``; ``launch`` writes one configuration per task to
 ``grid.jsonl``.
 
-    python -m rigfl.experiment.launch --config experiments/cifar_baselines.yaml --queue gpu
+    python -m rigfl.experiment.launch --config configs/experiments/cifar_baselines.yaml --queue gpu
     python -m rigfl.experiment.launch --name demo --algorithms local,fedproto \
         --seeds 0-2 --sweep algorithm.lamda=0.1,1,10 --queue gpu
 """

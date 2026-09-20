@@ -8,8 +8,8 @@ from pathlib import Path
 
 _TEMPLATE_FILES = (
     Path("configs/datasets.yaml"),
-    Path("experiments/cifar10_run.yaml"),
-    Path("experiments/cifar10_sweep.yaml"),
+    Path("configs/experiments/cifar10_run.yaml"),
+    Path("configs/experiments/cifar10_sweep.yaml"),
     Path(".gitignore"),
 )
 
@@ -67,7 +67,7 @@ def main(argv: list[str] | None = None) -> None:
         print("  python -m rigfl.data.generate --dataset cifar10")
         print(
             "  python -m rigfl.experiment.run --algorithm fedavg "
-            "--config experiments/cifar10_run.yaml"
+            "--config configs/experiments/cifar10_run.yaml"
         )
 
 

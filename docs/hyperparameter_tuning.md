@@ -81,7 +81,7 @@ Run the study with:
 
 ```bash
 python -m rigfl.experiment.optimize \
-  --config experiments/cifar10_optuna.yaml
+  --config configs/experiments/cifar10_optuna.yaml
 ```
 
 The study name determines its directory under `results/`. Running the same

@@ -9,7 +9,7 @@ Run files contain `experiment` and `algorithm` sections. See the
 [algorithm reference](reference/algorithms.md) for available settings.
 
 The complete starter file is
-[`experiments/cifar10_run.yaml`](../experiments/cifar10_run.yaml).
+[`configs/experiments/cifar10_run.yaml`](../configs/experiments/cifar10_run.yaml).
 
 Use `--set` to override YAML settings for one run. Paths use the `experiment.`
 or `algorithm.` YAML section name:
@@ -17,7 +17,7 @@ or `algorithm.` YAML section name:
 ```bash
 python -m rigfl.experiment.run \
   --algorithm fedprox \
-  --config experiments/cifar10_run.yaml \
+  --config configs/experiments/cifar10_run.yaml \
   --set experiment.rounds=50 algorithm.mu=0.1
 ```
 
@@ -28,7 +28,7 @@ Sweep paths begin with `experiment.` or `algorithm.`.
 
 `replicates` pairs partition, split, and experiment seeds. Its seed fields
 cannot also appear under `sweep`. See
-[`experiments/cifar10_sweep.yaml`](../experiments/cifar10_sweep.yaml) for a
+[`configs/experiments/cifar10_sweep.yaml`](../configs/experiments/cifar10_sweep.yaml) for a
 complete example.
 
 ## Tuning

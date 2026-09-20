@@ -47,5 +47,5 @@ include = ["rigfl*"]
 rigfl = [
     "templates/.gitignore",
     "templates/configs/*.yaml",
-    "templates/experiments/*.yaml",
+    "templates/configs/experiments/*.yaml",
 ]

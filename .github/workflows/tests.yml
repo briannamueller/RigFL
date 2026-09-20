@@ -55,7 +55,7 @@ jobs:
           /tmp/rigfl-wheel-smoke/bin/python -c "import rigfl; from rigfl.experiment.registry import REGISTRY"
           /tmp/rigfl-wheel-smoke/bin/rigfl init /tmp/rigfl-wheel-project
           test -f /tmp/rigfl-wheel-project/configs/datasets.yaml
-          test -f /tmp/rigfl-wheel-project/experiments/cifar10_run.yaml
+          test -f /tmp/rigfl-wheel-project/configs/experiments/cifar10_run.yaml
           test -f /tmp/rigfl-wheel-project/.gitignore
 
   configuration-docs:

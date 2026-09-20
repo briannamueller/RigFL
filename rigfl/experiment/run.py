@@ -1,6 +1,6 @@
 """Run one experiment and save its resolved configuration and results.
 
-    python -m rigfl.experiment.run --algorithm fedproto --config experiments/cifar10_run.yaml
+    python -m rigfl.experiment.run --algorithm fedproto --config configs/experiments/cifar10_run.yaml
     python -m rigfl.experiment.run --algorithm fedproto --set algorithm.lamda=10
     python -m rigfl.experiment.run --algorithm fedtgp \
         --set experiment.rounds=50 algorithm.server_epochs=100
