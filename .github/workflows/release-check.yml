@@ -130,8 +130,9 @@ jobs:
           $RIGFL_PYTHON -m rigfl.experiment.run \
             --algorithm local \
             --config configs/experiment.yaml \
-            --dataset cifar10_pathological \
-            --out-dir results/pathological
+            --set \
+              experiment.dataset=cifar10_pathological \
+              experiment.out_dir=results/pathological
           $RIGFL_PYTHON -m rigfl.experiment.run \
             --algorithm local \
             --config configs/biosilo_experiment.yaml
