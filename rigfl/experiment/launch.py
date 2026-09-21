@@ -15,6 +15,9 @@ import argparse
 import difflib
 import itertools
 import json
+import shlex
+import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -386,26 +389,80 @@ def _check_grid(text: str, expected: int) -> None:
 
 
 def _write_grid(path: Path, grid: list[dict]) -> bool:
-    """Write a new grid, or reuse an identical existing grid."""
+    """Write or replace the working grid, reusing identical contents."""
     body = "".join(json.dumps(task) + "\n" for task in grid)
     if path.exists():
         try:
             existing = path.read_text()
-            _check_grid(existing, len(grid))
+            _check_grid(existing, len(existing.splitlines()))
         except (OSError, ValueError, json.JSONDecodeError) as error:
-            raise SystemExit(f"cannot reuse existing grid {path}: {error}") from error
-        if existing != body:
             raise SystemExit(
-                f"{path} already contains a different sweep. Use a new sweep "
-                "name so submitted jobs continue to reference an immutable grid."
-            )
-        return False
+                f"cannot replace existing grid {path}: {error}"
+            ) from error
+        if existing == body:
+            return False
     atomic_write_text(
         path,
         body,
         validate=lambda text: _check_grid(text, len(grid)),
     )
     return True
+
+
+def _stage_sge_grid(grid_path: Path) -> Path:
+    """Copy a working grid so queued SGE tasks cannot observe later edits."""
+    try:
+        body = grid_path.read_text()
+        task_count = len(body.splitlines())
+        _check_grid(body, task_count)
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        raise SystemExit(f"cannot stage grid {grid_path}: {error}") from error
+
+    submissions = grid_path.parent / "submissions"
+    submissions.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    submission_dir = Path(
+        tempfile.mkdtemp(prefix=f"{timestamp}-", dir=submissions)
+    )
+    snapshot = submission_dir / "grid.jsonl"
+    atomic_write_text(
+        snapshot,
+        body,
+        validate=lambda text: _check_grid(text, task_count),
+    )
+    return snapshot
+
+
+def _qsub_command(grid_path: Path, results_root: str, queue: str,
+                  task_count: int) -> list[str]:
+    return [
+        "qsub", "-t", f"1-{task_count}", "-q", queue, "-l", "ngpus=1",
+        "scripts/run_grid.sh", str(grid_path), results_root,
+    ]
+
+
+def _submit_or_show_sge(grid_path: Path, results_root: str, queue: str | None,
+                        task_count: int, submit: bool) -> None:
+    if not submit:
+        command = [
+            "python", "-m", "rigfl.experiment.launch",
+            "--grid", str(grid_path),
+            "--results-root", results_root,
+            "--queue", queue or "<gpu-queue>",
+            "--submit",
+        ]
+        print(f"\nSubmit:\n  {shlex.join(command)}")
+        return
+
+    if not queue:
+        raise SystemExit("--submit requires --queue (e.g. --queue gpu)")
+
+    import subprocess
+
+    snapshot = _stage_sge_grid(grid_path)
+    qsub = _qsub_command(snapshot, results_root, queue, task_count)
+    print(f"Submitting fixed grid snapshot: {snapshot}")
+    subprocess.run(qsub, check=True)
 
 
 def run_task(grid_path: str, task_id: int, out_dir: Path,
@@ -497,7 +554,7 @@ def main() -> None:
     p = argparse.ArgumentParser(description="Declare + submit a RigFL sweep.")
     p.add_argument("--config", help="YAML sweep file (overrides the CLI sweep flags)")
     p.add_argument("--name", default="sweep")
-    p.add_argument("--queue", help="cluster queue for the printed qsub line (e.g. gpu)")
+    p.add_argument("--queue", help="SGE queue used with --submit (e.g. gpu)")
     p.add_argument("--algorithms", default="baselines", help="'all' | 'baselines' | comma list")
     p.add_argument("--seeds", default="0-2")
     p.add_argument("--sweep", nargs="*", default=[], help="extra axes, e.g. algorithm.lamda=0.1,1,10")
@@ -509,7 +566,9 @@ def main() -> None:
     )
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--force", action="store_true", help="re-run tasks even if the result exists")
-    p.add_argument("--submit", action="store_true", help="run qsub instead of printing it")
+    p.add_argument(
+        "--submit", action="store_true", help="submit an SGE array through qsub"
+    )
     args = p.parse_args()
 
     if args.grid_task is not None:                            # ── per-task execution ──
@@ -529,18 +588,8 @@ def main() -> None:
             raise SystemExit(f"cannot read grid {grid_path}: {error}") from error
         _validate_biosilo_partitions(grid)
         n = len(grid)
-        qsub = (
-            f"qsub -t 1-{n} -q {args.queue or '<gpu-queue>'} -l ngpus=1 "
-            f"scripts/run_grid.sh {grid_path} {args.results_root}"
-        )
         print(f"Grid contains {n} tasks: {grid_path}")
-        print(f"\nSubmit:\n  {qsub}")
-        if args.submit:
-            if not args.queue:
-                raise SystemExit("--submit requires --queue (e.g. --queue gpu)")
-            import subprocess
-
-            subprocess.run(qsub.split(), check=True)
+        _submit_or_show_sge(grid_path, args.results_root, args.queue, n, args.submit)
         return
 
     spec = _spec_from_args(args)
@@ -560,21 +609,12 @@ def main() -> None:
     action = "Wrote" if created else "Reused"
     print(f"{action} {n} tasks at {grid_path}")
     print(f"  algorithms: {sorted({c['algorithm'] for c in grid})}")
-    qsub = (
-        f"qsub -t 1-{n} -q {args.queue or '<gpu-queue>'} -l ngpus=1 "
-        f"scripts/run_grid.sh {grid_path} {args.results_root}"
-    )
-    print(f"\nSubmit:\n  {qsub}")
+    _submit_or_show_sge(grid_path, args.results_root, args.queue, n, args.submit)
     collect = (
         "python -m rigfl.experiment.collect --results-dir "
         f"{run_store(args.results_root)}"
     )
     print(f"Collect when done:\n  {collect}")
-    if args.submit:
-        if not args.queue:
-            raise SystemExit("--submit requires --queue (e.g. --queue gpu)")
-        import subprocess
-        subprocess.run(qsub.split(), check=True)
 
 
 if __name__ == "__main__":

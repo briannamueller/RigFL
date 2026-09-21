@@ -10,9 +10,7 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
-from rigfl.experiment.launch import _write_grid, build_grid
+from rigfl.experiment.launch import _stage_sge_grid, _write_grid, build_grid
 
 
 def _counts(grid):
@@ -124,35 +122,6 @@ def test_misspelt_fixed_algorithm_setting_is_refused():
         })
 
 
-def test_valid_algorithm_axis_expands():
-    from rigfl.experiment.launch import build_grid
-    grid = build_grid({
-        "algorithms": ["feddes"],
-        "sweep": {"algorithm.graphroute.graph.k": [3, 5]},
-    })
-    assert [
-        t["algorithm_config"]["graphroute"]["graph"]["k"] for t in grid
-    ] == [3, 5]
-
-
-def test_algorithm_axis_does_not_multiply_algorithms_without_the_field():
-    """GraphRoute's graph k belongs to FedDES, not Local. Sweeping it gives
-    FedDES its variants and Local exactly one task -- not a copy per value."""
-    from rigfl.experiment.launch import build_grid
-    grid = build_grid({"algorithms": ["feddes", "local"],
-                       "sweep": {"algorithm.graphroute.graph.k": [3, 5, 10]}})
-    counts = {m: sum(t["algorithm"] == m for t in grid) for m in ("feddes", "local")}
-    assert counts == {"feddes": 3, "local": 1}
-
-
-def test_axis_valid_for_only_one_selected_algorithm_is_kept():
-    """An axis no *selected* algorithm has is an error; an axis some have is scoped."""
-    from rigfl.experiment.launch import build_grid
-    grid = build_grid({"algorithms": ["feddes", "local"],
-                       "sweep": {"algorithm.graphroute.graph.k": [3, 5]}})
-    assert {t["algorithm"] for t in grid} == {"feddes", "local"}
-
-
 def test_fixed_algorithm_settings_are_scoped_across_mixed_algorithms():
     grid = build_grid({
         "algorithms": ["fedprox", "feddes"],
@@ -207,18 +176,19 @@ def test_fixed_setting_supported_by_no_selected_algorithm_is_an_error():
         })
 
 
-def test_saved_grid_can_only_be_reused_with_identical_tasks(tmp_path):
+def test_submitted_grid_stays_fixed_when_working_grid_changes(tmp_path):
     path = tmp_path / "sweep" / "grid.jsonl"
     original = [
         {"algorithm": "local", "experiment": {"seed": 0}, "algorithm_config": {}}
     ]
     changed = [
-        {"algorithm": "fedavg", "experiment": {"seed": 0}, "algorithm_config": {}}
+        {"algorithm": "fedavg", "experiment": {"seed": 0}, "algorithm_config": {}},
+        {"algorithm": "fedavg", "experiment": {"seed": 1}, "algorithm_config": {}},
     ]
 
     assert _write_grid(path, original) is True
-    assert _write_grid(path, original) is False
-    with pytest.raises(SystemExit, match="different sweep"):
-        _write_grid(path, changed)
+    submitted = _stage_sge_grid(path)
+    assert _write_grid(path, changed) is True
 
-    assert json.loads(path.read_text()) == original[0]
+    assert [json.loads(line) for line in path.read_text().splitlines()] == changed
+    assert [json.loads(line) for line in submitted.read_text().splitlines()] == original

@@ -114,6 +114,10 @@ Use `--dataset` to filter by dataset. You can combine it with `--grid`. With
 `--grid`, the runs column shows completed/expected runs, and the report lists
 completed and missing seed combinations for each row.
 
+For an exact past SGE submission, use its fixed grid at
+`results/<sweep-name>/submissions/<submission>/grid.jsonl` instead of the
+replaceable working grid.
+
 ### Save the report
 
 ```bash

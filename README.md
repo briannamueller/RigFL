@@ -259,6 +259,20 @@ python -m rigfl.experiment.launch \
   --grid-task 1
 ```
 
+Regenerating a sweep with the same name replaces this working grid. For an SGE
+array, submit through RigFL so queued tasks receive a fixed copy of the grid:
+
+```bash
+python -m rigfl.experiment.launch \
+  --grid results/cifar10_sweep/grid.jsonl \
+  --queue gpu \
+  --submit
+```
+
+Submission copies and their logs are stored below
+`results/cifar10_sweep/submissions/`; later changes to the working grid do not
+affect an array that has already been submitted.
+
 RigFL also supports hyperparameter tuning with Optuna. See the
 [hyperparameter-tuning guide](https://github.com/briannamueller/RigFL/blob/main/docs/hyperparameter_tuning.md).
 
