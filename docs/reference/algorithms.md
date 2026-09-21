@@ -102,11 +102,12 @@
 
 ## `feddes`
 
-`base.models` is set from the experiment's model selection and cannot be configured here. `base.split_mode` must be `oof_stacking`. Other settings under `algorithm.graphroute` follow the [GraphRoute configuration guide](https://github.com/briannamueller/GraphRoute#configuration).
+`base.models` is set from the experiment's model selection and cannot be configured here. `base_models_per_client` chooses whether each client trains the full selected family or its standard client-ID-assigned model. `base.split_mode` must be `oof_stacking`. Other settings under `algorithm.graphroute` follow the [GraphRoute configuration guide](https://github.com/briannamueller/GraphRoute#configuration).
 
 | Setting | Type | Default | Allowed | Description |
 |---|---|---|---|---|
 | `algorithm.graphroute` | mapping | see below | — | Settings passed to GraphRoute. |
+| `algorithm.base_models_per_client` | string | `all` | `all`, `assigned` | Base models trained by each client: every model in the experiment family, or the single model assigned by client ID. |
 | `algorithm.cache_dir` | string | `pool_cache` | — | Directory used to reuse trained base pools; empty disables caching. |
 
 ### GraphRoute defaults changed by RigFL

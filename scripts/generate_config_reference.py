@@ -374,9 +374,13 @@ def render_algorithm_reference() -> str:
             upstream_rows = {
                 row[0]: row for row in _rows(GraphRouteSettings, "algorithm.graphroute")
             }
-            cache_row = next(
-                row for row in generated_rows if row[0] == "`algorithm.cache_dir`"
-            )
+            feddes_rows = [
+                next(row for row in generated_rows if row[0] == f"`{path}`")
+                for path in (
+                    "algorithm.base_models_per_client",
+                    "algorithm.cache_dir",
+                )
+            ]
             override_rows = [row for row in generated_rows if row[0] in changed]
             settings_rows = [
                 [
@@ -386,12 +390,14 @@ def render_algorithm_reference() -> str:
                     "—",
                     "Settings passed to GraphRoute.",
                 ],
-                cache_row,
+                *feddes_rows,
             ]
             parts.append(
                 f"## `{name}`\n\n"
                 "`base.models` is set from the experiment's model selection and "
-                "cannot be configured here. `base.split_mode` must be "
+                "cannot be configured here. `base_models_per_client` chooses "
+                "whether each client trains the full selected family or its "
+                "standard client-ID-assigned model. `base.split_mode` must be "
                 "`oof_stacking`. Other "
                 "settings under `algorithm.graphroute` follow the "
                 "[GraphRoute configuration guide]"

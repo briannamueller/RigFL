@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import copy
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Literal
 
 import torch
 from graphroute.config import GraphRouteConfig, GraphRouteSettings
@@ -55,6 +55,13 @@ def _default_graphroute_settings() -> GraphRouteSettings:
 
 
 class FedDESConfig(AlgorithmConfig):
+    base_models_per_client: Literal["all", "assigned"] = Field(
+        "all",
+        description=(
+            "Base models trained by each client: every model in the experiment "
+            "family, or the single model assigned by client ID."
+        ),
+    )
     graphroute: GraphRouteSettings = Field(
         default_factory=_default_graphroute_settings,
         description="GraphRoute modeling and base-pool settings.",
@@ -116,6 +123,19 @@ class FedDES(Algorithm):
         if self.model_ids is None:
             self.model_ids = [f"model_{i}" for i in range(len(base_factories))]
 
+    def _base_model_indices(self, client_id: int) -> tuple[int, ...]:
+        if self.config.base_models_per_client == "assigned":
+            return (client_id % len(self.base_models),)
+        return tuple(range(len(self.base_models)))
+
+    def _base_models_for_client(self, client_id: int):
+        indices = self._base_model_indices(client_id)
+        return (
+            [self.base_factories[index] for index in indices],
+            [self.base_models[index] for index in indices],
+            [self.model_ids[index] for index in indices],
+        )
+
     @classmethod
     def from_config(cls, config, *, experiment, base_pool=None,
                     model_input_spec=None, **resources):
@@ -170,7 +190,11 @@ class FedDES(Algorithm):
         return st["local_pool"]
 
     def communication_payload_bytes(self, payload, *, kind: str) -> int:
-        return sum(payload_bytes(model) for model in self.base_models)
+        positions = {model_id: index for index, model_id in enumerate(self.model_ids)}
+        return sum(
+            payload_bytes(self.base_models[positions[model_id]])
+            for model_id in payload.model_ids
+        )
 
     def one_shot_communication(self, outgoing: list):
         """Share the ordered union of all local pools with every client once."""
@@ -203,7 +227,7 @@ class FedDES(Algorithm):
         return tr_logits
 
     # ── base-pool artifact reuse (train once; reuse across graph/GNN sweeps) ──
-    def _pool_fp(self) -> str:
+    def _pool_fp(self, client_id: int = 0) -> str:
         """Fingerprint the ordered local pool and its complete training policy."""
         from graphroute.pool_cache import (
             fingerprint_model,
@@ -211,11 +235,10 @@ class FedDES(Algorithm):
             pool_training_code_identity,
         )
         base = self.graphroute_settings.base
-        template_fingerprints = [
-            fingerprint_model(model) for model in self.base_models
-        ]
+        _, base_models, model_ids = self._base_models_for_client(client_id)
+        template_fingerprints = [fingerprint_model(model) for model in base_models]
         return fingerprint_pool(
-            model_ids=self.model_ids,
+            model_ids=model_ids,
             model_fingerprints=template_fingerprints,
             base_config={
                 "task": "classification", "num_classes": self.num_classes,
@@ -238,8 +261,9 @@ class FedDES(Algorithm):
 
         seed_everything(self.seed)
         base = self.graphroute_settings.base
+        base_factories, _, _ = self._base_models_for_client(client_id)
         models, oof_logits, _ = train_pool_oof(
-            self.base_factories, tr_ds, va_ds, device,
+            base_factories, tr_ds, va_ds, device,
             n_folds=base.oof_folds,
             inner_val_ratio=_OOF_INNER_VAL_RATIO,
             batch_size=base.batch_size,
@@ -260,21 +284,21 @@ class FedDES(Algorithm):
 
     def _train_or_load_pool(self, tr_ds, va_ds, device, client_id, monitor=None):
         """Load or train this client's pool for reuse across graph/GNN sweeps."""
+        base_factories, _, model_ids = self._base_models_for_client(client_id)
+        fp = self._pool_fp(client_id)
         if not self.cache_dir:
             if monitor is not None:
                 monitor.record_cache("base_pools", "disabled")
             from graphroute.pool_cache import in_memory_pool
             models, oof = self._train(tr_ds, va_ds, device, client_id)
             artifact = in_memory_pool(
-                models, model_ids=self.model_ids,
-                fingerprint_value=self._pool_fp())
+                models, model_ids=model_ids, fingerprint_value=fp)
             artifact.oof_logits = oof
             return artifact
         from pathlib import Path
 
         from filelock import FileLock
         from graphroute.pool_cache import cached_pool
-        fp = self._pool_fp()
         print(f"[FedDES] base pool {fp} (client {client_id})")
         directory = (Path(self.cache_dir) / self.data_id / f"pool_{fp}"
                      / "clients" / f"client_{client_id}")
@@ -290,15 +314,15 @@ class FedDES(Algorithm):
         with FileLock(directory / ".resources.lock"):
             if monitor is None:
                 artifact = cached_pool(
-                    directory, self.base_factories, train,
-                    fingerprint_value=fp, model_ids=self.model_ids,
+                    directory, base_factories, train,
+                    fingerprint_value=fp, model_ids=model_ids,
                     require_oof=True,
                     data_id=self.data_id)
             else:
                 with monitor.capture() as access:
                     artifact = cached_pool(
-                        directory, self.base_factories, train,
-                        fingerprint_value=fp, model_ids=self.model_ids,
+                        directory, base_factories, train,
+                        fingerprint_value=fp, model_ids=model_ids,
                         require_oof=True,
                         data_id=self.data_id)
                 monitor.record_cache("base_pools", "miss" if built else "hit")
@@ -374,10 +398,24 @@ class FedDES(Algorithm):
             paths.extend(artifact.model_paths)
             if can_hold_models:
                 models.extend(artifact.models)
+        local_fingerprints = [artifact.fingerprint for artifact in uploads]
+        if len(set(local_fingerprints)) == 1:
+            shared_identity = {
+                "ordered_members": model_ids,
+                "local_pool": local_fingerprints[0],
+            }
+            directory_name = f"pool_{local_fingerprints[0]}"
+        else:
+            shared_identity = {
+                "ordered_members": model_ids,
+                "local_pools": local_fingerprints,
+            }
+            directory_name = None
+        shared_fingerprint = fingerprint(shared_identity)
+        if directory_name is None:
+            directory_name = f"shared_{shared_fingerprint}"
         root = (None if not self.cache_dir else
-                Path(self.cache_dir) / self.data_id / f"pool_{self._pool_fp()}")
-        shared_fingerprint = fingerprint({"ordered_members": model_ids,
-                                          "local_pool": self._pool_fp()})
+                Path(self.cache_dir) / self.data_id / directory_name)
         if root is not None:
             _write_manifest(root, shared_fingerprint, model_ids, self.data_id)
         return PoolArtifact(

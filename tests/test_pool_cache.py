@@ -40,13 +40,15 @@ class _ScaledLinear(nn.Module):
 
 
 def _feddes(
-    tmp, *, base=None, graph=None, gnn=None, validation_fraction=0.2, seed=0
+    tmp, *, base=None, graph=None, gnn=None, validation_fraction=0.2, seed=0,
+    base_models_per_client="all",
 ):
     torch.manual_seed(0)
     factories = [lambda: nn.Linear(4, 3), lambda: nn.Linear(4, 3)]
     return FedDES(
         FedDESConfig(
             cache_dir=tmp,
+            base_models_per_client=base_models_per_client,
             graphroute={"base": base or {}, "graph": graph or {}, "gnn": gnn or {}},
         ),
         factories, 3,
@@ -54,6 +56,39 @@ def _feddes(
         seed=seed,
         validation_fraction=validation_fraction,
     )
+
+
+def test_assigned_base_models_follow_the_standard_client_mapping(monkeypatch):
+    model = _feddes("", base_models_per_client="assigned")
+
+    assert [model._base_models_for_client(cid)[2] for cid in range(5)] == [
+        ["linear-a"], ["linear-b"], ["linear-a"], ["linear-b"], ["linear-a"]
+    ]
+    assert model._pool_fp(0) == model._pool_fp(2)
+    assert model._pool_fp(0) != model._pool_fp(1)
+
+    def train(tr_ds, va_ds, device, client_id):
+        factories, _, _ = model._base_models_for_client(client_id)
+        return [factory() for factory in factories], torch.zeros(2, 1, 3)
+
+    monkeypatch.setattr(model, "_train", train)
+    first = model._train_or_load_pool(None, None, torch.device("cpu"), 0)
+    second = model._train_or_load_pool(None, None, torch.device("cpu"), 1)
+    shared = model._union_pools([first, second])
+
+    assert first.model_ids == ("linear-a",)
+    assert second.model_ids == ("linear-b",)
+    assert shared.model_ids == ("client_0/linear-a", "client_1/linear-b")
+
+
+def test_all_base_models_remains_the_default_for_every_client():
+    model = _feddes("")
+
+    assert model.config.base_models_per_client == "all"
+    assert model._base_models_for_client(0)[2] == MODEL_IDS
+    assert model._base_models_for_client(1)[2] == MODEL_IDS
+    with pytest.raises(Exception):
+        FedDESConfig(base_models_per_client="one")
 
 
 def test_pool_fp_ignores_package_versions(monkeypatch):
