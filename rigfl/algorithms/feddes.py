@@ -247,6 +247,7 @@ class FedDES(Algorithm):
             patience=base.es_patience,
             lr=base.lr,
             optimizer_name=base.optimizer,
+            momentum=base.momentum,
             weight_decay=base.weight_decay,
             task="classification",
             num_classes=self.num_classes,

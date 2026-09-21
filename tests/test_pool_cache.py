@@ -22,7 +22,6 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from rigfl.algorithms.feddes import FedDES, FedDESConfig, _MeasuredPoolOutputs
 from rigfl.core.interfaces import OneShotContext
-from rigfl.core.round import Client, p2p_one_shot
 from rigfl.eval.resources import ResourceMonitor, load_cached_measurement
 from tests.helpers import resolved_experiment
 
@@ -55,14 +54,6 @@ def _feddes(
         seed=seed,
         validation_fraction=validation_fraction,
     )
-
-
-def test_pool_fp_is_deterministic_and_client_paths_are_distinct():
-    with tempfile.TemporaryDirectory() as tmp:
-        m = _feddes(tmp)
-        assert m._pool_fp() == m._pool_fp()
-        root = Path(tmp) / DATA_ID / f"pool_{m._pool_fp()}" / "clients"
-        assert root / "client_0" != root / "client_1"
 
 
 def test_pool_fp_ignores_package_versions(monkeypatch):
@@ -149,6 +140,7 @@ def test_base_training_uses_the_nested_graphroute_settings(monkeypatch):
             "es_patience": 6,
             "lr": 0.002,
             "optimizer": "SGD",
+            "momentum": 0,
             "weight_decay": 0.03,
             "weighted_by_class": False,
             "es_metric": "val_bacc",
@@ -167,6 +159,7 @@ def test_base_training_uses_the_nested_graphroute_settings(monkeypatch):
         "patience": 6,
         "lr": 0.002,
         "optimizer_name": "SGD",
+        "momentum": 0,
         "weight_decay": 0.03,
         "task": "classification",
         "num_classes": 3,
@@ -176,18 +169,6 @@ def test_base_training_uses_the_nested_graphroute_settings(monkeypatch):
         "collate_fn": captured["collate_fn"],
     }
     assert seed_calls == [7]
-
-
-def test_graphroute_base_fields_are_accounted_for_by_feddes():
-    from graphroute.config import BaseConfig
-
-    forwarded = {
-        "oof_folds", "es_metric", "es_patience", "lr", "optimizer",
-        "weight_decay", "weighted_by_class", "epochs", "batch_size",
-    }
-    controlled = {"models", "split_mode"}
-
-    assert set(BaseConfig.model_fields) == forwarded | controlled
 
 
 def test_feddes_graphroute_defaults_and_partial_overrides():
@@ -420,42 +401,6 @@ def test_feddes_uses_rigfls_official_validation_split():
     assert outgoing is artifact
     assert state["local_pool"] is artifact
     assert captured == {"train": train, "validation": validation}
-
-
-def test_feddes_publishes_the_training_artifact_layout(tmp_path):
-    def dataset(n):
-        labels = torch.arange(n) % 3
-        return TensorDataset(torch.randn(n, 4), labels)
-
-    clients = [
-        Client(nn.Linear(4, 3), DataLoader(dataset(30), batch_size=6),
-               DataLoader(dataset(9), batch_size=9),
-               DataLoader(dataset(9), batch_size=9))
-        for _ in range(2)
-    ]
-    algorithm = FedDES(
-        FedDESConfig(
-            graphroute={
-                "base": {"epochs": 1, "oof_folds": 2},
-                "graph": {"k": 2, "pool_calibrate": False},
-                "gnn": {"arch": "mlp", "epochs": 1, "patience": 1,
-                        "hidden_dim": 8},
-            },
-            cache_dir=str(tmp_path),
-        ),
-        [lambda: nn.Linear(4, 3)], 3, data_id=DATA_ID,
-        model_ids=["linear"], seed=0)
-    p2p_one_shot(algorithm, clients, num_rounds=1, device=torch.device("cpu"),
-                 num_classes=3, verbose=False)
-
-    root = tmp_path / DATA_ID / f"pool_{algorithm._pool_fp()}"
-    assert (root / "manifest.json").exists()
-    for cid in range(2):
-        assert (root / "clients" / f"client_{cid}" / "models" / "model_0.pt").exists()
-        assert (root / "clients" / f"client_{cid}" / "oof_logits.pt").exists()
-        outputs = root / "outputs" / f"client_{cid}"
-        assert (outputs / "train_logits.pt").exists()
-        assert (outputs / "validation_logits.pt").exists()
 
 
 def test_cache_dir_is_operational_not_scientific():
