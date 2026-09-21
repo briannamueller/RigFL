@@ -81,9 +81,10 @@ def test_assigned_base_models_follow_the_standard_client_mapping(monkeypatch):
     assert shared.model_ids == ("client_0/linear-a", "client_1/linear-b")
 
 
-def test_all_base_models_remains_the_default_for_every_client():
-    model = _feddes("")
+def test_all_base_models_can_be_selected_for_every_client():
+    model = _feddes("", base_models_per_client="all")
 
+    assert FedDESConfig().base_models_per_client == "assigned"
     assert model.config.base_models_per_client == "all"
     assert model._base_models_for_client(0)[2] == MODEL_IDS
     assert model._base_models_for_client(1)[2] == MODEL_IDS

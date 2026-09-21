@@ -107,7 +107,7 @@
 | Setting | Type | Default | Allowed | Description |
 |---|---|---|---|---|
 | `algorithm.graphroute` | mapping | see below | — | Settings passed to GraphRoute. |
-| `algorithm.base_models_per_client` | string | `all` | `all`, `assigned` | Base models trained by each client: every model in the experiment family, or the single model assigned by client ID. |
+| `algorithm.base_models_per_client` | string | `assigned` | `all`, `assigned` | Base models trained by each client: every model in the experiment family, or the single model assigned by client ID. |
 | `algorithm.cache_dir` | string | `pool_cache` | — | Directory used to reuse trained base pools; empty disables caching. |
 
 ### GraphRoute defaults changed by RigFL

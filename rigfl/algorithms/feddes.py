@@ -56,7 +56,7 @@ def _default_graphroute_settings() -> GraphRouteSettings:
 
 class FedDESConfig(AlgorithmConfig):
     base_models_per_client: Literal["all", "assigned"] = Field(
-        "all",
+        "assigned",
         description=(
             "Base models trained by each client: every model in the experiment "
             "family, or the single model assigned by client ID."
