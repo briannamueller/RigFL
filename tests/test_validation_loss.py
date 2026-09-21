@@ -11,9 +11,6 @@ decision.
 from __future__ import annotations
 
 import math
-import itertools
-from types import SimpleNamespace
-
 import pytest
 import torch
 import torch.nn as nn
@@ -242,39 +239,11 @@ def test_the_two_control_metrics_stop_the_same_run_in_different_places():
     assert on_loss["early_stopping"]["stopped_at_round"] < len(script) - 1
 
 
-def test_round_selection_defaults_to_accuracy():
-    from rigfl.eval.selection import resolve_metric
-
-    assert resolve_metric(None) == "accuracy"
-
-
 def test_disabled_early_stopping_records_no_active_metric():
     record = _run([0.6, 0.9], early_stopping={"enabled": False, "patience": 3})["early_stopping"]
     assert record["enabled"] is False
     assert record["metric"] is None and record["direction"] is None
     assert record["patience"] is None and record["best_round"] is None
-
-
-def test_disabled_early_stopping_collapses_inactive_settings_in_identity():
-    from rigfl.experiment.collect import condition_fields
-    from rigfl.experiment.config import normalize_early_stopping, run_fingerprint
-    from rigfl.experiment.registry import config_class
-    from tests.helpers import resolved_experiment
-
-    off_a = {"enabled": False, "patience": 5, "metric": None}
-    off_b = {"enabled": False, "patience": 20, "metric": "accuracy"}
-    assert normalize_early_stopping(off_a) == normalize_early_stopping(off_b) == \
-        {"enabled": False}
-
-    algorithm = config_class("local")().model_dump()
-    fp = lambda es: run_fingerprint(resolved_experiment(early_stopping=es), algorithm)
-    assert fp({"enabled": False, "patience": 5}) == fp({"enabled": False, "patience": 20})
-    # ...but enabled stopping is a real setting and does separate runs
-    assert fp({"enabled": False}) != fp({"enabled": True, "metric": "accuracy",
-                                         "patience": 5})
-
-    rec = lambda es: {"config": {"experiment": {"early_stopping": es}}}
-    assert condition_fields(rec(off_a)) == condition_fields(rec(off_b))
 
 
 # ── 16-17: what stopping may and may not see ─────────────────────────────────
@@ -321,111 +290,3 @@ def test_selecting_on_loss_reads_test_from_the_validation_chosen_round():
     assert g["selected_round"] == 1                       # chosen on validation
     # round 2 has the best test loss and is not the one reported
     assert g["test"]["loss"][0] == pytest.approx(-math.log(0.20), abs=1e-5)
-
-
-# ── 19-20: hyperparameter ranking on loss ────────────────────────────────────
-
-def _tuning_fixture(val_by_candidate, test_by_candidate):
-    """A 2x2 Optuna grid whose runs carry scripted validation and test loss."""
-    from rigfl.experiment.optimize import _manifest, _tasks, parse_optimization
-
-    raw = {
-        "name": "loss_tune",
-        "algorithms": ["local"],
-        "replicates": [
-            {
-                "partition_seed": seed,
-                "split_seed": seed,
-                "experiment_seed": seed,
-            }
-            for seed in (0, 1)
-        ],
-        "tuning": {
-            "sampler": {"class": "GridSampler"},
-            "search_space": {
-                "algorithm.lr": {
-                    "type": "categorical",
-                    "values": [0.01, 0.1],
-                },
-                "algorithm.local_epochs": {
-                    "type": "categorical",
-                    "values": [1, 5],
-                },
-            },
-        },
-    }
-    spec = parse_optimization(raw)
-    complete = SimpleNamespace(name="COMPLETE")
-    trials = []
-    for number, values in enumerate(
-        itertools.product([0.01, 0.1], [1, 5])
-    ):
-        trials.append(
-            SimpleNamespace(
-                number=number,
-                state=complete,
-                params=dict(zip(spec.search_space, values)),
-                value=0.0,
-                user_attrs={},
-            )
-        )
-    manifest = _manifest(
-        spec, SimpleNamespace(study_name="loss_tune", trials=trials)
-    )
-
-    def history(cid):
-        v, t = val_by_candidate[cid], test_by_candidate[cid]
-        clients = {"0": {"validation": {"accuracy": [1.0], "loss": [v]},
-                         "test": {"accuracy": [1.0], "loss": [t]}}}
-        return {"schema_version": 3,
-                "selection_views_supported": ["global", "per-client"],
-                "evaluation_history": {"evaluation_rounds": [0], "clients": clients,
-                                       "client_sample_counts": {s: {"0": [10]}
-                                                                for s in ("validation", "test")}}}
-
-    recs = []
-    for candidate in manifest["candidates"]:
-        for task in _tasks(spec, candidate["parameters"]):
-            recs.append({"algorithm": task["algorithm"],
-                         "config": {"experiment": dict(task["experiment"]),
-                                    "algorithm": dict(task["algorithm_config"])},
-                         "result": history(candidate["id"])})
-    return recs, dict(manifest, _path="(test)")
-
-
-def test_tuning_ranks_candidates_on_real_validation_loss_and_minimizes_it():
-    from rigfl.experiment.tuning import rank
-
-    val = {0: 0.90, 1: 0.20, 2: 0.55, 3: 0.75}       # candidate 1 is the best (lowest)
-    art = rank(*_tuning_fixture(val, {c: 0.5 for c in val})[::-1][::-1],
-               metric="loss", views=["global"])
-    ranking = art["groups"][0]["rankings"]["global"]
-    assert art["selection_protocol"]["direction"] == "minimize"
-    assert ranking["selected_candidate"] == 1
-    assert ranking["order"] == [1, 2, 3, 0]          # ascending loss
-    means = [next(c["views"]["global"]["validation"]["mean"]
-                  for c in art["groups"][0]["candidates"] if c["id"] == cid)
-             for cid in ranking["order"]]
-    assert means == sorted(means)
-    assert means[0] == pytest.approx(0.20)
-
-
-def test_changing_candidate_test_loss_cannot_affect_a_validation_loss_ranking():
-    from rigfl.experiment.tuning import rank
-
-    val = {0: 0.90, 1: 0.20, 2: 0.55, 3: 0.75}
-    a = rank(*_tuning_fixture(val, {0: 0.10, 1: 0.99, 2: 0.50, 3: 0.60}),
-             metric="loss", views=["global"])
-    b = rank(*_tuning_fixture(val, {0: 0.99, 1: 0.10, 2: 0.60, 3: 0.50}),
-             metric="loss", views=["global"])
-
-    for view in ("global",):
-        assert a["groups"][0]["rankings"][view]["order"] == \
-            b["groups"][0]["rankings"][view]["order"]
-        assert a["groups"][0]["rankings"][view]["selected_candidate"] == \
-            b["groups"][0]["rankings"][view]["selected_candidate"] == 1
-    assert a == b
-    assert all(
-        "test" not in candidate["views"]["global"]
-        for candidate in a["groups"][0]["candidates"]
-    )

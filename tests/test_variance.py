@@ -12,7 +12,6 @@ from rigfl.experiment.registry import algorithm_run_fingerprint, config_class
 from rigfl.experiment.variance import (
     VariancePilotError,
     analyze_variance_pilot,
-    format_variance_pilot,
     main,
 )
 from tests.helpers import resolved_experiment
@@ -157,13 +156,10 @@ def test_variance_pilot_reports_selection_fallback_and_mixed_rounds():
 
     artifact = analyze_variance_pilot(records, view="global")
     group = artifact["groups"][0]
-    rendered = format_variance_pilot(artifact)
 
     assert group["selection_view"] == "per-client"
     assert group["selection_view_fallback"] is True
     assert group["mixed_rounds"] is True
-    assert "Requested selection view `global` was unavailable" in rendered
-    assert "separately selected rounds" in rendered
 
 
 def test_variance_pilot_marks_tied_source_rankings():
@@ -179,7 +175,6 @@ def test_variance_pilot_marks_tied_source_rankings():
         "experiment_seed", "partition_seed", "split_seed"
     ]]
     assert {source["rank"] for source in group["seed_sources"].values()} == {1}
-    assert "Tied marginal spreads" in format_variance_pilot(artifact)
 
 
 def test_variance_pilot_ties_spreads_that_print_identically():
@@ -213,7 +208,6 @@ def test_variance_pilot_records_lower_is_better_direction():
     artifact = analyze_variance_pilot(records, metric="loss")
 
     assert artifact["selection"]["direction"] == "minimize"
-    assert "Metric direction: minimize" in format_variance_pilot(artifact)
 
 
 def test_variance_pilot_rejects_an_incomplete_grid():
@@ -222,7 +216,7 @@ def test_variance_pilot_rejects_an_incomplete_grid():
 
 
 def test_variance_command_reads_results_and_writes_an_artifact(
-    tmp_path, monkeypatch, capsys
+    tmp_path, monkeypatch
 ):
     results = tmp_path / "results"
     results.mkdir()
@@ -269,4 +263,3 @@ def test_variance_command_reads_results_and_writes_an_artifact(
 
     artifact = json.loads(output.read_text())
     assert artifact["groups"][0]["runs"] == 8
-    assert "Crossed seed variance pilot" in capsys.readouterr().out

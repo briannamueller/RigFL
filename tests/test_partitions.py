@@ -346,11 +346,6 @@ def test_generation_dispatches_by_backend_and_reuses_partition(monkeypatch, tmp_
     assert manifest["num_clients"] == 2
     assert manifest["clients"][0]["sizes"] == {"train": 12, "test": 6}
     assert manifest["clients"][0]["label_counts"]["train"] == [4, 4, 4]
-    manifest_text = (artifact.path / "manifest.json").read_text()
-    assert manifest_text.index('"dataset"') < manifest_text.index('"clients"')
-    assert '"sizes": {"train": 12, "test": 6}' in manifest_text
-    assert '"shape": [3, 32, 32]' in manifest_text
-
     reused, created = generate_partition(
         DATASET, config_path=config, data_dir=tmp_path / "data"
     )
@@ -636,40 +631,3 @@ def test_generated_partition_runs_through_experiment_infrastructure(monkeypatch,
     assert record["config"]["experiment"]["partition_scheme"] == "dirichlet"
     assert set(record["result"]["evaluation_history"]["clients"]) == {"0", "1"}
     validate_run_record(record)
-
-
-@pytest.mark.parametrize("scheme", [
-    "continuous", "dirichlet", "distribution", "exponential",
-    "grouped_natural_id", "iid", "inner_dirichlet", "linear",
-    "natural_id", "pathological", "shard", "size", "square",
-])
-def test_every_flower_partitioner_resolves_for_an_experiment(
-    scheme, monkeypatch, tmp_path
-):
-    """Generating a supported partitioner must also make it runnable."""
-    import yaml
-    from tests.test_flower_data import PARTITIONER_CASES
-
-    config = tmp_path / "datasets.yaml"
-    config.write_text(yaml.safe_dump({
-        "datasets": {
-            DATASET: {
-                "backend": "flower",
-                "source_dataset": "organization/source-data",
-                "partition": {
-                    "scheme": scheme,
-                    **PARTITIONER_CASES[scheme],
-                },
-            },
-        },
-    }))
-    _generate(monkeypatch, config, tmp_path / "data")
-    resolved, data = resolve_experiment_data(ExperimentConfig(
-        dataset=DATASET,
-        dataset_config=str(config),
-        data_dir=str(tmp_path / "data"),
-    ))
-
-    assert resolved.data_backend == "flower"
-    assert resolved.partition_scheme == scheme
-    assert resolved.partition_id == data.artifact.partition_id

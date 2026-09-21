@@ -181,8 +181,6 @@ def test_comparison_table_includes_local_contrasts_without_client_analysis():
     assert "feddes − fml" in table
     assert "feddes − local" in table
     assert "local − fml" in table
-    assert "Negative transfer analysis" not in table
-    assert "| benefit rate | NTR | NTM | NTB |" not in table
 
 
 def test_lower_is_better_metric_is_oriented_as_left_gain():

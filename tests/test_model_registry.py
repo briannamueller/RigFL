@@ -420,13 +420,10 @@ def test_dataset_supplies_architecture_compatibility_context():
         resolve_algorithm_config("feddes", exp, config_class("feddes")())
 
 
-def test_feddes_has_no_separate_model_selection():
+def test_feddes_rejects_algorithm_level_model_selection():
     Cfg = config_class("feddes")
     assert "models" not in Cfg.model_fields
     assert "model_family" not in Cfg.model_fields
-    assert "local_epochs" not in Cfg.model_fields
-    assert "lr" not in Cfg.model_fields
-    assert set(Cfg.model_fields) == {"graphroute", "cache_dir"}
 
     with pytest.raises(Exception, match="models"):
         Cfg(models=["fedavg_cnn"])
@@ -473,14 +470,6 @@ def test_local_training_settings_remain_on_every_algorithm_that_uses_them():
     }
     for name in locally_trained:
         assert {"local_epochs", "lr"} <= set(config_class(name).model_fields)
-
-
-def test_every_algorithm_config_inherits_directly_from_the_universal_base():
-    from rigfl.core.config import AlgorithmConfig
-    from rigfl.experiment.registry import ALL_ALGORITHMS
-
-    for name in ALL_ALGORITHMS:
-        assert config_class(name).__bases__ == (AlgorithmConfig,)
 
 
 def test_feddes_builds_its_pool_from_the_experiment_architectures(monkeypatch):

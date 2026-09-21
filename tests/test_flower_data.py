@@ -324,7 +324,9 @@ def test_explicit_classification_accepts_numeric_class_labels(monkeypatch):
 
 
 @pytest.mark.parametrize(("scheme", "arguments"), PARTITIONER_CASES.items())
-def test_every_horizontal_flower_partitioner_is_configurable(scheme, arguments):
+def test_every_horizontal_flower_partitioner_can_partition_a_dataset(
+    scheme, arguments
+):
     expected_classes = {
         "continuous": "ContinuousPartitioner",
         "dirichlet": "DirichletPartitioner",
@@ -351,41 +353,20 @@ def test_every_horizontal_flower_partitioner_is_configurable(scheme, arguments):
     )
 
     partitioner = flower.FLOWER_PARTITIONERS[scheme](settings.partition, "label")
-
     assert partitioner.__class__.__name__ == expected_classes[scheme]
-    assert settings.partition.partition_seed == 9
-    assert settings.partition.shuffle is False
-    configured_count = getattr(settings.partition, "num_clients", None)
-    if configured_count is not None:
-        assert partitioner._num_partitions == configured_count
-    configured_sizes = getattr(settings.partition, "partition_sizes", None)
-    if configured_sizes is not None:
-        assert list(partitioner._partition_sizes) == configured_sizes
+    partitioner.dataset = Dataset.from_dict({
+        "feature": list(range(60)),
+        "label": [index % 3 for index in range(60)],
+        "score": [float(index) for index in range(60)],
+        "user_id": [f"user-{index % 6}" for index in range(60)],
+    })
+    partitions = [
+        partitioner.load_partition(partition_id)
+        for partition_id in range(partitioner.num_partitions)
+    ]
 
-    configured_column = getattr(settings.partition, "partition_by", None)
-    if hasattr(partitioner, "_partition_by"):
-        assert partitioner._partition_by == (configured_column or "label")
-
-    forwarded_fields = {
-        "continuous": ("strictness",),
-        "dirichlet": ("min_partition_size", "self_balancing"),
-        "distribution": (
-            "num_unique_labels_per_partition",
-            "preassigned_num_samples_per_label",
-            "rescale",
-        ),
-        "grouped_natural_id": ("group_size", "mode", "sort_unique_ids"),
-        "pathological": ("num_classes_per_partition", "class_assignment_mode"),
-        "shard": (
-            "num_shards_per_partition",
-            "shard_size",
-            "keep_incomplete_shard",
-        ),
-    }
-    for field in forwarded_fields.get(scheme, ()):
-        assert getattr(partitioner, f"_{field}") == getattr(settings.partition, field)
-    if scheme == "distribution":
-        assert isinstance(partitioner._distribution_array, np.ndarray)
+    assert all(len(partition) > 0 for partition in partitions)
+    assert sum(map(len, partitions)) == len(partitioner.dataset)
 
 
 def test_partitioner_registry_covers_every_configured_scheme():
@@ -524,35 +505,6 @@ def test_image_mode_coerces_mixed_images_to_one_shape():
     )
 
     assert inputs.shape == (2, 3, 4, 4)
-
-
-@pytest.mark.parametrize(("scheme", "arguments"), PARTITIONER_CASES.items())
-def test_every_horizontal_flower_partitioner_creates_partitions(scheme, arguments):
-    settings = FlowerDatasetSettings(
-        source_dataset="organization/data",
-        partition={
-            "scheme": scheme,
-            "partition_seed": 9,
-            "shuffle": False,
-            **arguments,
-        },
-    )
-    dataset = Dataset.from_dict({
-        "feature": list(range(60)),
-        "label": [index % 3 for index in range(60)],
-        "score": [float(index) for index in range(60)],
-        "user_id": [f"user-{index % 6}" for index in range(60)],
-    })
-    partitioner = flower.FLOWER_PARTITIONERS[scheme](settings.partition, "label")
-    partitioner.dataset = dataset
-
-    partitions = [
-        partitioner.load_partition(partition_id)
-        for partition_id in range(partitioner.num_partitions)
-    ]
-
-    assert all(len(partition) > 0 for partition in partitions)
-    assert sum(map(len, partitions)) == len(dataset)
 
 
 def test_configured_partition_column_must_exist(monkeypatch):

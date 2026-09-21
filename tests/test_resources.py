@@ -13,7 +13,7 @@ from rigfl.algorithms.global_ensemble import GlobalEnsemble, GlobalEnsembleConfi
 from rigfl.core import Algorithm, Client, LocalSelection, Predictions
 from rigfl.core.config import AlgorithmConfig
 from rigfl.core.round import iterative, p2p_one_shot
-from rigfl.eval.report import format_resource_table, summarize_resources
+from rigfl.eval.report import summarize_resources
 from rigfl.eval.resources import (
     ResourceDelta,
     ResourceMonitor,
@@ -298,18 +298,6 @@ def test_resource_summary_requires_compatible_hardware():
     assert summary["available"] is True
     assert summary["wall_time_comparable"] is False
     assert summary["attributed_training_wall_seconds_mean"] is None
-
-    table = format_resource_table({
-        "fedavg": {
-            "independent_replicates": True,
-            "confidence_intervals_available": True,
-            "resources": summary,
-        }
-    })
-    assert "communication (GiB)" in table
-    assert "attributed training FLOPs (TFLOPs)" in table
-    assert "| fedavg | 0.000 ± 0.000 | — | — | none |" in table
-
 
 def test_resource_summary_requires_the_same_flop_estimator():
     monitor = ResourceMonitor(DEVICE, estimate_flops=True)

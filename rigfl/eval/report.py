@@ -363,13 +363,10 @@ def format_table(rows: dict, metric: str) -> str:
     name = canonical(metric)
     higher_better = direction_of(name) == "maximize"
     any_mixed = any(s.get("mixed_rounds") for s in rows.values())
-    any_local = any(s.get("mixed_local_selections") for s in rows.values())
     any_fallback = any(s.get("selection_view_fallback") for s in rows.values())
     any_dependent = any(
         not s.get("independent_replicates", True) for s in rows.values()
     )
-    any_single = any(s.get("confidence_interval_reason") == "fewer than two runs"
-                     for s in rows.values())
     has_grid = any(s.get("expected_runs") is not None for s in rows.values())
     runs_heading = "runs (done/expected)" if has_grid else "runs"
 
@@ -389,12 +386,8 @@ def format_table(rows: dict, metric: str) -> str:
     for label, s in rows.items():
         mark = " *" if s.get("mixed_rounds") else ""
         fallback = " †" if s.get("selection_view_fallback") else ""
-        local = " ‡" if s.get("mixed_local_selections") else ""
         dependent = " §" if not s.get("independent_replicates", True) else ""
-        single = " ¶" if s.get("confidence_interval_reason") == (
-            "fewer than two runs"
-        ) else ""
-        cells = [f"{label}{mark}{fallback}{local}{dependent}{single}", s["selection_view"],
+        cells = [f"{label}{mark}{fallback}{dependent}", s["selection_view"],
                  _format_interval(s["val_mean"], s["val_ci"]),
                  _format_interval(s["test_mean"], s["test_ci"])]
         if higher_better:
@@ -425,14 +418,6 @@ def format_table(rows: dict, metric: str) -> str:
                 "using its per-client-selected models."
             ),
         ]
-    if any_local:
-        out += [
-            "",
-            (
-                "‡ each client retained the model selected during its own local "
-                "computation; these selected steps are not federated rounds."
-            ),
-        ]
     if any_dependent:
         out += [
             "",
@@ -440,14 +425,6 @@ def format_table(rows: dict, metric: str) -> str:
                 "§ experiment seeds are reused across run conditions, so ordinary "
                 "replicate confidence intervals are omitted. Use "
                 "`python -m rigfl.experiment.variance` for a crossed seed sweep."
-            ),
-        ]
-    if any_single:
-        out += [
-            "",
-            (
-                "¶ fewer than two runs are available; no confidence interval "
-                "is reported."
             ),
         ]
     return "\n".join(out)

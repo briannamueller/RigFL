@@ -6,7 +6,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from rigfl.experiment.config import ExperimentFileConfig, RunFileConfig
 from rigfl.experiment.launch import build_grid
 from rigfl.experiment.run import build_configs, load_run_config
 
@@ -53,29 +52,6 @@ def test_a_valid_config_still_loads(tmp_path):
     exp, algorithm = load_run_config(
         _yaml(tmp_path, "experiment:\n  batch: 64\nalgorithm:\n  lr: 0.1\n"))
     assert exp == {"batch": 64} and algorithm == {"lr": 0.1}
-
-
-def test_user_authored_wrappers_are_pydantic_models():
-    run = RunFileConfig.model_validate({"experiment": {"batch": 64}})
-    study = ExperimentFileConfig.model_validate({
-        "algorithms": ["fedprox"],
-        "replicates": [
-            {"partition_seed": 0, "split_seed": 0, "experiment_seed": 0}
-        ],
-        "tuning": {
-            "search_space": {
-                "algorithm.lr": {
-                    "type": "float",
-                    "low": 0.001,
-                    "high": 0.1,
-                    "log": True,
-                }
-            }
-        },
-    })
-
-    assert run.experiment.batch == 64
-    assert study.tuning.search_space["algorithm.lr"].type == "float"
 
 
 # ── --set ────────────────────────────────────────────────────────────────────

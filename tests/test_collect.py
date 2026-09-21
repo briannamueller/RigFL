@@ -358,17 +358,14 @@ def test_saved_grid_counts_each_configuration_separately():
     assert rows["fedavg lr=0.03"]["runs"] == 2
 
 
-def test_collect_help_has_no_separate_rank_flag(monkeypatch, capsys):
+def test_collect_help_lists_key_reporting_controls(monkeypatch, capsys):
     monkeypatch.setattr("sys.argv", ["collect", "--help"])
     with pytest.raises(SystemExit) as exit_info:
         collect_main()
     assert exit_info.value.code == 0
     help_text = capsys.readouterr().out
-    assert "--rank" not in help_text
-    assert "--ignore-invalid" not in help_text
     assert "--strict-results" in help_text
     assert "--performance-margin" in help_text
-    assert "--negative-transfer-threshold" not in help_text
 
 
 def test_collect_reports_invalid_files_and_keeps_valid_runs(tmp_path, monkeypatch, capsys):

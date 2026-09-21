@@ -236,28 +236,19 @@ def _predictions(algorithm, rounds: int = 2):
 
 
 @pytest.mark.parametrize("name", sorted(_built_in_algorithms()))
-def test_every_built_in_algorithm_returns_a_valid_distribution(name):
-    for _, x, _, _, out in _predictions(_built_in_algorithms()[name]):
+def test_every_built_in_algorithm_preserves_the_prediction_contract(name):
+    import torch.nn.functional as F
+
+    for model, x, shared, state, out in _predictions(
+        _built_in_algorithms()[name]
+    ):
         assert out.probabilities is not None, f"{name} returned no probabilities"
         p = out.probabilities
         assert p.shape == (len(out.labels), NUM_CLASSES)
         assert torch.isfinite(p).all()
         assert (p >= 0).all()
         assert torch.allclose(p.sum(1), torch.ones(p.shape[0]), atol=1e-5)
-
-
-@pytest.mark.parametrize("name", sorted(_built_in_algorithms()))
-def test_every_built_in_algorithm_labels_equal_the_probability_argmax(name):
-    for _, _, _, _, out in _predictions(_built_in_algorithms()[name]):
         assert torch.equal(out.labels, out.probabilities.argmax(dim=1)), name
-
-
-@pytest.mark.parametrize("name", sorted(_built_in_algorithms()))
-def test_hard_labels_are_unchanged_by_the_new_interface(name):
-    """Built-in algorithms preserve their established hard-label decisions."""
-    import torch.nn.functional as F
-
-    for model, x, shared, state, out in _predictions(_built_in_algorithms()[name]):
         if name in ("local", "fml", "fedkd"):
             old = model(x).argmax(dim=1)
         elif name in ("fedgh", "lgfedavg"):

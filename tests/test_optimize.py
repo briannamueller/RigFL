@@ -511,9 +511,26 @@ def test_grid_sampler_derives_its_grid_from_the_search_space():
 
     assert spec.trials == 6
     assert isinstance(sampler, optuna.samplers.GridSampler)
-    assert sampler._search_space == {
-        "algorithm.graphroute.graph.k": [3, 5, 7],
-        "algorithm.graphroute.gnn.hidden_dim": [64, 128],
+    study = optuna.create_study(sampler=sampler, direction="maximize")
+
+    def objective(trial):
+        k = trial.suggest_categorical(
+            "algorithm.graphroute.graph.k", [3, 5, 7]
+        )
+        hidden = trial.suggest_categorical(
+            "algorithm.graphroute.gnn.hidden_dim", [64, 128]
+        )
+        return float(k + hidden)
+
+    study.optimize(objective, n_trials=spec.trials)
+    assert {
+        (
+            trial.params["algorithm.graphroute.graph.k"],
+            trial.params["algorithm.graphroute.gnn.hidden_dim"],
+        )
+        for trial in study.trials
+    } == {
+        (k, hidden) for k in (3, 5, 7) for hidden in (64, 128)
     }
 
 

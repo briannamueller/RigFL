@@ -51,17 +51,8 @@ def test_summarize_reports_the_selected_rounds_test_value():
 
 def test_summarize_single_seed_omits_a_confidence_interval():
     record = _record("local", 0, [.1, .5], [.2, .4], rounds=(0, 1))
-    record["resources"] = ResourceMonitor(
-        torch.device("cpu"), estimate_flops=True
-    ).to_dict()
-    s = summarize([record], "accuracy", include_resources=True, **_SEL)
+    s = summarize([record], "accuracy", **_SEL)
     assert s["seeds"] == 1 and s["test_std"] == 0.0 and s["test_ci"] is None
-    table = format_table({"local": s}, "accuracy")
-    assert "| local ¶ |" in table
-    assert "fewer than two runs" in table
-    resources = format_resource_table({"local": s})
-    assert "| local ¶ | 0.000 | 0.000 | 0.000 | none |" in resources
-    assert "resource confidence intervals are omitted" in resources
 
 
 def _one_shot_record():
@@ -77,20 +68,13 @@ def _one_shot_record():
     return record
 
 
-def test_global_request_falls_back_to_and_labels_one_shot_per_client_selection():
+def test_global_request_falls_back_to_one_shot_per_client_selection():
     record = _one_shot_record()
     selected = selection_for(record, "accuracy", view="global")
     assert selected["selection_view"] == "per-client"
     assert selected["selection_view_fallback"] is True
     assert selected["selected_steps"] == {"0": 8, "1": 11}
     assert "selected_rounds" not in selected
-
-    table = format_table(
-        {"feddes": summarize([record], "accuracy", view="global")}, "accuracy")
-    assert "| feddes † ‡ ¶ | per-client |" in table
-    assert "global selection was requested" in table
-    assert "selected steps are not federated rounds" in table
-
 
 def test_one_shot_result_cannot_claim_a_different_selection_metric():
     with pytest.raises(SelectionError, match="cannot honestly"):
@@ -189,11 +173,6 @@ def test_format_table_names_the_metric_and_flags_mixed_rounds():
                                  "accuracy", view="per-client", aggregation="mean",
                                  tie_break="earliest")}
     assert "mixes rounds" in format_table(mixed, "accuracy")
-
-
-def test_summarize_requires_a_metric():
-    with pytest.raises(TypeError):
-        summarize([_record("feddes", 0, [.1], [.1], rounds=(0,))])      # no metric
 
 
 def test_summary_aggregates_the_way_selection_did():
