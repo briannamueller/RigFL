@@ -59,7 +59,7 @@ from rigfl.experiment.registry import (
     build_algorithm,
     config_class,
     resolve_algorithm_config,
-    resolve_algorithm_models,
+    resolve_algorithm_experiment,
 )
 from rigfl.experiment.storage import run_store
 from rigfl.experiment.tracking import make_tracker
@@ -240,7 +240,7 @@ def run_one(name, exp: ExperimentConfig, cfg, device, *, data: ResolvedData | No
         exp, data = resolve_experiment_data(exp)
     elif not isinstance(exp, ResolvedExperimentConfig):
         raise TypeError("pre-resolved data requires a ResolvedExperimentConfig")
-    exp = resolve_algorithm_models(name, exp)
+    exp = resolve_algorithm_experiment(name, exp)
     cfg = resolve_algorithm_config(name, exp, cfg)
     spec = algorithm_spec(name)
     set_seed(exp.seed)                                    # training + model determinism
@@ -421,7 +421,7 @@ def run_experiment(algorithm: str, config: str | Path, *,
     experiment, algorithm_config = load_run_config(str(config))
     exp = ExperimentConfig(**experiment)
     exp, data = resolve_experiment_data(exp)
-    exp = resolve_algorithm_models(algorithm, exp)
+    exp = resolve_algorithm_experiment(algorithm, exp)
 
     Cfg = config_class(algorithm)
     unknown = sorted(
@@ -468,7 +468,7 @@ def main() -> None:
 
     for name in algorithms:
         Cfg = config_class(name)
-        algorithm_exp = resolve_algorithm_models(name, exp)
+        algorithm_exp = resolve_algorithm_experiment(name, exp)
         # Shared overrides are applied only to algorithms that define the field.
         cfg = Cfg(**filter_for_model(algorithm_over, Cfg))
         cfg = resolve_algorithm_config(name, algorithm_exp, cfg)

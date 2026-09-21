@@ -9,7 +9,7 @@ These options configure individual runs, sweeps, and tuning studies.
 | `experiment.dataset` | string | `cifar10` | — | Dataset name from the dataset configuration file. |
 | `experiment.dataset_config` | string | `configs/datasets.yaml` | — | Path to the dataset configuration file. |
 | `experiment.data_dir` | string | `data` | — | Directory containing generated client partitions. |
-| `experiment.rounds` | integer | `100` | ≥ 1 | Number of communication rounds. |
+| `experiment.rounds` | integer | `100` | ≥ 1 | Number of communication rounds for iterative runners. |
 | `experiment.seed` | integer | `0` | ≥ 0 | Seed for training and model initialization. |
 | `experiment.partition_seed` | integer \| null | `null` | ≥ 0 | Override for the dataset partition seed. |
 | `experiment.split_seed` | integer \| null | `null` | ≥ 0 | Override for the client validation-split seed. |
@@ -17,14 +17,14 @@ These options configure individual runs, sweeps, and tuning studies.
 | `experiment.model` | string | `fedavg_cnn` | — | Model architecture selected for the experiment. |
 | `experiment.model_family` | string \| null | `null` | — | Model family selected for algorithms that support different client architectures. |
 | `experiment.batch` | integer | `32` | ≥ 1 | Client training batch size. |
-| `experiment.eval_gap` | integer | `1` | ≥ 1 | Evaluate every N communication rounds. |
+| `experiment.eval_gap` | integer | `1` | ≥ 1 | Evaluate every N communication rounds for iterative runners. |
 | `experiment.device` | string | `auto` | `auto`, `cpu`, `mps`, `cuda` | Device used for training and evaluation. |
 | `experiment.out_dir` | string | `results` | — | Root directory for experiment results. |
 | `experiment.quiet` | boolean | `true` | — | Suppress per-round progress output. |
 | `experiment.wandb` | boolean | `false` | — | Log training progress to Weights & Biases. |
 | `experiment.wandb_project` | string | `rigfl` | — | Weights & Biases project name. |
 | `experiment.estimate_flops` | boolean | `false` | — | Estimate executed PyTorch operations. |
-| `experiment.early_stopping.enabled` | boolean | `false` | — | Stop training when validation performance stops improving. |
+| `experiment.early_stopping.enabled` | boolean | `false` | — | Stop iterative training when validation performance stops improving; one-shot runners use algorithm-specific stopping settings. |
 | `experiment.early_stopping.split` | string | `validation` | `validation` | Data split used for early stopping. |
 | `experiment.early_stopping.metric` | string \| null | `null` | — | Validation metric to monitor; defaults to loss when enabled. |
 | `experiment.early_stopping.direction` | string \| null | `null` | `maximize`, `minimize` | Improvement direction; inferred from the metric when omitted. |

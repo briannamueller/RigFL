@@ -34,7 +34,7 @@ from rigfl.experiment.paths import (
     model_paths,
     nested_set,
 )
-from rigfl.experiment.registry import algorithm_spec, config_class
+from rigfl.experiment.registry import config_class, ignores_experiment_field
 from rigfl.experiment.storage import run_store, study_directory
 from rigfl.experiment.tuning import (
     MANIFEST_KIND,
@@ -157,7 +157,7 @@ def parse_optimization(spec: dict) -> OptimizationSpec:
             )
         if (
             section == "experiment"
-            and name in algorithm_spec(algorithm).ignored_experiment_fields
+            and ignores_experiment_field(algorithm, name)
         ):
             raise SystemExit(f"{path} does not apply to {algorithm}")
         if section == "algorithm" and name not in algorithm_paths:

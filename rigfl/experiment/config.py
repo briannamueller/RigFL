@@ -107,7 +107,11 @@ class EarlyStoppingConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = Field(
-        False, description="Stop training when validation performance stops improving."
+        False,
+        description=(
+            "Stop iterative training when validation performance stops improving; "
+            "one-shot runners use algorithm-specific stopping settings."
+        ),
     )
     # Early stopping is validation-only.
     split: Literal["validation"] = Field(
@@ -158,7 +162,11 @@ class ExperimentConfig(BaseModel):
     data_dir: str = Field(
         "data", description="Directory containing generated client partitions."
     )
-    rounds: int = Field(100, ge=1, description="Number of communication rounds.")
+    rounds: int = Field(
+        100,
+        ge=1,
+        description="Number of communication rounds for iterative runners.",
+    )
     seed: int = Field(
         0, ge=0, description="Seed for training and model initialization."
     )
@@ -181,7 +189,11 @@ class ExperimentConfig(BaseModel):
         description="Model family selected for algorithms that support different client architectures.",
     )
     batch: int = Field(32, ge=1, description="Client training batch size.")
-    eval_gap: int = Field(1, ge=1, description="Evaluate every N communication rounds.")
+    eval_gap: int = Field(
+        1,
+        ge=1,
+        description="Evaluate every N communication rounds for iterative runners.",
+    )
     device: Literal["auto", "cpu", "mps", "cuda"] = Field(
         "auto", description="Device used for training and evaluation."
     )
@@ -198,7 +210,10 @@ class ExperimentConfig(BaseModel):
     #: When to stop early. Off by default: every round is recorded either way.
     early_stopping: EarlyStoppingConfig = Field(
         default_factory=EarlyStoppingConfig,
-        description="Optional validation-based stopping policy.",
+        description=(
+            "Optional validation-based stopping policy for iterative runners; "
+            "one-shot runners use their algorithm-specific stopping settings."
+        ),
     )
 
 

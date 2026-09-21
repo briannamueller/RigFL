@@ -54,8 +54,10 @@ from rigfl.experiment.registry import (
     algorithm_run_fingerprint,
     algorithm_spec,
     config_class,
+    ignored_experiment_fields,
+    ignores_experiment_field,
     resolve_algorithm_config,
-    resolve_algorithm_models,
+    resolve_algorithm_experiment,
 )
 from rigfl.experiment.run import resolve_experiment_data, run_one
 from rigfl.experiment.storage import run_store, study_directory
@@ -106,7 +108,7 @@ def _validate_axes(exp_axes: dict, algorithm_axes: dict, algorithms: list[str],
                 f'{_suggest(field, known_exp)}\n\n'
                 f'Known experiment fields: {", ".join(sorted(known_exp))}')
         if not any(
-            field not in algorithm_spec(name).ignored_experiment_fields
+            not ignores_experiment_field(name, field)
             for name in algorithms
         ):
             raise SystemExit(
@@ -341,17 +343,18 @@ def expand(spec: dict) -> tuple[list[dict], dict | None]:
             k: v for k, v in algorithm_axes.items()
             if model_has_path(config_model, k)
         }
-        ignored = set(algorithm_spec(algorithm).ignored_experiment_fields)
         axes = {
             f"experiment::{k}": v
             for k, v in exp_axes.items()
-            if k not in ignored
+            if not ignores_experiment_field(algorithm, k)
         }
         axes.update({f"algorithm::{k}": v for k, v in m_axes.items()})
         keys = list(axes)
         for combo in itertools.product(*(axes[k] for k in keys)):   # () once when no axes
             for replicate in replicate_conditions or [None]:
                 exp = dict(base_exp)
+                for field in ignored_experiment_fields(algorithm):
+                    exp.pop(field, None)
                 # Fixed algorithm settings obey the same per-algorithm scoping as algorithm
                 # axes: validate against the selected-algorithm union above, then apply
                 # only settings this algorithm's configuration class actually defines.
@@ -485,7 +488,7 @@ def run_config(task: dict, out_dir: Path, *, dry_run: bool = False,
     if not dry_run:
         try:
             exp, data = resolve_experiment_data(exp)
-            exp = resolve_algorithm_models(name, exp)
+            exp = resolve_algorithm_experiment(name, exp)
         except (FileNotFoundError, KeyError, ValueError) as exc:
             raise SystemExit(f"{task_label}: {exc}") from exc
     Cfg = config_class(name)

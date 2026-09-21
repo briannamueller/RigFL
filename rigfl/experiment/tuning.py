@@ -39,7 +39,7 @@ from rigfl.experiment.paths import (
     nested_delete,
     nested_get,
 )
-from rigfl.experiment.registry import algorithm_spec, config_class
+from rigfl.experiment.registry import config_class, ignores_experiment_field
 
 #: Bumped when the study layout changes in a way a reader must notice.
 MANIFEST_SCHEMA_VERSION = 6
@@ -191,9 +191,6 @@ def applicable_parameters(algorithm: str, parameters: list[str]) -> list[str]:
     Algorithm fields apply only where defined, and experiment fields apply only
     where used. Other axes do not mint duplicate "not applicable" candidates.
     """
-    ignored_experiment_fields = set(
-        algorithm_spec(algorithm).ignored_experiment_fields
-    )
     out = []
     for p in parameters:
         section, name = _split(p)
@@ -201,7 +198,7 @@ def applicable_parameters(algorithm: str, parameters: list[str]) -> list[str]:
             config_class(algorithm), name
         ):
             continue
-        if section == "experiment" and name in ignored_experiment_fields:
+        if section == "experiment" and ignores_experiment_field(algorithm, name):
             continue
         out.append(p)
     return out

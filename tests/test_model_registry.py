@@ -15,6 +15,7 @@ from rigfl.experiment.config import ExperimentConfig, run_fingerprint
 from rigfl.experiment.launch import build_grid
 from rigfl.experiment.registry import (algorithm_run_fingerprint, build_algorithm,
                                        config_class, resolve_algorithm_config,
+                                       resolve_algorithm_experiment,
                                        resolve_algorithm_models)
 from rigfl.experiment.run import ResolvedData, resolve_experiment_data, run_one
 from rigfl.models.registry import (
@@ -461,6 +462,28 @@ def test_feddes_shared_dimension_does_not_change_its_fingerprint():
     ) != algorithm_run_fingerprint(
         "local", other, config_class("local")().model_dump()
     )
+
+
+def test_one_shot_round_controls_are_inapplicable_to_execution_and_identity():
+    configured = resolved_experiment(
+        rounds=300,
+        eval_gap=5,
+        early_stopping={"enabled": True, "metric": "accuracy", "patience": 20},
+    )
+    other = resolved_experiment(
+        rounds=10,
+        eval_gap=1,
+        early_stopping={"enabled": False},
+    )
+    cfg = config_class("feddes")().model_dump()
+
+    effective = resolve_algorithm_experiment("feddes", configured)
+    assert effective.rounds == ExperimentConfig().rounds
+    assert effective.eval_gap == ExperimentConfig().eval_gap
+    assert effective.early_stopping.enabled is False
+    assert algorithm_run_fingerprint(
+        "feddes", configured, cfg
+    ) == algorithm_run_fingerprint("feddes", other, cfg)
 
 
 def test_local_training_settings_remain_on_every_algorithm_that_uses_them():

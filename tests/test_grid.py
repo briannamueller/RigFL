@@ -74,6 +74,32 @@ def test_shared_dimension_axis_is_rejected_for_feddes_only_sweep():
         })
 
 
+def test_round_controls_apply_only_to_iterative_methods_in_a_mixed_grid():
+    grid = build_grid({
+        "algorithms": ["local", "feddes"],
+        "base": {
+            "experiment": {
+                "rounds": 300,
+                "eval_gap": 5,
+                "early_stopping": {
+                    "enabled": True,
+                    "metric": "accuracy",
+                    "patience": 20,
+                },
+            },
+        },
+        "sweep": {"experiment.early_stopping.patience": [10, 20]},
+    })
+
+    assert _counts(grid) == {"local": 2, "feddes": 1}
+    local = next(task for task in grid if task["algorithm"] == "local")
+    assert local["experiment"]["rounds"] == 300
+    assert local["experiment"]["eval_gap"] == 5
+    assert local["experiment"]["early_stopping"]["enabled"] is True
+    feddes = next(task for task in grid if task["algorithm"] == "feddes")
+    assert not ({"rounds", "eval_gap", "early_stopping"} & feddes["experiment"].keys())
+
+
 def test_algorithm_specific_axis_lands_in_algorithm_config():
     grid = build_grid({
         "algorithms": ["feddes"],

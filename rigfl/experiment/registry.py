@@ -75,6 +75,10 @@ REGISTRY = {
     ),
 }
 
+_RUNNER_IGNORED_EXPERIMENT_FIELDS = {
+    p2p_one_shot: ("rounds", "eval_gap", "early_stopping"),
+}
+
 # Algorithms used by the baseline sweep, plus Local as the reference condition.
 # Global Ensemble and FedDES remain callable explicitly and through ``all``.
 BASELINES = ["local", "fedproto", "fedgh", "lgfedavg", "fml", "fedkd", "fedtgp"]
@@ -95,6 +99,21 @@ def algorithm_spec(name: str) -> AlgorithmSpec:
     return REGISTRY[name]
 
 
+def ignored_experiment_fields(name: str) -> tuple[str, ...]:
+    """Experiment fields unused by an algorithm's runner or implementation."""
+    spec = algorithm_spec(name)
+    runner_fields = _RUNNER_IGNORED_EXPERIMENT_FIELDS.get(spec.runner, ())
+    return tuple(dict.fromkeys((*runner_fields, *spec.ignored_experiment_fields)))
+
+
+def ignores_experiment_field(name: str, field: str) -> bool:
+    """Whether an experiment field or nested field is inapplicable."""
+    return any(
+        field == ignored or field.startswith(f"{ignored}.")
+        for ignored in ignored_experiment_fields(name)
+    )
+
+
 def algorithm_run_fingerprint(
     name: str, exp: ResolvedExperimentConfig, algorithm_dump: dict
 ) -> str:
@@ -102,7 +121,7 @@ def algorithm_run_fingerprint(
     return run_fingerprint(
         exp,
         algorithm_dump,
-        ignored_experiment_fields=algorithm_spec(name).ignored_experiment_fields,
+        ignored_experiment_fields=ignored_experiment_fields(name),
     )
 
 
@@ -140,6 +159,17 @@ def resolve_algorithm_models(
     return exp.model_copy(update={"resolved_models": names})
 
 
+def resolve_algorithm_experiment(
+    name: str, exp: ResolvedExperimentConfig
+) -> ResolvedExperimentConfig:
+    """Resolve models and reset fields that do not apply to this algorithm."""
+    exp = resolve_algorithm_models(name, exp)
+    values = exp.model_dump()
+    for field in ignored_experiment_fields(name):
+        values.pop(field, None)
+    return ResolvedExperimentConfig(**values)
+
+
 # Standard client-model algorithms that align representation widths by pooling.
 _POOLING_ALGORITHMS = {"fedtgp"}
 
@@ -168,7 +198,7 @@ def build_algorithm(name: str, exp: ResolvedExperimentConfig, cfg: AlgorithmConf
 
     ``aux_backbone`` is the backbone factory for the shared meme or mentee model
     used by FML and FedKD."""
-    exp = resolve_algorithm_models(name, exp)
+    exp = resolve_algorithm_experiment(name, exp)
     cfg = resolve_algorithm_config(name, exp, cfg)
     sd, nc = exp.shared_dim, exp.num_classes
     if name in {"fml", "fedkd"} and aux_backbone is None:
