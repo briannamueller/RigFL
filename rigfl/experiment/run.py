@@ -55,9 +55,11 @@ from rigfl.experiment.registry import (
     BASELINES,
     adapter_factory,
     algorithm_run_fingerprint,
+    algorithm_run_identity,
     algorithm_spec,
     build_algorithm,
     config_class,
+    legacy_algorithm_run_fingerprint,
     resolve_algorithm_config,
     resolve_algorithm_experiment,
 )
@@ -242,6 +244,12 @@ def run_one(name, exp: ExperimentConfig, cfg, device, *, data: ResolvedData | No
         raise TypeError("pre-resolved data requires a ResolvedExperimentConfig")
     exp = resolve_algorithm_experiment(name, exp)
     cfg = resolve_algorithm_config(name, exp, cfg)
+    identity_input = algorithm_run_identity(name, exp, cfg.model_dump())
+    run_identity_fingerprint = algorithm_run_fingerprint(
+        name, exp, cfg.model_dump()
+    )
+    # Capture provenance before training starts.
+    start_env = capture_env()
     spec = algorithm_spec(name)
     set_seed(exp.seed)                                    # training + model determinism
     adapter = adapter_factory(name) if spec.requires_client_model else None
@@ -280,7 +288,15 @@ def run_one(name, exp: ExperimentConfig, cfg, device, *, data: ResolvedData | No
         raise RuntimeError(f"unresolved data backend: {exp.data_backend!r}")
     algorithm = build_algorithm(
         name, exp, cfg, model_input_spec=model_input_spec,
-        model_template=clients[0].model)
+        model_template=clients[0].model,
+        initial_client_models=(
+            tuple(client.model for client in clients)
+            if spec.requires_client_model else None
+        ),
+        client_sample_counts=tuple(
+            len(client.train_loader.dataset) for client in clients
+        ),
+    )
     tracker = make_tracker(name, exp, cfg)               # W&B if exp.wandb else no-op
     monitor = ResourceMonitor(device, estimate_flops=exp.estimate_flops)
     runner = spec.runner
@@ -297,9 +313,10 @@ def run_one(name, exp: ExperimentConfig, cfg, device, *, data: ResolvedData | No
     record = make_run_record(
         algorithm=name,
         experiment=exp.model_dump(), algorithm_config=cfg.model_dump(),
-        run_fingerprint=algorithm_run_fingerprint(name, exp, cfg.model_dump()),
+        run_fingerprint=run_identity_fingerprint,
+        identity_input=identity_input,
         result=result,
-        env=capture_env(), device=str(device),
+        env=start_env, device=str(device),
         wall_seconds=round(resources["observed"]["wall_seconds"]["total"], 1),
         resources=resources,
         partition=partition_summary(
@@ -397,6 +414,19 @@ def _run_resolved_experiment(name: str, exp: ResolvedExperimentConfig, cfg, *,
     out_dir.mkdir(parents=True, exist_ok=True)
     fp = algorithm_run_fingerprint(name, exp, cfg.model_dump())
     path = out_dir / result_filename(exp, name, fp)
+    if not force and not path.exists():
+        legacy_fp = legacy_algorithm_run_fingerprint(name, exp, cfg.model_dump())
+        legacy_path = out_dir / result_filename(exp, name, legacy_fp)
+        if legacy_fp != fp and legacy_path.exists():
+            skip, message = existing_result_decision(
+                legacy_path,
+                expected_algorithm=name,
+                expected_fingerprint=legacy_fp,
+            )
+            if message:
+                print(message)
+            if skip:
+                return legacy_path
     skip, message = existing_result_decision(
         path, expected_algorithm=name, expected_fingerprint=fp, force=force
     )

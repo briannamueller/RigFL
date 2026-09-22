@@ -20,7 +20,12 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from rigfl.algorithms.feddes import FedDES, FedDESConfig, _MeasuredPoolOutputs
+from rigfl.algorithms.feddes import (
+    FedDES,
+    FedDESConfig,
+    _LocalEmbeddingExtractor,
+    _MeasuredPoolOutputs,
+)
 from rigfl.core.interfaces import OneShotContext
 from rigfl.eval.resources import ResourceMonitor, load_cached_measurement
 from tests.helpers import resolved_experiment
@@ -37,6 +42,19 @@ class _ScaledLinear(nn.Module):
 
     def forward(self, x):
         return self.linear(x) * self.scale
+
+
+class _RepresentationModel(nn.Module):
+    def __init__(self, width: int, scale: float):
+        super().__init__()
+        self.width = width
+        self.scale = scale
+
+    def rep(self, x):
+        return x[:, :self.width] * self.scale
+
+    def forward(self, x):
+        return self.rep(x)
 
 
 def _feddes(
@@ -155,6 +173,57 @@ def test_graphroute_config_forwards_modeling_settings():
     assert cfg.gnn.use_sample_residual is True
     assert cfg.gnn.fallback == "wacc"
     assert cfg.seed == other_client_cfg.seed == model.seed
+
+
+def test_local_embedding_concatenates_only_the_local_pool_in_model_order():
+    from graphroute.pool_cache import in_memory_pool
+
+    local_pool = in_memory_pool(
+        [_RepresentationModel(2, 1.0), _RepresentationModel(3, 2.0)],
+        model_ids=["first", "second"],
+        fingerprint_value="local-pool",
+    )
+    algorithm = _feddes(
+        "", graph={"edge_feature_source": "local_embedding"}
+    )
+    extractor = algorithm._feature_extractor_for_client(
+        {"local_pool": local_pool}, torch.device("cpu")
+    )
+    inputs = torch.tensor([[3.0, 4.0, 5.0, 6.0]])
+
+    assert isinstance(extractor, _LocalEmbeddingExtractor)
+    assert torch.equal(
+        extractor(inputs),
+        torch.tensor([[3.0, 4.0, 6.0, 8.0, 10.0]]),
+    )
+
+
+def test_local_embedding_applies_per_model_normalization_before_concatenation():
+    extractor = _LocalEmbeddingExtractor(
+        [_RepresentationModel(2, 1.0), _RepresentationModel(3, 2.0)],
+        device=torch.device("cpu"),
+        normalization="per_model_l2",
+    )
+
+    features = extractor(torch.tensor([[3.0, 4.0, 12.0]]))
+
+    assert torch.allclose(features[:, :2].norm(dim=1), torch.ones(1))
+    assert torch.allclose(features[:, 2:].norm(dim=1), torch.ones(1))
+
+
+def test_local_embedding_is_resolved_by_feddes_not_dataset_feature_groups():
+    algorithm = FedDES.from_config(
+        FedDESConfig(
+            cache_dir="",
+            graphroute={"graph": {"edge_feature_source": "local_embedding"}},
+        ),
+        experiment=resolved_experiment(),
+        base_pool=[_RepresentationModel(2, 1.0)],
+        model_input_spec={"input_kind": "numeric", "shape": (4,)},
+    )
+
+    assert algorithm.uses_local_embedding is True
+    assert algorithm.feature_extractor is None
 
 
 def test_base_training_uses_the_nested_graphroute_settings(monkeypatch):

@@ -10,7 +10,12 @@ from __future__ import annotations
 
 import json
 
+from rigfl.algorithms.local import LocalConfig
+from rigfl.experiment import launch as launch_module
 from rigfl.experiment.launch import _stage_sge_grid, _write_grid, build_grid
+from rigfl.experiment.registry import algorithm_run_fingerprint
+from rigfl.experiment.storage import read_grid_tasks
+from tests.helpers import resolved_experiment
 
 
 def _counts(grid):
@@ -202,7 +207,9 @@ def test_fixed_setting_supported_by_no_selected_algorithm_is_an_error():
         })
 
 
-def test_submitted_grid_stays_fixed_when_working_grid_changes(tmp_path):
+def test_submitted_grid_stays_fixed_when_working_grid_changes(
+    tmp_path, monkeypatch
+):
     path = tmp_path / "sweep" / "grid.jsonl"
     original = [
         {"algorithm": "local", "experiment": {"seed": 0}, "algorithm_config": {}}
@@ -212,9 +219,22 @@ def test_submitted_grid_stays_fixed_when_working_grid_changes(tmp_path):
         {"algorithm": "fedavg", "experiment": {"seed": 1}, "algorithm_config": {}},
     ]
 
+    def resolve(task, **_kwargs):
+        exp = resolved_experiment(seed=task["experiment"]["seed"])
+        return task["algorithm"], exp, LocalConfig(), None
+
+    monkeypatch.setattr(launch_module, "_resolve_task", resolve)
+    monkeypatch.setattr(launch_module, "capture_env", lambda: {"git_commit": "one"})
+
     assert _write_grid(path, original) is True
-    submitted = _stage_sge_grid(path)
+    submitted = _stage_sge_grid(path, tmp_path / "results")
     assert _write_grid(path, changed) is True
 
     assert [json.loads(line) for line in path.read_text().splitlines()] == changed
-    assert [json.loads(line) for line in submitted.read_text().splitlines()] == original
+    submitted_tasks = read_grid_tasks(submitted)
+    assert len(submitted_tasks) == 1
+    assert submitted_tasks[0]["algorithm"] == "local"
+    assert submitted_tasks[0]["experiment"]["seed"] == 0
+    assert submitted_tasks[0]["run_fingerprint"] == algorithm_run_fingerprint(
+        "local", resolved_experiment(seed=0), LocalConfig().model_dump()
+    )

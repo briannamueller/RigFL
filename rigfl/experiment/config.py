@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from copy import deepcopy
 from typing import Annotated, Any, Literal, Optional
 
@@ -19,10 +17,13 @@ from pydantic import (
     model_validator,
 )
 
-
-def fingerprint(config: dict) -> str:
-    """Short stable hash of a resolved config -> run identity (unique filenames, dedup)."""
-    return hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()[:8]
+from rigfl.experiment.identity import (
+    fingerprint,
+    run_identity_input,
+)
+from rigfl.experiment.identity import (
+    normalize_early_stopping as normalize_early_stopping,
+)
 
 
 def hashable(v):
@@ -82,14 +83,6 @@ def result_data_configuration(record: dict) -> dict:
 def result_data_configuration_id(record: dict) -> str:
     """Return the stable identity of a run's seed-independent data configuration."""
     return fingerprint(result_data_configuration(record))
-
-
-def normalize_early_stopping(es: dict | None) -> dict:
-    """Normalize inactive stopping policies to ``{"enabled": False}``."""
-    es = es or {}
-    if not es.get("enabled"):
-        return {"enabled": False}
-    return {k: hashable(v) for k, v in es.items() if v is not None}
 
 
 #: What enabling early stopping means when no metric is named.
@@ -534,53 +527,46 @@ class ResolvedExperimentConfig(ExperimentConfig):
 
 
 # ── Run identity ─────────────────────────────────────────────────────────────
-# Execution and output settings do not define the experimental condition.
-_ENV_IRRELEVANT = (
-    "device",
-    "out_dir",
-    "quiet",
-    "wandb",
-    "wandb_project",
-    "dataset_config",
-    "data_dir",
-)
-# Cache location does not define an algorithm configuration.
-_ALGORITHM_ENV_IRRELEVANT = ("cache_dir",)
-
-
-def algorithm_identity(algorithm_dump: dict) -> dict:
+def algorithm_identity(
+    algorithm_dump: dict, *, algorithm: str | None = None
+) -> dict:
     """An algorithm's config, minus values that only locate stored artifacts."""
-    return {
-        k: v for k, v in algorithm_dump.items() if k not in _ALGORITHM_ENV_IRRELEVANT
-    }
+    return run_identity_input(algorithm, {}, algorithm_dump)["algorithm"]
+
+
+def run_identity(
+    exp: "ResolvedExperimentConfig",
+    algorithm_dump: dict,
+    *,
+    algorithm: str | None = None,
+    ignored_experiment_fields: tuple[str, ...] = (),
+) -> dict:
+    """Canonical scientific identity from already resolved configurations."""
+    if not isinstance(exp, ResolvedExperimentConfig):
+        raise TypeError("run identity requires a resolved dataset partition")
+    return run_identity_input(
+        algorithm,
+        exp.model_dump(),
+        algorithm_dump,
+        ignored_experiment_fields=ignored_experiment_fields,
+    )
 
 
 def run_fingerprint(
     exp: "ResolvedExperimentConfig",
     algorithm_dump: dict,
     *,
+    algorithm: str | None = None,
     ignored_experiment_fields: tuple[str, ...] = (),
 ) -> str:
     """Run identity from resolved experiment and algorithm configurations."""
-    if not isinstance(exp, ResolvedExperimentConfig):
-        raise TypeError("run identity requires a resolved dataset partition")
-    e = exp.model_dump()
-    for k in _ENV_IRRELEVANT:
-        e.pop(k, None)
-    for k in ignored_experiment_fields:
-        e.pop(k, None)
-    for k in ("partition_seed", "split_seed"):
-        if e.get(k) is None:
-            e.pop(k, None)
-    e.pop("model", None)
-    e.pop("model_family", None)
-    # Disabled stopping governs nothing, so its other settings must not mint a
-    # second identity for the same run.
-    e["early_stopping"] = normalize_early_stopping(e.get("early_stopping"))
-    if not e.get("estimate_flops"):
-        e.pop("estimate_flops", None)
     return fingerprint(
-        {"experiment": e, "algorithm": algorithm_identity(algorithm_dump)}
+        run_identity(
+            exp,
+            algorithm_dump,
+            algorithm=algorithm,
+            ignored_experiment_fields=ignored_experiment_fields,
+        )
     )
 
 

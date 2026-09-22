@@ -10,8 +10,14 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from rigfl.core import (Client, ClientModel, Identity, iterative,
-                        p2p_one_shot)
+from rigfl.algorithms.fedavg import (
+    FedAvg,
+    FedAvgConfig,
+    ModelUpload,
+    weighted_average_states,
+)
+from rigfl.algorithms.fedprox import FedProx, FedProxConfig, proximal_penalty
+from rigfl.core import Client, ClientModel, Identity, iterative, p2p_one_shot
 from rigfl.data.builder import build_clients
 from rigfl.experiment.artifacts import validate_run_record
 from rigfl.experiment.config import ExperimentConfig, run_fingerprint
@@ -25,13 +31,9 @@ from rigfl.experiment.registry import (
     resolve_algorithm_config,
     resolve_algorithm_models,
 )
-from tests.helpers import resolved_experiment
 from rigfl.experiment.run import run_one
-from rigfl.algorithms.fedavg import (FedAvg, FedAvgConfig, ModelUpload,
-                                    weighted_average_states)
-from rigfl.algorithms.fedprox import FedProx, FedProxConfig, proximal_penalty
 from rigfl.models.registry import MODEL_ARCHITECTURE_REGISTRY
-
+from tests.helpers import resolved_experiment
 
 DEVICE = torch.device("cpu")
 
@@ -251,7 +253,7 @@ def _artifact(tmp_path):
     )
 
 
-@pytest.mark.parametrize("name", ["fedavg", "fedprox"])
+@pytest.mark.parametrize("name", ["fedavg", "fedprox", "fedamp", "apple", "fedpac"])
 def test_algorithms_run_end_to_end_through_experiment_infrastructure(
     name, monkeypatch, tmp_path
 ):
@@ -281,7 +283,7 @@ def test_algorithms_run_end_to_end_through_experiment_infrastructure(
     assert record["algorithm"] == name
     assert record["config"]["experiment"]["model"] == "tiny_image"
     assert record["result"]["evaluation_history"]["evaluation_rounds"] == [0]
-    assert record["record_schema_version"] == 4
+    assert record["record_schema_version"] == 5
     assert record["resources"]["observed"]["communication_bytes"]["total"] > 0
     assert record["resources"]["checkpoints"][0]["round"] == 0
     validate_run_record(record)

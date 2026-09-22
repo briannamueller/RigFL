@@ -89,6 +89,69 @@ def load_results(results_dir: Path, dataset: str | None, *, ignore_invalid: bool
     return by_algorithm
 
 
+def load_submission_results(
+    results_dir: Path,
+    tasks: list[dict],
+    dataset: str | None,
+    *,
+    ignore_invalid: bool = False,
+    invalid: list | None = None,
+) -> dict[str, list[dict]]:
+    """Load only the exact completed-run paths frozen into one submission."""
+    by_algorithm: dict[str, list[dict]] = defaultdict(list)
+    problems: list[tuple[str, str]] = [] if invalid is None else invalid
+    seen: set[str] = set()
+    for task in tasks:
+        filename = task.get("result_file")
+        expected_fingerprint = task.get("run_fingerprint")
+        if not isinstance(filename, str) or not isinstance(
+            expected_fingerprint, str
+        ):
+            raise ValueError("grid is not a resolved submission manifest")
+        path = results_dir / filename
+        if not path.exists():
+            legacy_filename = task.get("legacy_result_file")
+            legacy_fingerprint = task.get("legacy_run_fingerprint")
+            if isinstance(legacy_filename, str) and isinstance(
+                legacy_fingerprint, str
+            ):
+                legacy_path = results_dir / legacy_filename
+                if legacy_path.exists():
+                    filename = legacy_filename
+                    expected_fingerprint = legacy_fingerprint
+                    path = legacy_path
+        if filename in seen:
+            continue
+        seen.add(filename)
+        if not path.exists():
+            continue
+        try:
+            record = read_json(path)
+            validate_run_record(
+                record,
+                path=path,
+                expected_algorithm=task["algorithm"],
+                expected_fingerprint=expected_fingerprint,
+            )
+        except ResultValidationError as error:
+            problems.append((path.name, error.reason))
+            continue
+        record["_source_file"] = path.name
+        experiment = record.get("config", {}).get("experiment", {})
+        if dataset and experiment.get("dataset") != dataset:
+            continue
+        by_algorithm[record["algorithm"]].append(record)
+
+    if problems and not ignore_invalid:
+        listing = "\n".join(f"  {name}\n    {reason}" for name, reason in problems)
+        noun = "file" if len(problems) == 1 else "files"
+        raise SystemExit(
+            f"[collect] strict mode stopped: {len(problems)} invalid result "
+            f"{noun} referenced by the submission:\n{listing}"
+        )
+    return by_algorithm
+
+
 # Algorithm settings are excluded so different algorithms can share one experimental
 # condition. Replicate seeds and generated partition IDs are excluded because rows
 # aggregate over replicate conditions.
@@ -128,7 +191,10 @@ def algorithm_variant(rec: dict) -> tuple:
     settings are excluded through the same helper run identity uses, so two runs
     that differ only in where their cache lives stay one row.
     """
-    cfg = algorithm_identity(rec.get("config", {}).get("algorithm", {}))
+    cfg = algorithm_identity(
+        rec.get("config", {}).get("algorithm", {}),
+        algorithm=rec.get("algorithm"),
+    )
     return tuple(sorted((k, _hashable(v)) for k, v in cfg.items()))
 
 
@@ -143,7 +209,10 @@ def algorithm_fields(rec: dict) -> dict[str, object]:
         else:
             fields[path] = value
 
-    for key, value in algorithm_identity(rec.get("config", {}).get("algorithm", {})).items():
+    for key, value in algorithm_identity(
+        rec.get("config", {}).get("algorithm", {}),
+        algorithm=rec.get("algorithm"),
+    ).items():
         add(key, value)
     return fields
 
@@ -463,21 +532,39 @@ def main() -> None:
     args = p.parse_args()
 
     invalid: list[tuple[str, str]] = []
-    by_algorithm = load_results(Path(args.results_dir), args.dataset,
-                                ignore_invalid=not args.strict_results, invalid=invalid)
     grid_tasks = None
     if args.grid:
         try:
             grid_tasks = read_grid_tasks(args.grid)
         except ValueError as error:
             raise SystemExit(f"[collect] {error}") from error
-        filtered = [
-            record for records in by_algorithm.values() for record in records
-            if any(record_matches_task(record, task) for task in grid_tasks)
-        ]
-        by_algorithm = defaultdict(list)
-        for record in filtered:
-            by_algorithm[record["algorithm"]].append(record)
+    if grid_tasks and all(
+        isinstance(task.get("result_file"), str)
+        and isinstance(task.get("run_fingerprint"), str)
+        for task in grid_tasks
+    ):
+        by_algorithm = load_submission_results(
+            Path(args.results_dir),
+            grid_tasks,
+            args.dataset,
+            ignore_invalid=not args.strict_results,
+            invalid=invalid,
+        )
+    else:
+        by_algorithm = load_results(
+            Path(args.results_dir),
+            args.dataset,
+            ignore_invalid=not args.strict_results,
+            invalid=invalid,
+        )
+        if grid_tasks is not None:
+            filtered = [
+                record for records in by_algorithm.values() for record in records
+                if any(record_matches_task(record, task) for task in grid_tasks)
+            ]
+            by_algorithm = defaultdict(list)
+            for record in filtered:
+                by_algorithm[record["algorithm"]].append(record)
     ignored = [{"file": name, "reason": reason} for name, reason in invalid]
     if ignored:
         listing = "\n".join(

@@ -21,7 +21,10 @@ class TransferComparisonError(ValueError):
 def _local_configuration(records: list[dict]) -> dict:
     configurations = {
         json.dumps(
-            algorithm_identity(record.get("config", {}).get("algorithm", {})),
+            algorithm_identity(
+                record.get("config", {}).get("algorithm", {}),
+                algorithm=record.get("algorithm"),
+            ),
             sort_keys=True,
         )
         for record in records

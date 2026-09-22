@@ -28,10 +28,10 @@ from rigfl.experiment.config import (
     ExperimentConfig,
     IntensificationConfig,
     ReplicateCondition,
-    replicate_conditions_from_count,
     algorithm_identity,
     fingerprint,
     hashable,
+    replicate_conditions_from_count,
 )
 from rigfl.experiment.paths import (
     flatten_mapping,
@@ -332,7 +332,10 @@ def effective_condition(record: dict, manifest: dict) -> dict:
 
     cond = {k: v for k, v in condition_fields(record).items() if k not in drop_exp}
     exp = record.get("config", {}).get("experiment", {})
-    acfg = algorithm_identity(record.get("config", {}).get("algorithm", {}))
+    acfg = algorithm_identity(
+        record.get("config", {}).get("algorithm", {}),
+        algorithm=record.get("algorithm"),
+    )
     flat_acfg = flatten_mapping(acfg)
     for name, value in flat_acfg.items():
         if name not in drop_algorithm:

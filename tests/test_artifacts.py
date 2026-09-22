@@ -19,6 +19,8 @@ from rigfl.experiment.artifacts import (
     write_run_record,
 )
 from rigfl.experiment.config import run_fingerprint
+from rigfl.experiment.identity import fingerprint, run_identity_input
+from rigfl.experiment.registry import ignored_experiment_fields
 from tests.helpers import resolved_experiment
 
 
@@ -126,9 +128,38 @@ def test_force_allows_replacing_but_not_silently_accepting_a_bad_result(tmp_path
 
 def test_saved_configuration_must_match_its_fingerprint():
     _, _, _, record = _record()
-    record["config"]["experiment"]["partition_id"] = "partition-other"
+    record["identity"]["fingerprint_input"]["experiment"][
+        "partition_id"
+    ] = "partition-other"
     with pytest.raises(ResultValidationError, match="fingerprint"):
         validate_run_record(record)
+
+
+def test_legacy_identity_does_not_receive_a_setting_added_later():
+    from rigfl.algorithms.feddes import FedDESConfig
+
+    exp = resolved_experiment(rounds=2, eval_gap=1, num_clients=2)
+    algorithm = FedDESConfig(base_models_per_client="all").model_dump()
+    algorithm.pop("base_models_per_client")
+    old_input = run_identity_input(
+        "feddes",
+        exp.model_dump(),
+        algorithm,
+        ignored_experiment_fields=ignored_experiment_fields("feddes"),
+        apply_historical_equivalence=False,
+    )
+    old_fingerprint = fingerprint(old_input)
+    record = make_run_record(
+        algorithm="feddes",
+        experiment=exp.model_dump(),
+        algorithm_config=algorithm,
+        result=_result(),
+        run_fingerprint=old_fingerprint,
+    )
+    record["record_schema_version"] = 3
+    record.pop("identity")
+
+    validate_run_record(record, expected_fingerprint=old_fingerprint)
 
 
 def test_requested_configuration_must_match_the_saved_configuration():
@@ -222,6 +253,7 @@ def test_written_record_round_trips_through_strict_validation(tmp_path):
     path = tmp_path / "run.json"
     write_run_record(path, record, expected_algorithm="local", expected_fingerprint=fp)
     parsed = json.loads(path.read_text())
+    assert fingerprint(parsed["identity"]["fingerprint_input"]) == fp
     validate_run_record(parsed, expected_algorithm="local", expected_fingerprint=fp)
 
 

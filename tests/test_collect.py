@@ -21,6 +21,7 @@ from rigfl.experiment.collect import (
     _rows_by_algorithm,
     _rows_by_group,
     _sort_rows_by_validation,
+    load_submission_results,
 )
 from rigfl.experiment.collect import main as collect_main
 from tests.helpers import resolved_experiment
@@ -435,6 +436,30 @@ def test_loader_can_skip_invalid_file_without_losing_valid_runs(tmp_path, monkey
     rows = collect_module.load_results(tmp_path, None, ignore_invalid=True, invalid=invalid)
     assert len(rows["fedavg"]) == 1
     assert invalid[0][0] == "broken.json"
+
+
+def test_submission_collection_is_not_affected_by_an_unrelated_bad_result(
+    tmp_path, monkeypatch
+):
+    wanted = {
+        "algorithm": "local",
+        "config": {"experiment": {"dataset": "cifar10"}},
+    }
+    (tmp_path / "wanted.json").write_text(json.dumps(wanted))
+    (tmp_path / "unrelated-broken.json").write_text("{")
+    monkeypatch.setattr(collect_module, "validate_run_record", lambda *args, **kwargs: None)
+
+    rows = load_submission_results(
+        tmp_path,
+        [{
+            "algorithm": "local",
+            "run_fingerprint": "abc123",
+            "result_file": "wanted.json",
+        }],
+        None,
+    )
+
+    assert rows["local"] == [{**wanted, "_source_file": "wanted.json"}]
 
 
 def test_sweep_task_rejects_an_unknown_setting(tmp_path):

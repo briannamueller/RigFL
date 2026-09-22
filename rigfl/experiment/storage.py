@@ -6,7 +6,11 @@ import json
 from collections.abc import Mapping
 from pathlib import Path
 
+from rigfl.experiment.identity import expand_historical_absences
+from rigfl.experiment.paths import deep_merge
+
 RUNS_DIRECTORY = "runs"
+SUBMISSION_FILE = "submission.json"
 
 
 def run_store(results_root: str | Path) -> Path:
@@ -57,10 +61,51 @@ def record_matches_task(record: dict, task: dict) -> bool:
 
 
 def read_grid_tasks(grid_path: str | Path) -> list[dict]:
-    """Read the tasks in a saved sweep grid."""
+    """Read tasks, expanding a resolved submission's shared defaults."""
     path = Path(grid_path)
     try:
-        return [json.loads(line) for line in path.read_text().splitlines() if line]
+        tasks = [json.loads(line) for line in path.read_text().splitlines() if line]
+        metadata_path = path.parent / SUBMISSION_FILE
+        if not metadata_path.exists():
+            return tasks
+        metadata = json.loads(metadata_path.read_text())
+        if metadata.get("kind") != "rigfl.sweep_submission":
+            raise ValueError(f"unsupported submission metadata in {metadata_path}")
+        version = metadata.get("identity_schema_version")
+        if not isinstance(version, int):
+            raise ValueError(f"identity schema is missing from {metadata_path}")
+        experiment_base = metadata.get("experiment_defaults")
+        algorithm_bases = metadata.get("algorithm_defaults")
+        if not isinstance(experiment_base, dict) or not isinstance(
+            algorithm_bases, dict
+        ):
+            raise ValueError(f"shared defaults are invalid in {metadata_path}")
+        expanded = []
+        for task in tasks:
+            name = task.get("algorithm")
+            algorithm_base = algorithm_bases.get(name)
+            if not isinstance(algorithm_base, dict):
+                raise ValueError(
+                    f"submission has no shared algorithm configuration for {name!r}"
+                )
+            experiment = deep_merge(experiment_base, task.get("experiment", {}))
+            algorithm_config = deep_merge(
+                algorithm_base, task.get("algorithm_config", {})
+            )
+            experiment, algorithm_config = expand_historical_absences(
+                name,
+                experiment,
+                algorithm_config,
+                identity_schema_version=version,
+            )
+            expanded.append(
+                {
+                    **task,
+                    "experiment": experiment,
+                    "algorithm_config": algorithm_config,
+                }
+            )
+        return expanded
     except (OSError, json.JSONDecodeError) as error:
         raise ValueError(f"cannot read sweep grid {path}: {error}") from error
 

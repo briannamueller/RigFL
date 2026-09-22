@@ -10,9 +10,16 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from rigfl.experiment.identity import (
+    IDENTITY_SCHEMA_VERSION,
+    READABLE_IDENTITY_SCHEMA_VERSIONS,
+    fingerprint,
+    run_identity_input,
+)
+
 RECORD_KIND = "rigfl.run_result"
-RECORD_SCHEMA_VERSION = 4
-READABLE_RECORD_SCHEMA_VERSIONS = {3, 4}
+RECORD_SCHEMA_VERSION = 5
+READABLE_RECORD_SCHEMA_VERSIONS = {3, 4, 5}
 RESULT_SCHEMA_VERSION = 3
 STATUS_COMPLETE = "complete"
 
@@ -111,16 +118,29 @@ def make_run_record(
     algorithm_config: dict,
     result: dict,
     run_fingerprint: str,
+    identity_input: dict | None = None,
     **extra,
 ) -> dict:
-    record_version = 4 if "resources" in extra else 3
+    if identity_input is None:
+        from rigfl.experiment.registry import ignored_experiment_fields
+
+        identity_input = run_identity_input(
+            algorithm,
+            experiment,
+            algorithm_config,
+            ignored_experiment_fields=ignored_experiment_fields(algorithm),
+        )
     record = {
         "kind": RECORD_KIND,
-        "record_schema_version": record_version,
+        "record_schema_version": RECORD_SCHEMA_VERSION,
         "status": STATUS_COMPLETE,
         "run_fingerprint": run_fingerprint,
         "algorithm": algorithm,
         "config": {"experiment": experiment, "algorithm": algorithm_config},
+        "identity": {
+            "schema_version": IDENTITY_SCHEMA_VERSION,
+            "fingerprint_input": identity_input,
+        },
         **extra,
         "result": result,
     }
@@ -182,24 +202,51 @@ def validate_run_record(
         )
 
     from rigfl.experiment.config import ResolvedExperimentConfig
-    from rigfl.experiment.registry import algorithm_run_fingerprint, config_class
+    from rigfl.experiment.registry import config_class, ignored_experiment_fields
+
+    identity = record.get("identity")
+    if record_version >= 5:
+        if not isinstance(identity, dict):
+            fail("identity is missing or is not an object")
+        identity_version = identity.get("schema_version")
+        if identity_version not in READABLE_IDENTITY_SCHEMA_VERSIONS:
+            fail(
+                "identity.schema_version is "
+                f"{identity_version!r}, expected one of "
+                f"{sorted(READABLE_IDENTITY_SCHEMA_VERSIONS)}"
+            )
+        saved_identity_input = identity.get("fingerprint_input")
+        if (
+            not isinstance(saved_identity_input, dict)
+            or not isinstance(saved_identity_input.get("experiment"), dict)
+            or not isinstance(saved_identity_input.get("algorithm"), dict)
+        ):
+            fail("identity.fingerprint_input is missing or is not an object")
+        computed_fingerprint = fingerprint(saved_identity_input)
+    else:
+        # Legacy records do not store their original fingerprint input.
+        legacy_input = run_identity_input(
+            algorithm,
+            config["experiment"],
+            config["algorithm"],
+            ignored_experiment_fields=ignored_experiment_fields(algorithm),
+            apply_historical_equivalence=False,
+        )
+        computed_fingerprint = fingerprint(legacy_input)
 
     try:
         experiment = ResolvedExperimentConfig(**config["experiment"])
-        algorithm_config = config_class(algorithm)(**config["algorithm"])
+        config_class(algorithm)(**config["algorithm"])
     except Exception as exc:
         fail(f"saved configuration does not validate: {exc}")
 
-    computed_fingerprint = algorithm_run_fingerprint(
-        algorithm, experiment, algorithm_config.model_dump()
-    )
     if record.get("run_fingerprint") != computed_fingerprint:
-        fail("saved run fingerprint does not match the saved configuration")
+        fail("saved run fingerprint does not match its saved fingerprint input")
     if (
         expected_fingerprint is not None
         and computed_fingerprint != expected_fingerprint
     ):
-        fail("saved configuration does not match the requested experiment")
+        fail("saved fingerprint does not match the requested experiment")
 
     result = record.get("result")
     if not isinstance(result, dict):
@@ -230,7 +277,7 @@ def validate_run_record(
         _validate_local_selection(result.get("selection_provenance"), experiment, fail)
     _validate_early_stopping(stopping, experiment, history, fail,
                              iterative=iterative_result)
-    if record_version >= 4:
+    if record_version == 4 or "resources" in record:
         _validate_resources(record.get("resources"), record.get("wall_seconds"),
                             experiment, fail)
     return record

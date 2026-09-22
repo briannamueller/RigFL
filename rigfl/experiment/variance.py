@@ -19,9 +19,9 @@ from rigfl.experiment.collect import (
     load_results,
     varying_fields,
 )
-from rigfl.experiment.storage import records_for_grid
 from rigfl.experiment.config import algorithm_identity
 from rigfl.experiment.paths import flatten_mapping
+from rigfl.experiment.storage import records_for_grid
 
 SEED_FIELDS = ("partition_seed", "split_seed", "seed")
 SEED_LABELS = {
@@ -204,7 +204,8 @@ def _analyze_group(
         "algorithm": first["algorithm"],
         "experiment": condition_fields(first),
         "algorithm_configuration": algorithm_identity(
-            first.get("config", {}).get("algorithm", {})
+            first.get("config", {}).get("algorithm", {}),
+            algorithm=first.get("algorithm"),
         ),
         "selection_view": actual_views.pop(),
         "selection_view_fallback": any(fallbacks),

@@ -7,6 +7,9 @@
 | `local` | yes |
 | `fedavg` | no |
 | `fedprox` | no |
+| `fedamp` | no |
+| `apple` | no |
+| `fedpac` | no |
 | `global` | yes |
 | `fedproto` | yes |
 | `fedgh` | yes |
@@ -37,6 +40,44 @@
 | `algorithm.local_epochs` | integer | `1` | ≥ 1 | Client training epochs per round. |
 | `algorithm.lr` | number | `0.01` | > 0 | Client optimizer learning rate. |
 | `algorithm.mu` | number | `0.01` | ≥ 0 | Weight of the proximal penalty. |
+
+## `fedamp`
+
+| Setting | Type | Default | Allowed | Description |
+|---|---|---|---|---|
+| `algorithm.local_epochs` | integer | `1` | ≥ 1 | Client training epochs per round. |
+| `algorithm.lr` | number | `0.01` | > 0 | Client optimizer learning rate. |
+| `algorithm.lamda` | number | `1.0` | ≥ 0 | Weight of the proximal personalized-model objective. |
+| `algorithm.alpha` | number | `1.0` | > 0 | Step size used to construct personalized cloud models. |
+| `algorithm.sigma` | number | `1.0` | > 0 | Scale of the negative-exponential attention function. |
+
+## `apple`
+
+| Setting | Type | Default | Allowed | Description |
+|---|---|---|---|---|
+| `algorithm.local_epochs` | integer | `5` | ≥ 1 | Client training epochs per round. |
+| `algorithm.core_lr` | number | `0.01` | > 0 | Learning rate for core models. |
+| `algorithm.relationship_lr` | number | `0.001` | > 0 | Learning rate for directed-relationship vectors. |
+| `algorithm.momentum` | number | `0.9` | ≥ 0 | SGD momentum for local core training. |
+| `algorithm.lr_decay` | number | `1.0` | > 0; ≤ 1 | Per-round multiplier for both learning rates. |
+| `algorithm.mu` | number | `0.1` | ≥ 0 | Weight of the directed-relationship proximal term. |
+| `algorithm.regularization_fraction` | number | `0.1` | > 0; ≤ 1 | Fraction of rounds during which relationship regularization decays. |
+| `algorithm.scheduler` | string | `exponential` | `cosine`, `exponential` | Decay shape for relationship regularization. |
+
+## `fedpac`
+
+| Setting | Type | Default | Allowed | Description |
+|---|---|---|---|---|
+| `algorithm.feature_epochs` | integer | `1` | ≥ 1 | Feature-extractor training epochs per round. |
+| `algorithm.feature_lr` | number | `0.01` | > 0 | Feature-extractor optimizer learning rate. |
+| `algorithm.head_lr` | number | `0.1` | > 0 | Classifier learning rate for its one local epoch. |
+| `algorithm.lamda` | number | `1.0` | ≥ 0 | Weight of global feature-centroid alignment. |
+| `algorithm.momentum` | number | `0.5` | ≥ 0 | Momentum for local SGD. |
+| `algorithm.weight_decay` | number | `0.0005` | ≥ 0 | Weight decay for local SGD. |
+| `algorithm.qp_weight_threshold` | number | `0.001` | ≥ 0 | Classifier weights at or below this value are set to zero. |
+| `algorithm.qp_eigen_threshold` | number | `0.01` | > 0 | Eigenvalue threshold used when repairing a non-PSD QP matrix. |
+| `algorithm.qp_max_iterations` | integer | `5000` | ≥ 1 | Maximum projected-gradient iterations per classifier QP. |
+| `algorithm.qp_tolerance` | number | `1e-10` | > 0 | Convergence tolerance for classifier QP solves. |
 
 ## `global`
 
@@ -103,6 +144,8 @@
 ## `feddes`
 
 `base.models` is set from the experiment's model selection and cannot be configured here. `base_models_per_client` chooses whether each client trains the full selected family or its standard client-ID-assigned model. `base.split_mode` must be `oof_stacking`. Other settings under `algorithm.graphroute` follow the [GraphRoute configuration guide](https://github.com/briannamueller/GraphRoute#configuration).
+
+FedDES additionally provides `local_embedding` as a GraphRoute node or edge feature source. It concatenates representations from the current client's locally trained models in their stable pool order; with `base_models_per_client: assigned`, it is simply that client's one model representation. `graph.embedding_normalization: per_model_l2` normalizes each local model representation before concatenation. Unlike GraphRoute's built-in `embedding_concat`, `local_embedding` does not use models communicated by other clients.
 
 | Setting | Type | Default | Allowed | Description |
 |---|---|---|---|---|

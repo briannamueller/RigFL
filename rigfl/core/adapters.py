@@ -6,7 +6,7 @@ every client's heterogeneous backbone to emit the same representation width.
 
 How the original papers reach that shared width:
 
-* **FedProto / FedGH** — a learned ``Linear`` sized to a fixed width (50 / 500).
+* **FedProto / FedGH** — a learned ``Linear`` sized to a fixed width.
 * **FedKD** — a learned projection ``W_h`` for hidden-state distillation.
 * **FedTGP** — parameter-free ``AdaptiveAvgPool1d`` (its own design).
 

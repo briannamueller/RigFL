@@ -38,6 +38,7 @@ from rigfl.prediction import Predictions
 
 FEDDES_PREPROCESSING_KEY = "rigfl-feddes-multitensor-collation-v1"
 FEDDES_POOL_POLICY_VERSION = 1
+LOCAL_EMBEDDING_SOURCE = "local_embedding"
 _OOF_INNER_VAL_RATIO = 0.2
 
 
@@ -113,6 +114,11 @@ class FedDES(Algorithm):
         self.data_id, self.seed = data_id, seed
         self.validation_fraction = validation_fraction
         self.feature_extractor = feature_extractor
+        graph = self.graphroute_settings.graph
+        self.uses_local_embedding = LOCAL_EMBEDDING_SOURCE in {
+            graph.node_feature_source,
+            graph.edge_feature_source,
+        }
         self.model_ids = model_ids
         if self.cache_dir and not self.data_id:
             raise ValueError("FedDES pool reuse requires a stable data_id.")
@@ -157,6 +163,24 @@ class FedDES(Algorithm):
                 num_classes=experiment.num_classes,
                 input_spec=model_input_spec,
             )
+        graph = config.graphroute.graph
+        sources = {graph.node_feature_source, graph.edge_feature_source}
+        if LOCAL_EMBEDDING_SOURCE in sources:
+            from graphroute.features import BUILTIN_FEATURE_SOURCES
+
+            other_custom = sources - BUILTIN_FEATURE_SOURCES - {
+                LOCAL_EMBEDDING_SOURCE
+            }
+            if other_custom:
+                raise ValueError(
+                    "FedDES cannot combine local_embedding with another custom "
+                    f"GraphRoute feature source in one run: {sorted(other_custom)}."
+                )
+            feature_extractor = None
+        else:
+            feature_extractor = graphroute_feature_extractor(
+                graph, model_input_spec
+            )
         return cls(
             config,
             base_pool,
@@ -165,9 +189,22 @@ class FedDES(Algorithm):
             model_ids=model_ids,
             seed=experiment.seed,
             validation_fraction=experiment.validation_fraction,
-            feature_extractor=graphroute_feature_extractor(
-                config.graphroute.graph, model_input_spec
-            ),
+            feature_extractor=feature_extractor,
+        )
+
+    def _feature_extractor_for_client(self, state, device):
+        """Return the configured dataset or client-local sample representation."""
+        if not self.uses_local_embedding:
+            return self.feature_extractor
+        local_pool = state.get("local_pool")
+        if local_pool is None:
+            raise RuntimeError(
+                "FedDES local_embedding requires the client's trained local pool."
+            )
+        return _LocalEmbeddingExtractor(
+            local_pool.load_models(),
+            device=device,
+            normalization=self.graphroute_settings.graph.embedding_normalization,
         )
 
     def prepare(self, model, train_loader, ctx: OneShotContext):
@@ -375,7 +412,8 @@ class FedDES(Algorithm):
         st["graphroute_model"] = fit_graphroute(
             self._graphroute_config(ctx.client_id, device), train_dataset,
             validation_set=validation_dataset, pool=client_pool,
-            collate_fn=_collate, feature_extractor=self.feature_extractor)
+            collate_fn=_collate,
+            feature_extractor=self._feature_extractor_for_client(st, device))
         training = st["graphroute_model"].history
         return LocalSelection(
             selected_step=int(training["best_epoch"]),
@@ -477,6 +515,57 @@ class _MeasuredPoolOutputs:
                     resource_path, fingerprint=fingerprint,
                     measurement=self._monitor.artifact_measurement(delta))
         return value
+
+
+class _LocalEmbeddingExtractor:
+    """Concatenate representations from one client's trained local models."""
+
+    def __init__(self, models, *, device, normalization: str):
+        self.models = tuple(models)
+        if not self.models:
+            raise ValueError("local_embedding requires at least one local model.")
+        missing = [
+            type(model).__name__
+            for model in self.models
+            if not callable(getattr(model, "rep", None))
+        ]
+        if missing:
+            raise TypeError(
+                "local_embedding requires local models exposing rep(inputs); "
+                f"missing on: {', '.join(missing)}."
+            )
+        if normalization not in {"none", "per_model_l2"}:
+            raise ValueError(
+                f"Unknown embedding normalization {normalization!r}."
+            )
+        self.device = torch.device(device)
+        self.normalization = normalization
+
+    @torch.no_grad()
+    def __call__(self, inputs):
+        inputs = inputs.to(self.device)
+        batch_size = (
+            inputs.shape[0]
+            if isinstance(inputs, torch.Tensor)
+            else inputs[0].shape[0]
+        )
+        embeddings = []
+        for model in self.models:
+            model.to(self.device)
+            model.eval()
+            embedding = model.rep(inputs)
+            if not isinstance(embedding, torch.Tensor):
+                raise TypeError("A local model's rep(inputs) must return a tensor.")
+            if embedding.ndim < 2 or embedding.shape[0] != batch_size:
+                raise ValueError(
+                    "A local model's representation must have shape "
+                    "[batch_size, ...]."
+                )
+            embedding = embedding.flatten(1).float()
+            if self.normalization == "per_model_l2":
+                embedding = torch.nn.functional.normalize(embedding, dim=1)
+            embeddings.append(embedding)
+        return torch.cat(embeddings, dim=1)
 
 # ── small helpers ────────────────────────────────────────────────────────────
 class _BatchDataset(Dataset):

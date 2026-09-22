@@ -41,6 +41,9 @@ machinery.
 |---|---|
 | [FedAvg](https://proceedings.mlr.press/v54/mcmahan17a.html) | `fedavg` |
 | [FedProx](https://arxiv.org/abs/1812.06127) | `fedprox` |
+| [FedAMP](https://ojs.aaai.org/index.php/AAAI/article/view/16960) | `fedamp` |
+| [APPLE](https://www.ijcai.org/proceedings/2022/0301) | `apple` |
+| [FedPAC](https://openreview.net/forum?id=SXZr8aDKia) | `fedpac` |
 | [FedProto](https://ojs.aaai.org/index.php/AAAI/article/view/20819) | `fedproto` |
 | [FedGH](https://arxiv.org/abs/2303.13137) | `fedgh` |
 | [LG-FedAvg](https://arxiv.org/abs/2001.01523) | `lgfedavg` |
@@ -248,10 +251,9 @@ Generate the sweep grid with:
 python -m rigfl.experiment.launch --config configs/experiments/cifar10_sweep.yaml
 ```
 
-This writes `results/cifar10_sweep/grid.jsonl`, where each line is one task: a
-complete experiment configuration. Tasks run independently by their 1-based
-index, so the grid can be executed sequentially in a shell loop or in parallel as
-an array job on any scheduler:
+This writes `results/cifar10_sweep/grid.jsonl`, where each line is one declared
+task. Tasks run independently by their 1-based index, so the grid can be executed
+sequentially in a shell loop or in parallel as an array job on any scheduler:
 
 ```bash
 python -m rigfl.experiment.launch \

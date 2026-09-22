@@ -111,7 +111,8 @@ def frozen_configuration(record: dict) -> dict:
         "algorithm": record.get("algorithm"),
         "experiment": experiment,
         "algorithm_config": algorithm_identity(
-            record.get("config", {}).get("algorithm", {})
+            record.get("config", {}).get("algorithm", {}),
+            algorithm=record.get("algorithm"),
         ),
     }
 

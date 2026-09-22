@@ -29,6 +29,7 @@ from rigfl.data.config import (
 )
 from rigfl.experiment.artifacts import (
     ResultValidationError,
+    atomic_write_json,
     atomic_write_text,
     existing_result_decision,
     read_json,
@@ -38,9 +39,12 @@ from rigfl.experiment.artifacts import (
 from rigfl.experiment.config import (
     ExperimentConfig,
     ExperimentFileConfig,
+    ResolvedExperimentConfig,
     result_filename,
 )
 from rigfl.experiment.device import resolve_device
+from rigfl.experiment.env import capture_env
+from rigfl.experiment.identity import IDENTITY_SCHEMA_VERSION
 from rigfl.experiment.paths import (
     filter_for_model,
     flatten_mapping,
@@ -52,15 +56,20 @@ from rigfl.experiment.registry import (
     ALL_ALGORITHMS,
     BASELINES,
     algorithm_run_fingerprint,
-    algorithm_spec,
     config_class,
     ignored_experiment_fields,
     ignores_experiment_field,
+    legacy_algorithm_run_fingerprint,
     resolve_algorithm_config,
     resolve_algorithm_experiment,
 )
 from rigfl.experiment.run import resolve_experiment_data, run_one
-from rigfl.experiment.storage import run_store, study_directory
+from rigfl.experiment.storage import (
+    SUBMISSION_FILE,
+    read_grid_tasks,
+    run_store,
+    study_directory,
+)
 from rigfl.experiment.tuning import canonical_axis
 
 
@@ -412,7 +421,130 @@ def _write_grid(path: Path, grid: list[dict]) -> bool:
     return True
 
 
-def _stage_sge_grid(grid_path: Path) -> Path:
+def _difference(value, base):
+    """Nested values that differ from a shared submission base."""
+    if not isinstance(value, dict) or not isinstance(base, dict):
+        return value
+    changed = {}
+    for key, item in value.items():
+        if key not in base:
+            changed[key] = item
+            continue
+        if isinstance(item, dict) and isinstance(base[key], dict):
+            nested = _difference(item, base[key])
+            if nested:
+                changed[key] = nested
+        elif item != base[key]:
+            changed[key] = item
+    return changed
+
+
+def _resolve_task(task: dict, *, data_cache: dict | None = None):
+    """Resolve one declared task to the complete configuration it will execute."""
+    name = task["algorithm"]
+    experiment_values = task["experiment"]
+    declared = ExperimentConfig(
+        **{
+            key: value
+            for key, value in experiment_values.items()
+            if key in ExperimentConfig.model_fields
+        }
+    )
+    cache_key = json.dumps(declared.model_dump(mode="json"), sort_keys=True)
+    cached = data_cache.get(cache_key) if data_cache is not None else None
+    if cached is None:
+        actual, data = resolve_experiment_data(declared)
+        if data_cache is not None:
+            data_cache[cache_key] = (actual, data)
+    else:
+        actual, data = cached
+    actual = resolve_algorithm_experiment(name, actual)
+    if "partition_id" in experiment_values:
+        exp = resolve_algorithm_experiment(
+            name, ResolvedExperimentConfig(**experiment_values)
+        )
+        if exp.model_dump(mode="json") != actual.model_dump(mode="json"):
+            raise ValueError(
+                "saved submission configuration no longer resolves to the same "
+                "dataset partition or model assignment"
+            )
+    else:
+        exp = actual
+    Cfg = config_class(name)
+    unknown = sorted(
+        set(flatten_mapping(task["algorithm_config"])) - model_paths(Cfg)
+    )
+    if unknown:
+        raise ValueError(
+            f"unknown {name} algorithm setting(s): {', '.join(unknown)}"
+        )
+    cfg = resolve_algorithm_config(name, exp, Cfg(**task["algorithm_config"]))
+    return name, exp, cfg, data
+
+
+def _materialize_submission(
+    grid: list[dict], submission_dir: Path, results_root: str | Path
+) -> Path:
+    """Write a resolved, immutable submission grid."""
+    algorithms = sorted({task["algorithm"] for task in grid})
+    experiment_defaults = ExperimentConfig().model_dump(mode="json")
+    algorithm_defaults = {
+        name: config_class(name)().model_dump(mode="json") for name in algorithms
+    }
+    output_dir = run_store(results_root)
+    resolved_tasks = []
+    data_cache = {}
+    for index, task in enumerate(grid, 1):
+        try:
+            name, exp, cfg, _ = _resolve_task(task, data_cache=data_cache)
+        except Exception as error:
+            raise SystemExit(
+                f"task {index} ({task.get('algorithm')}): cannot resolve submission: "
+                f"{error}"
+            ) from error
+        experiment = exp.model_dump(mode="json")
+        algorithm_config = cfg.model_dump(mode="json")
+        fp = algorithm_run_fingerprint(name, exp, algorithm_config)
+        saved_task = {
+            "algorithm": name,
+            "experiment": _difference(experiment, experiment_defaults),
+            "algorithm_config": _difference(
+                algorithm_config, algorithm_defaults[name]
+            ),
+            "run_fingerprint": fp,
+            "result_file": result_filename(exp, name, fp),
+        }
+        legacy_fp = legacy_algorithm_run_fingerprint(name, exp, algorithm_config)
+        if legacy_fp != fp:
+            saved_task["legacy_run_fingerprint"] = legacy_fp
+            saved_task["legacy_result_file"] = result_filename(
+                exp, name, legacy_fp
+            )
+        resolved_tasks.append(saved_task)
+
+    metadata = {
+        "kind": "rigfl.sweep_submission",
+        "schema_version": 1,
+        "identity_schema_version": IDENTITY_SCHEMA_VERSION,
+        "experiment_defaults": experiment_defaults,
+        "algorithm_defaults": algorithm_defaults,
+        "submission_provenance": capture_env(),
+        "results_store": str(output_dir),
+    }
+    atomic_write_json(submission_dir / SUBMISSION_FILE, metadata)
+    snapshot = submission_dir / "grid.jsonl"
+    body = "".join(json.dumps(task) + "\n" for task in resolved_tasks)
+    atomic_write_text(
+        snapshot,
+        body,
+        validate=lambda text: _check_grid(text, len(resolved_tasks)),
+    )
+    return snapshot
+
+
+def _stage_sge_grid(
+    grid_path: Path, results_root: str | Path | None = None
+) -> Path:
     """Copy a working grid so queued SGE tasks cannot observe later edits."""
     try:
         body = grid_path.read_text()
@@ -427,6 +559,10 @@ def _stage_sge_grid(grid_path: Path) -> Path:
     submission_dir = Path(
         tempfile.mkdtemp(prefix=f"{timestamp}-", dir=submissions)
     )
+    if results_root is not None:
+        grid = [json.loads(line) for line in body.splitlines() if line]
+        return _materialize_submission(grid, submission_dir, results_root)
+
     snapshot = submission_dir / "grid.jsonl"
     atomic_write_text(
         snapshot,
@@ -445,7 +581,7 @@ def _qsub_command(grid_path: Path, results_root: str, queue: str,
 
 
 def _submit_or_show_sge(grid_path: Path, results_root: str, queue: str | None,
-                        task_count: int, submit: bool) -> None:
+                        task_count: int, submit: bool) -> Path | None:
     if not submit:
         command = [
             "python", "-m", "rigfl.experiment.launch",
@@ -455,26 +591,30 @@ def _submit_or_show_sge(grid_path: Path, results_root: str, queue: str | None,
             "--submit",
         ]
         print(f"\nSubmit:\n  {shlex.join(command)}")
-        return
+        return None
 
     if not queue:
         raise SystemExit("--submit requires --queue (e.g. --queue gpu)")
 
     import subprocess
 
-    snapshot = _stage_sge_grid(grid_path)
+    snapshot = _stage_sge_grid(grid_path, results_root)
     qsub = _qsub_command(snapshot, results_root, queue, task_count)
     print(f"Submitting fixed grid snapshot: {snapshot}")
     subprocess.run(qsub, check=True)
+    return snapshot
 
 
 def run_task(grid_path: str, task_id: int, out_dir: Path,
              dry_run: bool = False, force: bool = False) -> None:
     """Run the 1-indexed task from a grid file and save its result."""
-    lines = Path(grid_path).read_text().splitlines()
-    if not 1 <= task_id <= len(lines):
-        raise SystemExit(f"task {task_id} out of range 1..{len(lines)}")
-    task = json.loads(lines[task_id - 1])
+    try:
+        tasks = read_grid_tasks(grid_path)
+    except ValueError as error:
+        raise SystemExit(error) from error
+    if not 1 <= task_id <= len(tasks):
+        raise SystemExit(f"task {task_id} out of range 1..{len(tasks)}")
+    task = tasks[task_id - 1]
     run_config(task, out_dir, dry_run=dry_run, force=force,
                task_label=f"task {task_id}")
 
@@ -484,24 +624,30 @@ def run_config(task: dict, out_dir: Path, *, dry_run: bool = False,
                run_missing: bool = True) -> dict | None:
     """Run one resolved task mapping and return its completed record."""
     name = task["algorithm"]
-    exp = ExperimentConfig(**task["experiment"])
+    exp = ExperimentConfig(
+        **{
+            key: value
+            for key, value in task["experiment"].items()
+            if key in ExperimentConfig.model_fields
+        }
+    )
     if not dry_run:
         try:
-            exp, data = resolve_experiment_data(exp)
-            exp = resolve_algorithm_experiment(name, exp)
+            name, exp, cfg, data = _resolve_task(task)
         except (FileNotFoundError, KeyError, ValueError) as exc:
             raise SystemExit(f"{task_label}: {exc}") from exc
-    Cfg = config_class(name)
-    # Grid tasks use the same algorithm-setting validation as single runs.
-    unknown = sorted(
-        set(flatten_mapping(task["algorithm_config"])) - model_paths(Cfg)
-    )
-    if unknown:
-        raise SystemExit(
-            f"{task_label} ({name}): unknown algorithm setting(s): {', '.join(unknown)}\n"
-            f"known: {', '.join(sorted(model_paths(Cfg)))}")
-    cfg = Cfg(**task["algorithm_config"])
-    cfg = resolve_algorithm_config(name, exp, cfg)
+    else:
+        Cfg = config_class(name)
+        unknown = sorted(
+            set(flatten_mapping(task["algorithm_config"])) - model_paths(Cfg)
+        )
+        if unknown:
+            raise SystemExit(
+                f"{task_label} ({name}): unknown algorithm setting(s): "
+                f"{', '.join(unknown)}\nknown: "
+                f"{', '.join(sorted(model_paths(Cfg)))}"
+            )
+        cfg = resolve_algorithm_config(name, exp, Cfg(**task["algorithm_config"]))
     out_dir.mkdir(parents=True, exist_ok=True)
     if dry_run:
         print(
@@ -512,7 +658,61 @@ def run_config(task: dict, out_dir: Path, *, dry_run: bool = False,
     # Non-dry tasks resolved the experiment data (including canonical client
     # models) above; only that resolved form is eligible for run identity.
     fp = algorithm_run_fingerprint(name, exp, cfg.model_dump())
+    submitted_fp = task.get("run_fingerprint")
+    if submitted_fp is not None and submitted_fp != fp:
+        raise SystemExit(
+            f"{task_label}: resolved fingerprint {fp} does not match submitted "
+            f"fingerprint {submitted_fp}; refusing to run a changed task"
+        )
     path = out_dir / result_filename(exp, name, fp)
+    submitted_file = task.get("result_file")
+    if submitted_file is not None and submitted_file != path.name:
+        raise SystemExit(
+            f"{task_label}: result filename {path.name} does not match submitted "
+            f"filename {submitted_file}; refusing to run a changed task"
+        )
+    submitted_legacy_fp = task.get("legacy_run_fingerprint")
+    submitted_legacy_file = task.get("legacy_result_file")
+    if (
+        not force
+        and not path.exists()
+        and isinstance(submitted_legacy_fp, str)
+        and isinstance(submitted_legacy_file, str)
+    ):
+        legacy_path = out_dir / submitted_legacy_file
+        if legacy_path.exists():
+            try:
+                skip, message = existing_result_decision(
+                    legacy_path,
+                    expected_algorithm=name,
+                    expected_fingerprint=submitted_legacy_fp,
+                )
+            except ResultValidationError as error:
+                raise SystemExit(f"{task_label}: {error.report()}") from error
+            if message:
+                print(f"{task_label}: {message}")
+            if skip:
+                record = read_json(legacy_path)
+                record["_source_file"] = legacy_path.name
+                return record
+    if not force and not path.exists() and submitted_fp is None:
+        legacy_fp = legacy_algorithm_run_fingerprint(name, exp, cfg.model_dump())
+        legacy_path = out_dir / result_filename(exp, name, legacy_fp)
+        if legacy_fp != fp and legacy_path.exists():
+            try:
+                skip, message = existing_result_decision(
+                    legacy_path,
+                    expected_algorithm=name,
+                    expected_fingerprint=legacy_fp,
+                )
+            except ResultValidationError as error:
+                raise SystemExit(f"{task_label}: {error.report()}") from error
+            if message:
+                print(f"{task_label}: {message}")
+            if skip:
+                record = read_json(legacy_path)
+                record["_source_file"] = legacy_path.name
+                return record
     try:
         skip, message = existing_result_decision(
             path, expected_algorithm=name, expected_fingerprint=fp,
@@ -592,7 +792,15 @@ def main() -> None:
         _validate_biosilo_partitions(grid)
         n = len(grid)
         print(f"Grid contains {n} tasks: {grid_path}")
-        _submit_or_show_sge(grid_path, args.results_root, args.queue, n, args.submit)
+        submitted = _submit_or_show_sge(
+            grid_path, args.results_root, args.queue, n, args.submit
+        )
+        if submitted is not None:
+            print(
+                "Collect this submission when done:\n  python -m "
+                "rigfl.experiment.collect --results-dir "
+                f"{run_store(args.results_root)} --grid {submitted}"
+            )
         return
 
     spec = _spec_from_args(args)
@@ -612,10 +820,13 @@ def main() -> None:
     action = "Wrote" if created else "Reused"
     print(f"{action} {n} tasks at {grid_path}")
     print(f"  algorithms: {sorted({c['algorithm'] for c in grid})}")
-    _submit_or_show_sge(grid_path, args.results_root, args.queue, n, args.submit)
+    submitted = _submit_or_show_sge(
+        grid_path, args.results_root, args.queue, n, args.submit
+    )
+    collection_grid = submitted or grid_path
     collect = (
         "python -m rigfl.experiment.collect --results-dir "
-        f"{run_store(args.results_root)}"
+        f"{run_store(args.results_root)} --grid {collection_grid}"
     )
     print(f"Collect when done:\n  {collect}")
 

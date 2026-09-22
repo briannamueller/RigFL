@@ -6,12 +6,15 @@ import inspect
 
 import pytest
 
-from rigfl.algorithms.fedgh import FedGH
+from rigfl.algorithms.apple import APPLE
+from rigfl.algorithms.fedamp import FedAMP
 from rigfl.algorithms.fedavg import FedAvg
 from rigfl.algorithms.feddes import FedDES
-from rigfl.algorithms.fedprox import FedProx
+from rigfl.algorithms.fedgh import FedGH
 from rigfl.algorithms.fedkd import FedKD
+from rigfl.algorithms.fedpac import FedPAC
 from rigfl.algorithms.fedproto import FedProto
+from rigfl.algorithms.fedprox import FedProx
 from rigfl.algorithms.fedtgp import FedTGP
 from rigfl.algorithms.fml import FML
 from rigfl.algorithms.global_ensemble import GlobalEnsemble
@@ -21,7 +24,7 @@ from rigfl.core.config import AlgorithmConfig
 from rigfl.core.interfaces import Algorithm
 
 BASELINES = [Local, GlobalEnsemble, FedAvg, FedProx, FedProto, FedGH,
-             LGFedAvg, FML, FedKD, FedTGP]
+             LGFedAvg, FML, FedKD, FedTGP, FedAMP, APPLE, FedPAC]
 CONTRACT = ("init_globals", "local_train", "aggregate", "predict")
 
 
@@ -41,8 +44,7 @@ def test_default_construction_hook_stores_the_validated_configuration():
 def test_one_registry_entry_is_enough_to_construct_an_ordinary_algorithm(
     monkeypatch,
 ):
-    from rigfl.experiment.registry import (AlgorithmSpec, REGISTRY,
-                                           build_algorithm)
+    from rigfl.experiment.registry import REGISTRY, AlgorithmSpec, build_algorithm
     from tests.helpers import resolved_experiment
 
     class ExampleConfig(AlgorithmConfig):

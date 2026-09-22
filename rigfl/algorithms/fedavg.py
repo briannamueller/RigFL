@@ -10,8 +10,8 @@ cannot be meaningfully averaged, so they are copied from the largest upload
 from __future__ import annotations
 
 import copy
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping
 
 import torch
 import torch.nn.functional as F
@@ -74,12 +74,12 @@ def weighted_average_states(uploads: list[ModelUpload], *, device,
                             algorithm: str = "FedAvg") -> dict[str, torch.Tensor]:
     """Sample-count-weighted floating state plus deterministic integer buffers."""
     if not uploads:
-        raise ValueError("FedAvg aggregation requires at least one client upload.")
+        raise ValueError(f"{algorithm} aggregation requires at least one client upload.")
     if any(upload.num_samples < 0 for upload in uploads):
-        raise ValueError("FedAvg upload sample counts must be non-negative.")
+        raise ValueError(f"{algorithm} upload sample counts must be non-negative.")
     total = sum(upload.num_samples for upload in uploads)
     if total <= 0:
-        raise ValueError("FedAvg aggregation requires at least one training sample.")
+        raise ValueError(f"{algorithm} aggregation requires at least one training sample.")
 
     reference = uploads[0].state
     for upload in uploads[1:]:

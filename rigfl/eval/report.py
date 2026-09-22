@@ -60,7 +60,10 @@ def independent_replicates(records: list[dict]) -> bool:
 
 def _algorithm_configuration(record: dict) -> str:
     config = record.get("config", {}).get("algorithm", {})
-    return json.dumps(algorithm_identity(config), sort_keys=True)
+    return json.dumps(
+        algorithm_identity(config, algorithm=record.get("algorithm")),
+        sort_keys=True,
+    )
 
 
 def mean_ci(xs: list[float]) -> tuple[float, float | None]:
