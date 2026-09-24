@@ -12,8 +12,13 @@ from typing import Any, Protocol
 import torch
 
 from rigfl.core.config import AlgorithmConfig
-from rigfl.prediction import (PROB_SUM_ATOL, PredictionError, Predictions,
-                              as_predictions, check_probabilities)
+from rigfl.prediction import (
+    PROB_SUM_ATOL,
+    PredictionError,
+    Predictions,
+    as_predictions,
+    check_probabilities,
+)
 
 __all__ = [
     "IterativeAlgorithm", "Algorithm",

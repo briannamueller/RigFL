@@ -30,7 +30,7 @@ class WandbTracker(Tracker):
     """
 
     def __init__(self, project: str, config: dict, name: str | None = None):
-        import wandb                          # lazy -- only needed when tracking is enabled
+        import wandb  # lazy -- only needed when tracking is enabled
         self.run = wandb.init(project=project, config=config, name=name)
         self.resources = None
 

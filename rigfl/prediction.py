@@ -7,7 +7,6 @@ from typing import Optional
 
 import torch
 
-
 #: Absolute tolerance for probability row sums, including float32 ensemble mixtures.
 PROB_SUM_ATOL = 1e-3
 
@@ -53,8 +52,8 @@ class Predictions:
             raise PredictionError(
                 f"logits must be [N] or [N, C], got shape {tuple(logits.shape)}")
         if logits.shape[1] == 1:
-            l = logits.squeeze(1).float()
-            p = torch.sigmoid(l)
+            binary_logits = logits.squeeze(1).float()
+            p = torch.sigmoid(binary_logits)
             probs = torch.stack([1 - p, p], dim=1)
         else:
             probs = torch.softmax(logits.float(), dim=1)

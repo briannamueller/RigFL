@@ -6,7 +6,6 @@ Reporting-round selection is performed later from recorded history.
 from __future__ import annotations
 
 import os
-
 from dataclasses import dataclass, field
 
 import torch
@@ -14,8 +13,12 @@ from torch.utils.data import DataLoader
 
 from rigfl.core.interfaces import IterativeAlgorithm
 from rigfl.core.model import ClientModel
-from rigfl.eval.metrics import (COMPUTED_METRICS, direction_of, require_computable,
-                                unavailable_reason)
+from rigfl.eval.metrics import (
+    COMPUTED_METRICS,
+    direction_of,
+    require_computable,
+    unavailable_reason,
+)
 from rigfl.eval.protocol import evaluate_split
 from rigfl.eval.resources import measured, payload_bytes
 from rigfl.eval.selection import aggregate

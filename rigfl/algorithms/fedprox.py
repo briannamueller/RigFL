@@ -7,8 +7,8 @@ from typing import Mapping
 import torch
 from pydantic import Field
 
-from rigfl.core.config import AlgorithmConfig
 from rigfl.algorithms.fedavg import FedAvg
+from rigfl.core.config import AlgorithmConfig
 
 
 class FedProxConfig(AlgorithmConfig):

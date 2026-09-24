@@ -19,13 +19,12 @@ from typing import Callable
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 from pydantic import Field
 
 from rigfl.core.config import AlgorithmConfig
 from rigfl.core.interfaces import Algorithm
-from rigfl.prediction import Predictions
 from rigfl.core.model import ClientModel
+from rigfl.prediction import Predictions
 
 
 class FedKDConfig(AlgorithmConfig):

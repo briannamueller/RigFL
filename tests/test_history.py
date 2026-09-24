@@ -10,8 +10,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from rigfl.core import Client, ClientModel, LearnedProjection, iterative
 from rigfl.algorithms.local import Local, LocalConfig
+from rigfl.core import Client, ClientModel, LearnedProjection, iterative
 
 NC, DIM = 3, 8
 _CENTERS = torch.randn(NC, DIM, generator=torch.Generator().manual_seed(0)) * 2.5

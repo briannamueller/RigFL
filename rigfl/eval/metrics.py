@@ -6,8 +6,7 @@ from dataclasses import dataclass
 
 import torch
 
-from rigfl.prediction import (Predictions, as_predictions,
-                              check_probabilities)
+from rigfl.prediction import Predictions, as_predictions, check_probabilities
 
 #: Clamp applied to a true-class probability before taking its log. An algorithm may
 #: legitimately assign a class zero probability -- a hard-vote ensemble does it

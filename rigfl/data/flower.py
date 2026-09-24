@@ -26,7 +26,6 @@ from rigfl.data.config import (
 from rigfl.data.transforms import DataTransform, get_data_transform
 from rigfl.data.transforms.image import image_tensor as _image_tensor
 
-
 _MERGED_SPLIT = "merged"
 
 

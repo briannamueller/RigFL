@@ -20,9 +20,17 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from rigfl.core import Client, ClientModel, LearnedProjection, iterative
-from rigfl.eval.metrics import (LOG_LOSS_EPS, MetricInputUnavailable, compute_all,
-                                log_loss, macro_f1, metric_input, register, spec,
-                                unregister)
+from rigfl.eval.metrics import (
+    LOG_LOSS_EPS,
+    MetricInputUnavailable,
+    compute_all,
+    log_loss,
+    macro_f1,
+    metric_input,
+    register,
+    spec,
+    unregister,
+)
 from rigfl.prediction import PredictionError, Predictions, as_predictions
 
 NUM_CLASSES = 3
@@ -195,8 +203,7 @@ def _built_in_algorithms():
     from rigfl.algorithms.fedproto import FedProto, FedProtoConfig
     from rigfl.algorithms.fedtgp import FedTGP, FedTGPConfig
     from rigfl.algorithms.fml import FML, FMLConfig
-    from rigfl.algorithms.global_ensemble import (GlobalEnsemble,
-                                                  GlobalEnsembleConfig)
+    from rigfl.algorithms.global_ensemble import GlobalEnsemble, GlobalEnsembleConfig
     from rigfl.algorithms.lgfedavg import LGFedAvg, LGFedAvgConfig
     from rigfl.algorithms.local import Local, LocalConfig
 
@@ -417,9 +424,9 @@ def test_the_tracker_reduction_path_handles_a_label_only_algorithm():
 
 
 def test_the_tracker_logs_loss_when_the_algorithm_provides_it():
+    from rigfl.algorithms.local import Local, LocalConfig
     from rigfl.eval.protocol import evaluate_split
     from rigfl.experiment.tracking import WandbTracker
-    from rigfl.algorithms.local import Local, LocalConfig
 
     torch.manual_seed(0)
     clients = _clients()

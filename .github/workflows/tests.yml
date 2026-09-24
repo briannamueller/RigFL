@@ -27,6 +27,10 @@ jobs:
       - name: Run tests
         run: pytest -q
 
+      - name: Run restrained Ruff checks
+        if: matrix.python-version == '3.12'
+        run: ruff check .
+
       - name: Run the smoke example
         run: PYTHONPATH=. python examples/smoke.py
 

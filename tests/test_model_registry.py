@@ -12,13 +12,16 @@ from rigfl.data.config import FlowerDatasetSettings
 from rigfl.experiment.artifacts import validate_run_record
 from rigfl.experiment.config import ExperimentConfig, run_fingerprint
 from rigfl.experiment.launch import build_grid
-from rigfl.experiment.registry import (algorithm_run_fingerprint,
-                                       config_class, resolve_algorithm_config,
-                                       resolve_algorithm_models)
+from rigfl.experiment.registry import (
+    algorithm_run_fingerprint,
+    config_class,
+    resolve_algorithm_config,
+    resolve_algorithm_models,
+)
 from rigfl.experiment.run import ResolvedData, resolve_experiment_data, run_one
 from rigfl.models.registry import (
-    MODEL_FAMILIES,
     MODEL_ARCHITECTURE_REGISTRY,
+    MODEL_FAMILIES,
     instantiate_backbones,
     resolve_models,
 )

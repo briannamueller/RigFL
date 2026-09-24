@@ -17,7 +17,6 @@ from collections import defaultdict
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 from pydantic import Field
 
 from rigfl.core.config import AlgorithmConfig

@@ -16,7 +16,6 @@ from rigfl.models.phishing import PhishingByteCNN
 from rigfl.models.tabular import TabularLinear, TabularMLP, TabularResidualMLP
 from rigfl.models.temporal import TemporalCNN, TemporalGRU, TemporalLSTM
 
-
 # Short YAML name -> input kind + feature-extractor class.
 MODEL_ARCHITECTURE_REGISTRY: dict[str, tuple[str, type[nn.Module]]] = {
     "lenet5": ("image", LeNet5),

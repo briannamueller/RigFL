@@ -19,6 +19,7 @@ import numpy as np
 import torch
 from pydantic import ValidationError
 
+from rigfl.cli import legacy_config_argv
 from rigfl.data.config import (
     BioSiloDatasetSettings,
     DatasetSettings,
@@ -29,7 +30,6 @@ from rigfl.data.partitions import (
     build_partition_clients,
     generate_partition,
 )
-from rigfl.cli import legacy_config_argv
 from rigfl.eval.resources import ResourceMonitor
 from rigfl.experiment.artifacts import (
     ResultValidationError,

@@ -12,9 +12,9 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from rigfl.core import Client, ClientModel, LearnedProjection, iterative
 from rigfl.algorithms.fedproto import FedProto, FedProtoConfig
 from rigfl.algorithms.local import Local, LocalConfig
+from rigfl.core import Client, ClientModel, LearnedProjection, iterative
 
 NUM_CLASSES = 3
 INPUT_DIM = 8
@@ -62,7 +62,11 @@ def _assert_valid_result(result):
 
     # A selection reports per-client values; these assertions are about the
     # aggregate being a sane probability.
-    mean = lambda xs: sum(v for v in xs if v is not None) / max(sum(v is not None for v in xs), 1)
+    def mean(xs):
+        return sum(v for v in xs if v is not None) / max(
+            sum(v is not None for v in xs), 1
+        )
+
     test = {"acc": mean(sel["test"]["accuracy"]),
             "bacc": mean(sel["test"]["balanced_accuracy"])}
     for key in ("acc", "bacc"):

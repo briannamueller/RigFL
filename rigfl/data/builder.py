@@ -154,7 +154,7 @@ def build_clients(source: Source, num_clients: int, num_classes: int,
     ``build_models=False`` is for workflows that construct their own model pool.
     """
     if adapter is None:
-        adapter = lambda native, shared: LearnedProjection(native, shared)
+        adapter = LearnedProjection
     if split_seed is None:
         split_seed = seed
     clients: list[Client] = []

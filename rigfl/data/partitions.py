@@ -10,26 +10,25 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from filelock import FileLock
 import torch
+from filelock import FileLock
 from torch.utils.data import DataLoader
 
 from rigfl.core import Client, LearnedProjection, assemble_model
 from rigfl.data.builder import (
     _ArrayDataset,
-    _stream_generator,
     _collate,
+    _stream_generator,
     _train_val_indices,
 )
 from rigfl.data.config import (
-    DEFAULT_DATASET_CONFIG,
     DEFAULT_DATA_DIR,
+    DEFAULT_DATASET_CONFIG,
     FlowerDatasetSettings,
     dataset_settings,
 )
 from rigfl.data.flower import generate_flower_partition
 from rigfl.data.transforms import data_transform_identity
-
 
 MANIFEST_KIND = "rigfl.partition_manifest"
 MANIFEST_SCHEMA_VERSION = 1
@@ -343,7 +342,7 @@ def build_partition_clients(
             f"partition {artifact.dataset!r} contains {artifact.manifest['task']} targets"
         )
     if adapter is None:
-        adapter = lambda native, shared: LearnedProjection(native, shared)
+        adapter = LearnedProjection
     if build_models and backbones is None:
         raise ValueError("backbones must be selected independently of the dataset")
     if build_models and not backbones:

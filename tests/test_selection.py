@@ -12,9 +12,15 @@ import math
 import pytest
 
 from rigfl.eval import metrics
-from rigfl.eval.selection import (SelectionError, client_distribution, percentile,
-                                  resolve_metric, select, select_global,
-                                  select_per_client)
+from rigfl.eval.selection import (
+    SelectionError,
+    client_distribution,
+    percentile,
+    resolve_metric,
+    select,
+    select_global,
+    select_per_client,
+)
 
 ROUNDS = [0, 5, 10, 15]
 

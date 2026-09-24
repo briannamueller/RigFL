@@ -6,15 +6,19 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
+from rigfl.data.transforms.paysim import REQUIRED_COLUMNS, SOURCE_URL, prepare_paysim
 from rigfl.data.transforms.phishing import (
     MAX_LENGTH,
     PADDING_INDEX,
-    REQUIRED_COLUMNS as PHISHING_REQUIRED_COLUMNS,
-    SOURCE_URL as PHISHING_SOURCE_URL,
     VOCAB_SIZE,
     encode_urls,
 )
-from rigfl.data.transforms.paysim import REQUIRED_COLUMNS, SOURCE_URL, prepare_paysim
+from rigfl.data.transforms.phishing import (
+    REQUIRED_COLUMNS as PHISHING_REQUIRED_COLUMNS,
+)
+from rigfl.data.transforms.phishing import (
+    SOURCE_URL as PHISHING_SOURCE_URL,
+)
 
 
 @dataclass(frozen=True)

@@ -11,7 +11,6 @@ from PIL import Image as PILImage
 from rigfl.data import flower
 from rigfl.data.config import FlowerDatasetSettings
 
-
 PARTITIONER_CASES = {
     "continuous": {
         "num_clients": 3,
