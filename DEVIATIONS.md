@@ -23,6 +23,7 @@ affect interpretation or comparability are listed here.
 | **FedKD** | SGD rather than Adam. | The paper's learning rates (2e-6 / 5e-6) are tuned for a Transformer on NLP tasks and do not transfer to a CNN pool. |
 | **FML / FedKD** | Applied to a heterogeneous architecture pool. | Both originals assume an identical shared component across clients (a meme model, a mentee). Using them across genuinely different backbones is a generalization beyond their original setting. |
 | **LG-FedAvg** | Applied to a heterogeneous architecture pool. | The original's main experiments use one architecture for every client. |
+| **pFedMoE** | The private gate uses LayerNorm after its first linear transformation instead of the paper's SwitchNorm-before-linear plus BatchNorm layers. | RigFL has no SwitchNorm dependency, and LayerNorm remains defined for a final training batch containing one sample. The two-layer sigmoid/softmax gate and sample-specific convex mixture are unchanged, but exact gate optimization can differ from the paper. |
 
 ## Prototype loss interpretation
 
