@@ -15,13 +15,13 @@ from torch import nn
 
 from rigfl.algorithms.apple import APPLE, APPLEConfig
 from rigfl.algorithms.fedamp import FedAMP, FedAMPConfig
+from rigfl.algorithms.fedapa import FedAPA, FedAPAConfig
+from rigfl.algorithms.fedapen import FedAPEN, FedAPENConfig
 from rigfl.algorithms.fedavg import FedAvg, FedAvgConfig
 from rigfl.algorithms.fedcac import FedCAC, FedCACConfig
 from rigfl.algorithms.fedgh import FedGH, FedGHConfig
 from rigfl.algorithms.fedkd import FedKD, FedKDConfig
 from rigfl.algorithms.fedpac import FedPAC, FedPACConfig
-from rigfl.algorithms.fedapa import FedAPA, FedAPAConfig
-from rigfl.algorithms.fedapen import FedAPEN, FedAPENConfig
 from rigfl.algorithms.fedproto import FedProto, FedProtoConfig
 from rigfl.algorithms.fedprox import FedProx, FedProxConfig
 from rigfl.algorithms.fedtgp import FedTGP, FedTGPConfig
@@ -201,7 +201,7 @@ def resolve_algorithm_config(name: str, exp: ExperimentConfig,
         use_family=algorithm_spec(name).supports_model_heterogeneity,
     )
     if name in {"fml", "fedkd"}:
-        selected = getattr(cfg, "aux_model") or (
+        selected = cfg.aux_model or (
             names[0] if exp.model_family is not None else exp.model
         )
         validate_model(selected, input_kind)

@@ -8,13 +8,13 @@ import pytest
 
 from rigfl.algorithms.apple import APPLE
 from rigfl.algorithms.fedamp import FedAMP
+from rigfl.algorithms.fedapa import FedAPA
+from rigfl.algorithms.fedapen import FedAPEN
 from rigfl.algorithms.fedavg import FedAvg
 from rigfl.algorithms.fedcac import FedCAC
 from rigfl.algorithms.fedgh import FedGH
 from rigfl.algorithms.fedkd import FedKD
 from rigfl.algorithms.fedpac import FedPAC
-from rigfl.algorithms.fedapa import FedAPA
-from rigfl.algorithms.fedapen import FedAPEN
 from rigfl.algorithms.fedproto import FedProto
 from rigfl.algorithms.fedprox import FedProx
 from rigfl.algorithms.fedtgp import FedTGP
