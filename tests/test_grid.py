@@ -12,7 +12,12 @@ import json
 
 from rigfl.algorithms.local import LocalConfig
 from rigfl.experiment import launch as launch_module
-from rigfl.experiment.launch import _write_grid, build_grid, stage_task_snapshot
+from rigfl.experiment.launch import (
+    _write_grid,
+    build_grid,
+    execute_sweep,
+    stage_task_snapshot,
+)
 from rigfl.experiment.registry import algorithm_run_fingerprint
 from rigfl.experiment.storage import read_grid_tasks
 from tests.helpers import resolved_experiment
@@ -23,6 +28,65 @@ def _counts(grid):
     for task in grid:
         out[task["algorithm"]] = out.get(task["algorithm"], 0) + 1
     return out
+
+
+def test_sweep_execution_is_explicit(monkeypatch, tmp_path):
+    grid = tmp_path / "sweep" / "grid.jsonl"
+    declarations = []
+    executions = []
+    monkeypatch.setattr(
+        launch_module,
+        "declare_sweep",
+        lambda config, *, results_root: declarations.append(
+            (config, results_root)
+        ) or grid,
+    )
+    monkeypatch.setattr(
+        launch_module,
+        "execute_sweep",
+        lambda path, *, results_root: executions.append((path, results_root)),
+    )
+
+    launch_module.main(["sweep.yaml", "--results-root", str(tmp_path)])
+    assert executions == []
+
+    launch_module.main([
+        "sweep.yaml",
+        "--results-root", str(tmp_path),
+        "--execute",
+    ])
+    assert declarations == [
+        ("sweep.yaml", str(tmp_path)),
+        ("sweep.yaml", str(tmp_path)),
+    ]
+    assert executions == [(grid, str(tmp_path))]
+
+
+def test_execute_sweep_runs_prepared_tasks_sequentially(
+    monkeypatch, tmp_path
+):
+    grid_path = tmp_path / "sweep" / "grid.jsonl"
+    tasks = [
+        {"algorithm": "local", "experiment": {"seed": seed}, "algorithm_config": {}}
+        for seed in (1, 2)
+    ]
+    _write_grid(grid_path, tasks)
+    calls = []
+    monkeypatch.setattr(
+        launch_module,
+        "run_config",
+        lambda task, out_dir, *, task_label: calls.append(
+            (task["experiment"]["seed"], out_dir, task_label)
+        ) or {"task": task_label},
+    )
+
+    records = execute_sweep(grid_path, results_root=tmp_path / "results")
+
+    assert calls == [
+        (1, tmp_path / "results" / "runs", "task 1"),
+        (2, tmp_path / "results" / "runs", "task 2"),
+    ]
+    assert records == [{"task": "task 1"}, {"task": "task 2"}]
 
 
 def test_algorithm_axis_multiplies_only_applicable_algorithms():

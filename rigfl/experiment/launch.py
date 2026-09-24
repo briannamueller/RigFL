@@ -595,6 +595,24 @@ def run_task(grid_path: str, task_id: int, out_dir: Path,
                task_label=f"task {task_id}")
 
 
+def execute_sweep(
+    grid_path: str | Path, *, results_root: str | Path = "results"
+) -> list[dict | None]:
+    """Execute every task in a prepared sweep sequentially."""
+    try:
+        tasks = read_grid_tasks(grid_path)
+    except ValueError as error:
+        raise SystemExit(error) from error
+    out_dir = run_store(results_root)
+    print(f"Executing {len(tasks)} tasks sequentially on this machine")
+    records = [
+        run_config(task, out_dir, task_label=f"task {index}")
+        for index, task in enumerate(tasks, 1)
+    ]
+    print(f"Completed sweep execution: {len(tasks)} tasks")
+    return records
+
+
 def run_config(task: dict, out_dir: Path, *, dry_run: bool = False,
                force: bool = False, task_label: str = "run",
                run_missing: bool = True) -> dict | None:
@@ -699,6 +717,7 @@ def declare_sweep(
     n = len(grid)
     action = "Wrote" if created else "Reused"
     print(f"{action} {n} tasks at {grid_path}")
+    print(f"  task indices: 1..{n}")
     print(f"  algorithms: {sorted({c['algorithm'] for c in grid})}")
     collect = f"rigfl report --results-dir {run_store(results_root)} --grid {grid_path}"
     print(f"Collect when done:\n  {collect}")
@@ -709,8 +728,15 @@ def main(argv: list[str] | None = None, *, prog: str | None = None) -> None:
     p = argparse.ArgumentParser(prog=prog, description="Declare a RigFL sweep task grid.")
     p.add_argument("config", metavar="CONFIG", help="YAML sweep file")
     p.add_argument("--results-root", default="results")
+    p.add_argument(
+        "--execute",
+        action="store_true",
+        help="execute every prepared task sequentially on this machine",
+    )
     args = p.parse_args(legacy_config_argv(argv))
-    declare_sweep(args.config, results_root=args.results_root)
+    grid_path = declare_sweep(args.config, results_root=args.results_root)
+    if args.execute:
+        execute_sweep(grid_path, results_root=args.results_root)
 
 
 if __name__ == "__main__":
