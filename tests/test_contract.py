@@ -14,6 +14,7 @@ from rigfl.algorithms.fedgh import FedGH
 from rigfl.algorithms.fedkd import FedKD
 from rigfl.algorithms.fedpac import FedPAC
 from rigfl.algorithms.fedapa import FedAPA
+from rigfl.algorithms.fedapen import FedAPEN
 from rigfl.algorithms.fedproto import FedProto
 from rigfl.algorithms.fedprox import FedProx
 from rigfl.algorithms.fedtgp import FedTGP
@@ -26,7 +27,7 @@ from rigfl.core.config import AlgorithmConfig
 from rigfl.core.interfaces import Algorithm
 
 BASELINES = [Local, GlobalEnsemble, FedAvg, FedProx, FedProto, FedGH,
-             LGFedAvg, FML, FedKD, FedTGP, FedCAC, FedAPA, PFedMoE,
+             LGFedAvg, FML, FedKD, FedTGP, FedCAC, FedAPA, FedAPEN, PFedMoE,
              FedAMP, APPLE, FedPAC]
 CONTRACT = ("init_globals", "local_train", "aggregate", "predict")
 

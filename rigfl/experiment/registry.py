@@ -21,6 +21,7 @@ from rigfl.algorithms.fedgh import FedGH, FedGHConfig
 from rigfl.algorithms.fedkd import FedKD, FedKDConfig
 from rigfl.algorithms.fedpac import FedPAC, FedPACConfig
 from rigfl.algorithms.fedapa import FedAPA, FedAPAConfig
+from rigfl.algorithms.fedapen import FedAPEN, FedAPENConfig
 from rigfl.algorithms.fedproto import FedProto, FedProtoConfig
 from rigfl.algorithms.fedprox import FedProx, FedProxConfig
 from rigfl.algorithms.fedtgp import FedTGP, FedTGPConfig
@@ -74,6 +75,7 @@ REGISTRY = {
         supports_model_heterogeneity=False,
         ignored_experiment_fields=("model_family",),
     ),
+    "fedapen":  AlgorithmSpec(FedAPEN, FedAPENConfig),
     "fedprox":  AlgorithmSpec(
         FedProx,
         FedProxConfig,
@@ -114,8 +116,8 @@ _RUNNER_IGNORED_EXPERIMENT_FIELDS = {}
 # Global Ensemble remains callable explicitly and through ``all``.
 BASELINES = ["local", "fedproto", "fedgh", "lgfedavg", "fml", "fedkd", "fedtgp"]
 ALL_ALGORITHMS = BASELINES + [
-    "fedavg", "fedprox", "fedcac", "fedapa", "fedamp", "apple", "fedpac",
-    "pfedmoe", "global",
+    "fedavg", "fedprox", "fedcac", "fedapa", "fedapen", "fedamp", "apple",
+    "fedpac", "pfedmoe", "global",
 ]
 
 
@@ -210,6 +212,12 @@ def resolve_algorithm_config(name: str, exp: ExperimentConfig,
         )
         validate_model(selected, input_kind)
         cfg = cfg.model_copy(update={"proxy_model": selected})
+    elif name == "fedapen":
+        selected = cfg.shared_model or (
+            names[0] if exp.model_family is not None else exp.model
+        )
+        validate_model(selected, input_kind)
+        cfg = cfg.model_copy(update={"shared_model": selected})
     return cfg
 
 
@@ -250,8 +258,8 @@ def adapter_factory(name: str):
     return lambda native, shared: LearnedProjection(native, shared)
 
 
-def _aux_model(backbone, shared_dim: int, num_classes: int):
-    """Construct FML's meme model or FedKD's mentee model."""
+def _complete_shared_model(backbone, shared_dim: int, num_classes: int):
+    """Attach an adapter and classifier to a selected shared backbone."""
     def make() -> ClientModel:
         b = backbone()
         return ClientModel(b, LearnedProjection(b.out_dim, shared_dim), nn.Linear(shared_dim, num_classes))
@@ -268,13 +276,15 @@ def _proxy_extractor(backbone, shared_dim: int):
 
 def build_algorithm(name: str, exp: ResolvedExperimentConfig,
                     cfg: AlgorithmConfig, aux_backbone=None,
-                    proxy_backbone=None, base_pool=None, model_input_spec=None,
+                    proxy_backbone=None, shared_backbone=None, base_pool=None,
+                    model_input_spec=None,
                     model_template=None, initial_client_models=None,
                     client_sample_counts=None):
     """Construct a registered algorithm through its standard factory hook.
 
-    ``aux_backbone`` builds the complete shared model used by FML and FedKD;
-    ``proxy_backbone`` builds pFedMoE's headless proxy extractor.
+    ``aux_backbone`` builds the complete meme or mentee used by FML and FedKD;
+    ``proxy_backbone`` builds pFedMoE's headless proxy extractor;
+    ``shared_backbone`` builds FedAPEN's complete shared classifier.
     ``initial_client_models`` and ``client_sample_counts`` describe clients
     after model and data construction; algorithms that require round-zero
     client state copy them in their own ``from_config`` implementation.
@@ -292,8 +302,14 @@ def build_algorithm(name: str, exp: ResolvedExperimentConfig,
             [cfg.proxy_model],
             input_spec=model_input_spec or exp.input_spec,
         )[0]
+    if name == "fedapen" and shared_backbone is None:
+        shared_backbone = instantiate_backbones(
+            [cfg.shared_model],
+            input_spec=model_input_spec or exp.input_spec,
+        )[0]
     aux_factory = (
-        _aux_model(aux_backbone, sd, nc) if aux_backbone is not None else None
+        _complete_shared_model(aux_backbone, sd, nc)
+        if aux_backbone is not None else None
     )
     return algorithm_spec(name).algorithm.from_config(
         cfg,
@@ -302,6 +318,10 @@ def build_algorithm(name: str, exp: ResolvedExperimentConfig,
         proxy_extractor_factory=(
             _proxy_extractor(proxy_backbone, sd)
             if proxy_backbone is not None else None
+        ),
+        shared_model_factory=(
+            _complete_shared_model(shared_backbone, sd, nc)
+            if shared_backbone is not None else None
         ),
         base_pool=base_pool,
         model_input_spec=model_input_spec,

@@ -206,6 +206,16 @@ def test_pfedmoe_proxy_defaults_to_first_family_member():
     assert cfg.proxy_model == "fedavg_cnn"
 
 
+def test_fedapen_shared_model_defaults_to_first_family_member():
+    exp = resolved_experiment(
+        model="cifar_resnet18", model_family="image_heterogeneous_3"
+    )
+
+    cfg = resolve_algorithm_config("fedapen", exp, config_class("fedapen")())
+
+    assert cfg.shared_model == "fedavg_cnn"
+
+
 def test_run_identity_uses_resolved_family_members(monkeypatch):
     exp = resolved_experiment(
         model="fedavg_cnn", model_family="image_heterogeneous_3"

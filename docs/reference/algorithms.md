@@ -8,6 +8,7 @@
 | `fedavg` | no |
 | `fedcac` | no |
 | `fedapa` | no |
+| `fedapen` | yes |
 | `fedprox` | no |
 | `fedamp` | no |
 | `apple` | no |
@@ -52,6 +53,18 @@
 | `algorithm.lr` | number | `0.01` | > 0 | Client optimizer learning rate. |
 | `algorithm.aggregation_lr` | number | `0.01` | > 0 | Server learning rate for client aggregation-weight vectors. |
 | `algorithm.mu` | number | `0.5` | > 0; ≤ 1 | Self-weight assigned before each aggregation-vector normalization. |
+
+## `fedapen`
+
+| Setting | Type | Default | Allowed | Description |
+|---|---|---|---|---|
+| `algorithm.local_epochs` | integer | `5` | ≥ 1 | Client ensemble-training epochs per round. |
+| `algorithm.lr` | number | `0.01` | > 0 | Private- and shared-model learning rate. |
+| `algorithm.adaptation_fraction` | number | `0.05` | > 0; < 1 | Fraction of client training samples reserved to learn the ensemble weight. |
+| `algorithm.adaptation_epochs` | integer | `10` | ≥ 1 | Ensemble-weight training epochs per round. |
+| `algorithm.adaptation_lr` | number | `0.001` | > 0 | Learning rate for the client ensemble weight. |
+| `algorithm.initial_lambda` | number | `0.5` | ≥ 0; ≤ 1 | Initial weight assigned to the private model's probabilities. |
+| `algorithm.shared_model` | string \| null | `null` | — | Architecture used for the complete homogeneous shared model. |
 
 ## `fedprox`
 
