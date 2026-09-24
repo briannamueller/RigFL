@@ -1,20 +1,25 @@
-name: cifar10_optuna
+# Demonstration-scale Optuna study, not a scientific search recommendation.
+name: cifar10_hpo
 algorithms: [fedprox]
 
 base:
   experiment:
     dataset: cifar10
     model: fedavg_cnn
-    rounds: 100
-    eval_gap: 5
+    rounds: 2
+    shared_dim: 128
+    eval_gap: 1
+    device: cpu
+    out_dir: results
+  algorithm:
+    local_epochs: 1
 
 replicates:
   - {partition_seed: 0, split_seed: 0, experiment_seed: 0}
-  - {partition_seed: 1, split_seed: 1, experiment_seed: 1}
-  - {partition_seed: 2, split_seed: 2, experiment_seed: 2}
+  - {partition_seed: 0, split_seed: 0, experiment_seed: 1}
 
 tuning:
-  trials: 100
+  trials: 4
   sampler:
     class: optuna.samplers.TPESampler
     options:
@@ -23,18 +28,11 @@ tuning:
   search_space:
     algorithm.lr:
       type: float
-      low: 0.0001
+      low: 0.001
       high: 0.1
       log: true
-    algorithm.local_epochs:
-      type: int
-      low: 1
-      high: 5
     algorithm.mu:
       type: float
-      low: 0.0001
-      high: 1.0
+      low: 0.001
+      high: 0.1
       log: true
-    experiment.batch:
-      type: categorical
-      values: [32, 64, 128]

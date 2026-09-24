@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+from pathlib import Path
 
 import pytest
 
@@ -86,6 +87,21 @@ def test_reporting_yaml_has_one_supported_confidence_level(tmp_path):
 
     with pytest.raises(ReportingConfigError, match="only 0.95"):
         selection_defaults(config)
+
+
+def test_included_reporting_example_matches_the_starter_sweep():
+    config = load_reporting_config(
+        Path(__file__).parents[1] / "configs/reporting.yaml"
+    )
+
+    assert config["filters"]["main_results"]["algorithm"] == ["local", "fedavg"]
+    assert config["comparisons"]["fedavg_vs_local"] == {
+        "filter": "main_results",
+        "field": "algorithm",
+        "values": ["fedavg", "local"],
+        "select": "exact",
+        "practical_margin": 0.0,
+    }
 
 
 def test_csv_output_preserves_columns_and_represents_missing_values_as_empty():

@@ -68,16 +68,14 @@ def _spec():
     }
 
 
-@pytest.mark.parametrize(
-    "filename", ["cifar10_tune.yaml", "cifar10_optuna.yaml"]
-)
-def test_included_tuning_examples_validate(filename):
+def test_included_hpo_example_validates():
     import yaml
 
-    path = Path(__file__).parents[1] / "configs" / "experiments" / filename
+    path = Path(__file__).parents[1] / "configs/experiments/cifar10_hpo.yaml"
     spec = parse_optimization(yaml.safe_load(path.read_text()))
 
     assert spec.algorithm == "fedprox"
+    assert spec.trials == 4
 
 
 def _with_zipped_replicates(raw: dict) -> dict:

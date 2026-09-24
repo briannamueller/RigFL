@@ -11,6 +11,7 @@ from rigfl import __version__
 
 _TEMPLATE_FILES = (
     Path("configs/datasets.yaml"),
+    Path("configs/reporting.yaml"),
     Path("configs/experiments/cifar10_run.yaml"),
     Path("configs/experiments/cifar10_sweep.yaml"),
     Path(".gitignore"),

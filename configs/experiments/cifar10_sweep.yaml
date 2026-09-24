@@ -1,3 +1,4 @@
+# Demonstration-scale matched Local/FedAvg runs, not scientific defaults.
 name: cifar10_sweep
 algorithms: [local, fedavg]
 
@@ -5,12 +6,16 @@ base:
   experiment:
     dataset: cifar10
     model: fedavg_cnn
-    rounds: 100
+    rounds: 2
+    shared_dim: 128
+    eval_gap: 1
+    device: cpu
+    out_dir: results
+  algorithm:
+    local_epochs: 1
+    lr: 0.01
 
 replicates:
   - {partition_seed: 0, split_seed: 0, experiment_seed: 0}
-  - {partition_seed: 1, split_seed: 1, experiment_seed: 1}
-  - {partition_seed: 2, split_seed: 2, experiment_seed: 2}
-
-sweep:
-  algorithm.lr: [0.01, 0.03]
+  - {partition_seed: 0, split_seed: 0, experiment_seed: 1}
+  - {partition_seed: 0, split_seed: 0, experiment_seed: 2}

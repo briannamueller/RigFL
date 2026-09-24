@@ -23,6 +23,7 @@ def test_init_project_creates_the_packaged_starter_files(tmp_path):
 
     assert created == [
         project / "configs/datasets.yaml",
+        project / "configs/reporting.yaml",
         project / "configs/experiments/cifar10_run.yaml",
         project / "configs/experiments/cifar10_sweep.yaml",
         project / ".gitignore",
@@ -30,6 +31,9 @@ def test_init_project_creates_the_packaged_starter_files(tmp_path):
     ]
     assert (project / "configs/datasets.yaml").read_bytes() == (
         ROOT / "configs/datasets.yaml"
+    ).read_bytes()
+    assert (project / "configs/reporting.yaml").read_bytes() == (
+        ROOT / "configs/reporting.yaml"
     ).read_bytes()
     assert (project / "configs/experiments/cifar10_run.yaml").read_bytes() == (
         ROOT / "configs/experiments/cifar10_run.yaml"

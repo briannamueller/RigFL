@@ -1,0 +1,24 @@
+# Reporting definitions for the demonstration Local/FedAvg sweep.
+version: 1
+
+defaults:
+  metric: accuracy
+  confidence_level: 0.95
+  selection:
+    split: validation
+    view: global
+    aggregation: mean
+    tie_break: earliest
+
+filters:
+  main_results:
+    config.experiment.dataset: cifar10
+    algorithm: [local, fedavg]
+
+comparisons:
+  fedavg_vs_local:
+    filter: main_results
+    field: algorithm
+    values: [fedavg, local]
+    select: exact
+    practical_margin: 0.0

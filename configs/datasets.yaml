@@ -1,3 +1,5 @@
+# Demonstration-scale dataset registry for learning and smoke tests.
+# Choose partition sizes and seeds for the scientific question before a study.
 datasets:
   mnist:
     backend: flower

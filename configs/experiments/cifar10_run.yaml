@@ -1,7 +1,10 @@
+# Demonstration-scale settings for a quick local run, not scientific defaults.
 experiment:
   dataset: cifar10
   model: fedavg_cnn
   rounds: 2
+  partition_seed: 0
+  split_seed: 0
   seed: 0
   shared_dim: 128
   eval_gap: 1
