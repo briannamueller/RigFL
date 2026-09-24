@@ -14,11 +14,3 @@ filters:
   main_results:
     config.experiment.dataset: cifar10
     algorithm: [local, fedavg]
-
-comparisons:
-  fedavg_vs_local:
-    filter: main_results
-    field: algorithm
-    values: [fedavg, local]
-    select: exact
-    practical_margin: 0.0

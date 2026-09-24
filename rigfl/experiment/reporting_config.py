@@ -1,4 +1,4 @@
-"""Named filters, comparisons, and CSV output for public result reporting."""
+"""Named filters and CSV output for public result reporting."""
 
 from __future__ import annotations
 
@@ -11,10 +11,20 @@ from pathlib import Path
 import yaml
 
 from rigfl.experiment.artifacts import atomic_write_text
+from rigfl.experiment.config import algorithm_identity
 from rigfl.experiment.paths import flatten_mapping, nested_get
 
 _MISSING = object()
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+_ENVIRONMENT_FIELDS = {
+    "data_dir",
+    "dataset_config",
+    "device",
+    "out_dir",
+    "quiet",
+    "wandb",
+    "wandb_project",
+}
 
 
 class ReportingConfigError(ValueError):
@@ -32,20 +42,19 @@ def load_reporting_config(path: str | Path) -> dict:
         ) from error
     if not isinstance(loaded, dict):
         raise ReportingConfigError("reporting configuration must be a mapping")
-    unknown = sorted(set(loaded) - {"version", "defaults", "filters", "comparisons"})
+    unknown = sorted(set(loaded) - {"version", "defaults", "filters"})
     if unknown:
         raise ReportingConfigError(
             "unknown top-level reporting setting(s): " + ", ".join(unknown)
         )
     if loaded.get("version") != 1:
         raise ReportingConfigError("reporting configuration version must be 1")
-    for section in ("defaults", "filters", "comparisons"):
+    for section in ("defaults", "filters"):
         value = loaded.get(section, {})
         if not isinstance(value, dict):
             raise ReportingConfigError(f"{section} must be a mapping")
         loaded[section] = value
     _validate_names(loaded["filters"], "filter")
-    _validate_names(loaded["comparisons"], "comparison")
     return loaded
 
 
@@ -174,19 +183,33 @@ def seed_summary(records: list[dict]) -> dict:
     return {"values": values, "varied": varied, "fixed": fixed}
 
 
+def report_configuration(record: dict) -> dict:
+    """Return one seed- and environment-independent reporting configuration."""
+    experiment = dict(record.get("config", {}).get("experiment", {}))
+    for field in ("partition_id", "partition_seed", "split_seed", "seed"):
+        experiment.pop(field, None)
+    for field in _ENVIRONMENT_FIELDS:
+        experiment.pop(field, None)
+    return {
+        "algorithm": record.get("algorithm"),
+        "experiment": experiment,
+        "algorithm_config": algorithm_identity(
+            record.get("config", {}).get("algorithm", {}),
+            algorithm=record.get("algorithm"),
+        ),
+    }
+
+
 def configuration_count(records: list[dict]) -> int:
     """Count seed-independent complete resolved configurations."""
-    from rigfl.eval.comparison import frozen_configuration
     from rigfl.experiment.config import fingerprint
 
-    return len({fingerprint(frozen_configuration(record)) for record in records})
+    return len({fingerprint(report_configuration(record)) for record in records})
 
 
 def human_configuration(record: dict) -> dict:
     """Flatten the seed-independent configuration using persisted field names."""
-    from rigfl.eval.comparison import frozen_configuration
-
-    frozen = frozen_configuration(record)
+    frozen = report_configuration(record)
     output = {"algorithm": frozen["algorithm"]}
     output.update(
         flatten_mapping(frozen.get("experiment", {}), "config.experiment")

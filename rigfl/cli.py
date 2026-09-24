@@ -98,9 +98,6 @@ def _parser() -> argparse.ArgumentParser:
         "report", add_help=False, help="summarize completed experiment results"
     )
     commands.add_parser(
-        "compare", add_help=False, help="compare matched experiment configurations"
-    )
-    commands.add_parser(
         "seed-sensitivity",
         add_help=False,
         help="analyze a complete crossed-seed experiment",
@@ -126,7 +123,6 @@ def main(argv: list[str] | None = None) -> None:
         "sweep": ("rigfl.experiment.launch", "main"),
         "hpo": ("rigfl.experiment.optimize", "main"),
         "report": ("rigfl.experiment.collect", "main"),
-        "compare": ("rigfl.experiment.compare", "main"),
         "seed-sensitivity": ("rigfl.experiment.variance", "main"),
     }
     if argv and argv[0] in delegated:

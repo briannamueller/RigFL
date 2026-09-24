@@ -95,13 +95,7 @@ def test_included_reporting_example_matches_the_starter_sweep():
     )
 
     assert config["filters"]["main_results"]["algorithm"] == ["local", "fedavg"]
-    assert config["comparisons"]["fedavg_vs_local"] == {
-        "filter": "main_results",
-        "field": "algorithm",
-        "values": ["fedavg", "local"],
-        "select": "exact",
-        "practical_margin": 0.0,
-    }
+    assert set(config) == {"version", "defaults", "filters"}
 
 
 def test_csv_output_preserves_columns_and_represents_missing_values_as_empty():
