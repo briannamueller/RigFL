@@ -79,7 +79,7 @@ class WandbTracker(Tracker):
         Round selection is collection-time analysis and is therefore not stored
         in, or reported from, the raw training result.
         """
-        summary = {"schema_version": result.get("schema_version")}
+        summary = {}
         es = result.get("early_stopping", {})
         summary |= {f"early_stopping_{k}": es[k]
                     for k in ("termination_reason", "best_round") if k in es}

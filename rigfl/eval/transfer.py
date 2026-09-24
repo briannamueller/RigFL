@@ -183,7 +183,6 @@ def negative_transfer_summary(
     )
 
     summary = {
-        "schema_version": 1,
         "available": True,
         "baseline": "local",
         "comparison_unit": "client_replicate_pair",

@@ -39,11 +39,11 @@ from rigfl.experiment.paths import (
 from rigfl.experiment.registry import config_class, ignores_experiment_field
 
 #: Bumped when the study layout changes in a way a reader must notice.
-MANIFEST_SCHEMA_VERSION = 6
+MANIFEST_SCHEMA_VERSION = 1
 MANIFEST_NAME = "study.json"
 MANIFEST_KIND = "rigfl.tuning_study"
 
-ARTIFACT_SCHEMA_VERSION = 2
+RANKING_SCHEMA_VERSION = 1
 ARTIFACT_KIND = "rigfl.tuning_ranking"
 SELECTION_SCHEMA_VERSION = 1
 SELECTION_KIND = "rigfl.tuning_selection"
@@ -161,22 +161,29 @@ def write_manifest(manifest: dict, sweep_dir: Path) -> Path:
 
 
 def _check_manifest(parsed: dict) -> None:
+    if not isinstance(parsed, dict):
+        raise TuningError(
+            f"study document is {type(parsed).__name__}, not an object"
+        )
     if parsed.get("kind") != MANIFEST_KIND:
         raise TuningError(f"written manifest has kind {parsed.get('kind')!r}")
     if parsed.get("schema_version") != MANIFEST_SCHEMA_VERSION:
         raise TuningError("written manifest has the wrong schema version")
-    for key in (
-        "algorithm",
-        "candidates",
-        "search_space",
-        "tuning_parameters",
-        "replicate_axis",
-        "replicate_values",
-        "condition_axes",
-        "selection_protocol",
-    ):
-        if key not in parsed:
-            raise TuningError(f"written manifest is missing {key!r}")
+    expected_types = {
+        "algorithm": str,
+        "candidates": list,
+        "search_space": dict,
+        "tuning_parameters": list,
+        "replicate_axis": str,
+        "replicate_values": list,
+        "condition_axes": list,
+        "selection_protocol": dict,
+    }
+    for key, expected in expected_types.items():
+        if not isinstance(parsed.get(key), expected):
+            raise TuningError(
+                f"written manifest has invalid or missing {key!r}"
+            )
 
 
 def load_manifest(results_dir: Path) -> Optional[dict]:
@@ -184,15 +191,11 @@ def load_manifest(results_dir: Path) -> Optional[dict]:
     path = Path(results_dir) / MANIFEST_NAME
     if not path.exists():
         return None
-    manifest = json.loads(path.read_text())
-    if manifest.get("kind") != MANIFEST_KIND:
-        raise TuningError(f"{path} is not a RigFL tuning manifest "
-                          f'(kind={manifest.get("kind")!r}).')
-    if manifest.get("schema_version") != MANIFEST_SCHEMA_VERSION:
-        raise TuningError(
-            f"{path} uses manifest schema {manifest.get('schema_version')}, and this "
-            f"version reads {MANIFEST_SCHEMA_VERSION}. Re-declare the sweep with the "
-            f"current launcher rather than reading it under the wrong schema.")
+    try:
+        manifest = read_json(path)
+    except ResultValidationError as exc:
+        raise TuningError(f"cannot load tuning study: {exc}") from exc
+    _check_manifest(manifest)
     manifest["_path"] = str(path.resolve())
     return manifest
 
@@ -479,11 +482,13 @@ def rank(records: list[dict], manifest: dict, *, metric: str, views: list[str],
         })
 
     return {
-        "schema_version": ARTIFACT_SCHEMA_VERSION,
+        "schema_version": RANKING_SCHEMA_VERSION,
         "kind": ARTIFACT_KIND,
-        "study": {"path": manifest.get("_path"), "name": manifest.get("name"),
-                     "engine": manifest.get("engine"),
-                     "schema_version": manifest.get("schema_version")},
+        "study": {
+            "path": manifest.get("_path"),
+            "name": manifest.get("name"),
+            "engine": manifest.get("engine"),
+        },
         "selection_protocol": {
             "metric": metric,
             "split": "validation",
@@ -799,11 +804,13 @@ def _check_ranking(parsed: dict) -> None:
         raise TuningError(f"ranking document is {type(parsed).__name__}, not an object")
     if parsed.get("kind") != ARTIFACT_KIND:
         raise TuningError(f"written ranking has kind {parsed.get('kind')!r}")
-    if parsed.get("schema_version") != ARTIFACT_SCHEMA_VERSION:
+    if parsed.get("schema_version") != RANKING_SCHEMA_VERSION:
         raise TuningError("written ranking has the wrong schema version")
     if not isinstance(parsed.get("groups"), list) or not isinstance(
             parsed.get("selection_protocol"), dict):
         raise TuningError("written ranking is missing its groups or protocol")
+    if not isinstance(parsed.get("study"), dict):
+        raise TuningError("written ranking is missing its study reference")
 
 
 def _check_selection(parsed: dict) -> None:
@@ -817,6 +824,10 @@ def _check_selection(parsed: dict) -> None:
         parsed.get("selection_protocol"), dict
     ):
         raise TuningError("written selection is missing its groups or protocol")
+    if not isinstance(parsed.get("study"), dict) or not isinstance(
+        parsed.get("ranking"), str
+    ):
+        raise TuningError("written selection is missing its study or ranking reference")
 
 
 def load_ranking(out_dir: Path) -> dict:
@@ -827,6 +838,16 @@ def load_ranking(out_dir: Path) -> dict:
     except ResultValidationError as exc:
         raise TuningError(f"cannot load tuning ranking: {exc}") from exc
     _check_ranking(parsed)
+    return parsed
+
+
+def load_selection(path: Path) -> dict:
+    """Load the final tuning selection consumed by later comparisons."""
+    try:
+        parsed = read_json(Path(path))
+    except ResultValidationError as exc:
+        raise TuningError(f"cannot load tuning selection: {exc}") from exc
+    _check_selection(parsed)
     return parsed
 
 

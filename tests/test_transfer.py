@@ -57,7 +57,6 @@ def _record(algorithm, seed, test_values, *, validation_values=None):
             }
         },
         "result": {
-            "schema_version": 3,
             "selection_views_supported": ["global", "per-client"],
             "evaluation_history": {
                 "evaluation_rounds": rounds,

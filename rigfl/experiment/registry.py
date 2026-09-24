@@ -39,7 +39,6 @@ from rigfl.experiment.config import (
     run_fingerprint,
     run_identity,
 )
-from rigfl.experiment.identity import fingerprint, pre_schema_identity_input
 from rigfl.models.registry import instantiate_backbones, resolve_models, validate_model
 
 
@@ -171,20 +170,6 @@ def algorithm_run_identity(
         algorithm_dump,
         algorithm=name,
         ignored_experiment_fields=ignored_experiment_fields(name),
-    )
-
-
-def legacy_algorithm_run_fingerprint(
-    name: str, exp: ResolvedExperimentConfig, algorithm_dump: dict
-) -> str:
-    """Pre-identity-schema fingerprint used by transitional saved results."""
-    return fingerprint(
-        pre_schema_identity_input(
-            name,
-            exp.model_dump(),
-            algorithm_dump,
-            ignored_experiment_fields=ignored_experiment_fields(name),
-        )
     )
 
 

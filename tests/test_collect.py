@@ -48,8 +48,7 @@ def _history(*client_values):
     }
     counts = {s: {str(i): [10] for i in range(len(client_values))}
               for s in ("validation", "test")}
-    return {"schema_version": 3,
-            "selection_views_supported": ["global", "per-client"],
+    return {"selection_views_supported": ["global", "per-client"],
             "evaluation_history": {"evaluation_rounds": [0], "clients": clients,
                                    "client_sample_counts": counts}}
 
@@ -470,9 +469,13 @@ def test_sweep_task_rejects_an_unknown_setting(tmp_path):
     grid = tmp_path / "grid.jsonl"
 
     def write(algorithm_config):
-        grid.write_text(json.dumps({"algorithm": "fedprox",
-                                    "experiment": {"dataset": "cifar10", "seed": 0},
-                                    "algorithm_config": algorithm_config}) + "\n")
+        grid.write_text(json.dumps({
+            "kind": "rigfl.sweep_task",
+            "schema_version": 1,
+            "algorithm": "fedprox",
+            "experiment": {"dataset": "cifar10", "seed": 0},
+            "algorithm_config": algorithm_config,
+        }) + "\n")
 
     write({"muu": 7})
     with pytest.raises(SystemExit, match="muu"):

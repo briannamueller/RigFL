@@ -1,6 +1,7 @@
 """Resource accounting at runner and artifact boundaries."""
 
 import builtins
+import json
 from dataclasses import dataclass
 
 import pytest
@@ -187,6 +188,7 @@ def test_cached_measurement_is_carried_into_resource_totals(tmp_path):
     path = tmp_path / "resources.json"
     write_cached_measurement(path, fingerprint="pool-a", measurement=measurement)
     saved = load_cached_measurement(path, fingerprint="pool-a")
+    assert saved["schema_version"] == 1
 
     reused = ResourceMonitor(DEVICE, estimate_flops=True)
     reused.add_reused("base_pool/client_0", saved)
@@ -195,6 +197,12 @@ def test_cached_measurement_is_carried_into_resource_totals(tmp_path):
     assert resources["attributed_training"]["flops"] == 120
 
     assert load_cached_measurement(path, fingerprint="pool-b") is None
+
+    unsupported = json.loads(path.read_text())
+    unsupported["schema_version"] = 2
+    path.write_text(json.dumps(unsupported))
+    assert load_cached_measurement(path, fingerprint="pool-a") is None
+    write_cached_measurement(path, fingerprint="pool-a", measurement=measurement)
 
     path.write_text(path.read_text().replace('"wall_seconds": 3.0',
                                              '"wall_seconds": -1.0'))

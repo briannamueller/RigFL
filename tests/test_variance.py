@@ -50,7 +50,6 @@ def _record(partition_seed: int, split_seed: int, experiment_seed: int) -> dict:
             "local", experiment, algorithm_config
         ),
         result={
-            "schema_version": 3,
             "selection_views_supported": ["global", "per-client"],
             "evaluation_history": {
                 "evaluation_rounds": [0],
@@ -237,6 +236,8 @@ def test_variance_command_reads_results_and_writes_an_artifact(
         "".join(
             json.dumps(
                 {
+                    "kind": "rigfl.sweep_task",
+                    "schema_version": 1,
                     "algorithm": record["algorithm"],
                     "experiment": record["config"]["experiment"],
                     "algorithm_config": record["config"]["algorithm"],

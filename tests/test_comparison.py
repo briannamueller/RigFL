@@ -23,6 +23,33 @@ from rigfl.experiment.compare import (
 from rigfl.experiment.config import result_data_configuration_id
 
 
+def _selection_artifact(*sources: str) -> dict:
+    return {
+        "kind": "rigfl.tuning_selection",
+        "schema_version": 1,
+        "study": {},
+        "ranking": "ranking.json",
+        "selection_protocol": {},
+        "groups": [{"selected_result_files": list(sources)}],
+    }
+
+
+def _study_artifact(*sources: str) -> dict:
+    return {
+        "kind": "rigfl.tuning_study",
+        "schema_version": 1,
+        "algorithm": "fedavg",
+        "candidates": [],
+        "search_space": {},
+        "tuning_parameters": [],
+        "replicate_axis": "experiment.seed",
+        "replicate_values": [],
+        "condition_axes": [],
+        "selection_protocol": {},
+        "evaluations": [{"source_results": list(sources)}],
+    }
+
+
 def _record(
     algorithm,
     seed,
@@ -532,14 +559,7 @@ def test_selection_discovery_loads_only_selected_results(tmp_path, monkeypatch):
     study_dir.mkdir()
     runs_dir.mkdir()
     (study_dir / "selection.json").write_text(
-        json.dumps(
-            {
-                "kind": "rigfl.tuning_selection",
-                "groups": [
-                    {"selected_result_files": ["../runs/a.json", "../runs/b.json"]}
-                ],
-            }
-        )
+        json.dumps(_selection_artifact("../runs/a.json", "../runs/b.json"))
     )
     loaded = {
         "a.json": _record("fedavg", 0, [[0.6]], setting=1),
@@ -564,12 +584,7 @@ def test_selection_file_is_the_only_final_tuning_artifact(tmp_path, monkeypatch)
     selection_dir.mkdir()
     selection_path = selection_dir / "selection.json"
     selection_path.write_text(
-        json.dumps(
-            {
-                "kind": "rigfl.tuning_selection",
-                "groups": [{"selected_result_files": ["../runs/selected.json"]}],
-            }
-        )
+        json.dumps(_selection_artifact("../runs/selected.json"))
     )
     selected = dict(_record("fedavg", 0, [[0.6]], setting=1))
     selected["_source_file"] = str(tmp_path / "runs" / "selected.json")
@@ -588,12 +603,7 @@ def test_comparison_combines_selected_artifacts_and_ordinary_results(
     study_dir = tmp_path / "search"
     study_dir.mkdir()
     (study_dir / "selection.json").write_text(
-        json.dumps(
-            {
-                "kind": "rigfl.tuning_selection",
-                "groups": [{"selected_result_files": ["../runs/fedavg.json"]}],
-            }
-        )
+        json.dumps(_selection_artifact("../runs/fedavg.json"))
     )
     fedavg = dict(_record("fedavg", 0, [[0.6]], setting=1))
     fedavg["_source_file"] = str(tmp_path / "runs" / "fedavg.json")
@@ -633,6 +643,7 @@ def test_comparison_discovers_ordinary_results_in_shared_run_store(
 
 def test_comparison_accepts_one_run_result_file(tmp_path, monkeypatch):
     result_path = tmp_path / "local.json"
+    result_path.write_text(json.dumps({"kind": "rigfl.run_result"}))
     local = dict(_record("local", 0, [[0.5]], setting=1))
     local["_source_file"] = str(result_path)
     monkeypatch.setattr(
@@ -652,29 +663,10 @@ def test_comparison_excludes_unselected_optuna_trials_from_shared_store(
     study_dir.mkdir()
     runs_dir.mkdir()
     (study_dir / "study.json").write_text(
-        json.dumps(
-            {
-                "kind": "rigfl.tuning_study",
-                "evaluations": [
-                    {
-                        "source_results": [
-                            "selected.json",
-                            "unselected.json",
-                        ]
-                    }
-                ],
-            }
-        )
+        json.dumps(_study_artifact("selected.json", "unselected.json"))
     )
     (study_dir / "selection.json").write_text(
-        json.dumps(
-            {
-                "kind": "rigfl.tuning_selection",
-                "groups": [
-                    {"selected_result_files": ["../runs/selected.json"]}
-                ],
-            }
-        )
+        json.dumps(_selection_artifact("../runs/selected.json"))
     )
     selected = dict(_record("fedavg", 0, [[0.6]], setting=1))
     selected["_source_file"] = str(runs_dir / "selected.json")
@@ -723,17 +715,7 @@ def test_selection_loads_its_existing_selected_results(tmp_path, monkeypatch):
     selection_path = selection_dir / "selection.json"
     selection_path.write_text(
         json.dumps(
-            {
-                "kind": "rigfl.tuning_selection",
-                "groups": [
-                    {
-                        "selected_result_files": [
-                            "../runs/seed0.json",
-                            "../runs/seed1.json",
-                        ]
-                    }
-                ],
-            }
+            _selection_artifact("../runs/seed0.json", "../runs/seed1.json")
         )
     )
     seen = []

@@ -11,11 +11,7 @@ import hashlib
 import json
 from collections.abc import Mapping
 from copy import deepcopy
-from dataclasses import dataclass
-from typing import Any, Literal
-
-IDENTITY_SCHEMA_VERSION = 1
-READABLE_IDENTITY_SCHEMA_VERSIONS = {1}
+from typing import Any
 
 
 def fingerprint(value: Mapping[str, Any]) -> str:
@@ -40,26 +36,6 @@ def normalize_early_stopping(value: dict | None) -> dict:
     return {key: _hashable(item) for key, item in value.items() if item is not None}
 
 
-@dataclass(frozen=True)
-class HistoricalAbsence:
-    """Compatibility rule for a setting absent from older configurations."""
-
-    introduced_in: int
-    section: Literal["experiment", "algorithm"]
-    path: str
-    equivalent_value: Any
-    algorithms: frozenset[str] | None = None
-    included_in_pre_schema_fingerprints: bool = False
-
-    def applies_to(self, algorithm: str | None) -> bool:
-        return self.algorithms is None or algorithm in self.algorithms
-
-
-# Keep this list limited to scientific settings whose pre-option behavior is
-# unambiguous.  Operational settings belong in the ordinary exclusion lists.
-HISTORICAL_ABSENCES: tuple[HistoricalAbsence, ...] = ()
-
-
 _ENVIRONMENT_ONLY_EXPERIMENT_FIELDS = (
     "device",
     "out_dir",
@@ -72,75 +48,12 @@ _ENVIRONMENT_ONLY_EXPERIMENT_FIELDS = (
 _ENVIRONMENT_ONLY_ALGORITHM_FIELDS = ("cache_dir",)
 
 
-_MISSING = object()
-
-
-def _get(mapping: Mapping[str, Any], path: str):
-    value: Any = mapping
-    for part in path.split("."):
-        if not isinstance(value, Mapping) or part not in value:
-            return _MISSING
-        value = value[part]
-    return value
-
-
-def _remove(mapping: dict[str, Any], path: str) -> None:
-    parts = path.split(".")
-    parents: list[tuple[dict[str, Any], str]] = []
-    current = mapping
-    for part in parts[:-1]:
-        child = current.get(part)
-        if not isinstance(child, dict):
-            return
-        parents.append((current, part))
-        current = child
-    current.pop(parts[-1], None)
-    for parent, key in reversed(parents):
-        if parent.get(key) == {}:
-            parent.pop(key)
-
-
-def _set_missing(mapping: dict[str, Any], path: str, value: Any) -> None:
-    parts = path.split(".")
-    current = mapping
-    for part in parts[:-1]:
-        child = current.setdefault(part, {})
-        if not isinstance(child, dict):
-            return
-        current = child
-    current.setdefault(parts[-1], deepcopy(value))
-
-
-def expand_historical_absences(
-    algorithm: str,
-    experiment: Mapping[str, Any],
-    algorithm_config: Mapping[str, Any],
-    *,
-    identity_schema_version: int,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Expand settings absent from a configuration created by an older schema."""
-    resolved_experiment = deepcopy(dict(experiment))
-    resolved_algorithm = deepcopy(dict(algorithm_config))
-    sections = {
-        "experiment": resolved_experiment,
-        "algorithm": resolved_algorithm,
-    }
-    for rule in HISTORICAL_ABSENCES:
-        if (
-            identity_schema_version < rule.introduced_in
-            and rule.applies_to(algorithm)
-        ):
-            _set_missing(sections[rule.section], rule.path, rule.equivalent_value)
-    return resolved_experiment, resolved_algorithm
-
-
 def run_identity_input(
     algorithm: str | None,
     experiment: Mapping[str, Any],
     algorithm_config: Mapping[str, Any],
     *,
     ignored_experiment_fields: tuple[str, ...] = (),
-    apply_historical_equivalence: bool = True,
 ) -> dict[str, Any]:
     """Return the exact canonical mapping hashed for one run."""
     exp = deepcopy(dict(experiment))
@@ -162,44 +75,4 @@ def run_identity_input(
     for key in _ENVIRONMENT_ONLY_ALGORITHM_FIELDS:
         alg.pop(key, None)
 
-    if apply_historical_equivalence:
-        sections = {"experiment": exp, "algorithm": alg}
-        for rule in HISTORICAL_ABSENCES:
-            if not rule.applies_to(algorithm):
-                continue
-            section = sections[rule.section]
-            if _get(section, rule.path) == rule.equivalent_value:
-                _remove(section, rule.path)
-
     return {"experiment": exp, "algorithm": alg}
-
-
-def pre_schema_identity_input(
-    algorithm: str,
-    experiment: Mapping[str, Any],
-    algorithm_config: Mapping[str, Any],
-    *,
-    ignored_experiment_fields: tuple[str, ...] = (),
-) -> dict[str, Any]:
-    """Return the supported fingerprint format from before identity schema 1."""
-    identity = run_identity_input(
-        algorithm,
-        experiment,
-        algorithm_config,
-        ignored_experiment_fields=ignored_experiment_fields,
-    )
-    raw_sections = {"experiment": experiment, "algorithm": algorithm_config}
-    identity_sections = {
-        "experiment": identity["experiment"],
-        "algorithm": identity["algorithm"],
-    }
-    for rule in HISTORICAL_ABSENCES:
-        if not (
-            rule.included_in_pre_schema_fingerprints
-            and rule.applies_to(algorithm)
-        ):
-            continue
-        value = _get(raw_sections[rule.section], rule.path)
-        if value is not _MISSING:
-            _set_missing(identity_sections[rule.section], rule.path, value)
-    return identity

@@ -26,7 +26,12 @@ from rigfl.experiment.artifacts import (
 )
 from rigfl.experiment.config import fingerprint
 from rigfl.experiment.storage import run_store
-from rigfl.experiment.tuning import MANIFEST_KIND
+from rigfl.experiment.tuning import (
+    SELECTION_KIND,
+    TuningError,
+    load_manifest,
+    load_selection,
+)
 
 
 def _contrast(value: str) -> tuple[str, str]:
@@ -63,9 +68,10 @@ def _load_results(path: Path, *, required: bool = True) -> list[dict]:
 
 
 def _selection_result_paths(selection_path: Path) -> set[Path]:
-    artifact = read_json(selection_path)
-    if artifact.get("kind") != "rigfl.tuning_selection":
-        return set()
+    try:
+        artifact = load_selection(selection_path)
+    except TuningError as error:
+        raise ConfigurationComparisonError(str(error)) from error
     selected = {
         (selection_path.parent / source).resolve()
         for group in artifact.get("groups", [])
@@ -80,6 +86,9 @@ def _selection_result_paths(selection_path: Path) -> set[Path]:
 
 def _load_selected_results(path: Path) -> list[dict] | None:
     if path.is_file():
+        artifact = read_json(path)
+        if not isinstance(artifact, dict) or artifact.get("kind") != SELECTION_KIND:
+            return None
         artifact_paths = [path]
     elif path.is_dir():
         artifact_paths = sorted(path.rglob("selection.json"))
@@ -89,11 +98,8 @@ def _load_selected_results(path: Path) -> list[dict] | None:
     selected_paths: set[Path] = set()
     found = False
     for artifact_path in artifact_paths:
-        artifact = read_json(artifact_path)
-        kind = artifact.get("kind")
-        if kind == "rigfl.tuning_selection":
-            found = True
-            selected_paths.update(_selection_result_paths(artifact_path))
+        found = True
+        selected_paths.update(_selection_result_paths(artifact_path))
 
     if not found:
         return None
@@ -112,8 +118,11 @@ def _tuning_result_names(path: Path) -> set[str]:
         return set()
     names = set()
     for manifest_path in path.rglob("study.json"):
-        artifact = read_json(manifest_path)
-        if artifact.get("kind") != MANIFEST_KIND:
+        try:
+            artifact = load_manifest(manifest_path.parent)
+        except TuningError as error:
+            raise ConfigurationComparisonError(str(error)) from error
+        if artifact is None:
             continue
         for evaluation in artifact.get("evaluations", []):
             names.update(
@@ -370,7 +379,6 @@ def main(argv: list[str] | None = None, *, prog: str | None = None) -> None:
     atomic_write_json(
         out_json,
         {
-            "schema_version": 1,
             "kind": "rigfl.comparison_collection",
             "results_dir": str(results_dir),
             "configuration_labels": labels_by_context,

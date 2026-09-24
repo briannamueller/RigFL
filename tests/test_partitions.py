@@ -340,6 +340,8 @@ def test_generation_dispatches_by_backend_and_reuses_partition(monkeypatch, tmp_
     assert artifact.path.name == f"partition_{artifact.partition_id}"
     assert (artifact.path / "clients" / "client_0" / "train.pt").exists()
     manifest = json.loads((artifact.path / "manifest.json").read_text())
+    assert manifest["kind"] == "rigfl.partition_manifest"
+    assert manifest["schema_version"] == 1
     assert manifest["pipeline_version"] == partitions.PARTITION_PIPELINE_VERSION
     assert manifest["source"]["dataset"] == "organization/source-data"
     assert "validation" not in manifest["source"]["splits"]
@@ -351,6 +353,11 @@ def test_generation_dispatches_by_backend_and_reuses_partition(monkeypatch, tmp_
     )
     assert created is False
     assert reused.path == artifact.path
+
+    manifest["schema_version"] = 2
+    (artifact.path / "manifest.json").write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="unsupported partition manifest schema"):
+        generate_partition(DATASET, config_path=config, data_dir=tmp_path / "data")
 
 
 def test_experiment_uses_alias_to_resolve_partition(monkeypatch, tmp_path):

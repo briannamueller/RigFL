@@ -117,9 +117,9 @@ def test_early_stopping_can_end_a_run_early():
     assert len(out["evaluation_history"]["evaluation_rounds"]) < 12
 
 
-def test_new_results_carry_a_schema_version():
+def test_runner_results_do_not_own_a_nested_schema_version():
     out, _ = _run()
-    assert out["schema_version"] == 3
+    assert "schema_version" not in out
     assert out["selection_views_supported"] == ["global", "per-client"]
 
 

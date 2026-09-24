@@ -31,8 +31,7 @@ def _record(algorithm, seed, val_series, test_series, rounds=(0, 1, 2), n_client
               for s in ("validation", "test")}
     return {"algorithm": algorithm,
             "config": {"experiment": {"seed": seed}, "algorithm": {}},
-            "result": {"schema_version": 3,
-                       "selection_views_supported": ["global", "per-client"],
+            "result": {"selection_views_supported": ["global", "per-client"],
                        "evaluation_history": {"evaluation_rounds": list(rounds),
                                               "clients": clients,
                                               "client_sample_counts": counts}}}

@@ -42,7 +42,6 @@ def _result(rounds: int = 2, clients: int = 2) -> dict:
         for split in ("validation", "test")
     }
     return {
-        "schema_version": 3,
         "selection_views_supported": ["global", "per-client"],
         "evaluation_history": {
             "evaluation_rounds": list(range(rounds)),
@@ -78,6 +77,33 @@ def _record(*, partition_id: str = "partition-a"):
         result=_result(),
         run_fingerprint=fp,
     )
+
+
+def test_run_record_has_one_top_level_schema_version():
+    _, _, _, record = _record()
+
+    assert record["kind"] == "rigfl.run_result"
+    assert record["schema_version"] == 1
+    assert "record_schema_version" not in record
+    assert "schema_version" not in record["identity"]
+    assert "schema_version" not in record["result"]
+
+
+def test_prototype_run_record_schema_is_rejected():
+    _, _, _, record = _record()
+    record["schema_version"] = 5
+
+    with pytest.raises(ResultValidationError, match="expected 1"):
+        validate_run_record(record)
+
+
+@pytest.mark.parametrize("section", ["identity", "result"])
+def test_nested_run_record_schema_versions_are_rejected(section):
+    _, _, _, record = _record()
+    record[section]["schema_version"] = 1
+
+    with pytest.raises(ResultValidationError, match="nested schema_version"):
+        validate_run_record(record)
 
 
 def test_atomic_json_write_leaves_valid_json(tmp_path):
@@ -241,7 +267,6 @@ def test_resource_record_round_trips_through_strict_validation(tmp_path):
         monitor.checkpoint(1)
     resources = monitor.to_dict()
     record.update(
-        record_schema_version=4,
         wall_seconds=round(resources["observed"]["wall_seconds"]["total"], 1),
         resources=resources,
     )
@@ -260,7 +285,6 @@ def test_resource_record_rejects_an_inconsistent_communication_total():
     resources = monitor.to_dict()
     resources["observed"]["communication_bytes"]["total"] = 1
     record.update(
-        record_schema_version=4,
         wall_seconds=0.0,
         resources=resources,
     )
@@ -277,7 +301,6 @@ def test_resource_record_requires_timing_hardware_metadata():
     resources = monitor.to_dict()
     del resources["measurement"]["timing"]["hardware"]
     record.update(
-        record_schema_version=4,
         wall_seconds=0.0,
         resources=resources,
     )
@@ -299,7 +322,6 @@ def test_resource_record_rejects_inconsistent_operation_totals():
     resources = monitor.to_dict()
     resources["operations"]["local_train"]["wall_seconds"] += 1.0
     record.update(
-        record_schema_version=4,
         wall_seconds=round(resources["observed"]["wall_seconds"]["total"], 1),
         resources=resources,
     )

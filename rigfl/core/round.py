@@ -117,7 +117,6 @@ def iterative(algorithm: IterativeAlgorithm, clients: list[Client], num_rounds: 
     _check_alignment(history)
 
     return {
-        "schema_version": 3,
         "selection_views_supported": ["global", "per-client"],
         "evaluation_history": history,
         "early_stopping": es.record(stop_reason, last_round),

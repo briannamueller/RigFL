@@ -281,7 +281,9 @@ def test_algorithms_run_end_to_end_through_experiment_infrastructure(
     assert record["algorithm"] == name
     assert record["config"]["experiment"]["model"] == "tiny_image"
     assert record["result"]["evaluation_history"]["evaluation_rounds"] == [0]
-    assert record["record_schema_version"] == 5
+    assert record["schema_version"] == 1
+    assert "schema_version" not in record["identity"]
+    assert "schema_version" not in record["result"]
     assert record["resources"]["observed"]["communication_bytes"]["total"] > 0
     assert record["resources"]["checkpoints"][0]["round"] == 0
     validate_run_record(record)

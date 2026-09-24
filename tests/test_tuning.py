@@ -100,7 +100,6 @@ def _history(
     }
     sample_counts = counts or [10] * len(validation)
     return {
-        "schema_version": 3,
         "selection_views_supported": ["global", "per-client"],
         "evaluation_history": {
             "evaluation_rounds": list(range(len(validation[0]))),
@@ -369,7 +368,12 @@ def test_ranking_writes_a_final_selection(tmp_path):
         "selection.json",
         "selected.yaml",
     }
+    ranking = json.loads((tmp_path / "study" / "ranking.json").read_text())
     selection = json.loads((tmp_path / "study" / "selection.json").read_text())
+    assert ranking["schema_version"] == 1
+    assert selection["schema_version"] == 1
+    assert "schema_version" not in ranking["study"]
+    assert "schema_version" not in selection["study"]
     assert selection["kind"] == "rigfl.tuning_selection"
     assert selection["selected_from"] == "initial_ranking"
     assert all(
@@ -386,6 +390,7 @@ def test_study_document_round_trips(tmp_path):
     loaded = load_manifest(tmp_path)
 
     assert path.name == "study.json"
+    assert loaded["schema_version"] == 1
     assert loaded["engine"] == "optuna"
     assert loaded["search_space"] == manifest["search_space"]
 

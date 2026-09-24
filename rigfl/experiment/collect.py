@@ -109,17 +109,6 @@ def load_submission_results(
         ):
             raise ValueError("grid is not a resolved submission manifest")
         path = results_dir / filename
-        if not path.exists():
-            legacy_filename = task.get("legacy_result_file")
-            legacy_fingerprint = task.get("legacy_run_fingerprint")
-            if isinstance(legacy_filename, str) and isinstance(
-                legacy_fingerprint, str
-            ):
-                legacy_path = results_dir / legacy_filename
-                if legacy_path.exists():
-                    filename = legacy_filename
-                    expected_fingerprint = legacy_fingerprint
-                    path = legacy_path
         if filename in seen:
             continue
         seen.add(filename)
@@ -484,7 +473,6 @@ def _negative_transfer(algorithm_records: list[dict], local_records: list[dict],
         )
     except TransferComparisonError as error:
         return {
-            "schema_version": 1,
             "available": False,
             "baseline": "local",
             "reason": str(error),
@@ -664,7 +652,6 @@ def main(argv: list[str] | None = None, *, prog: str | None = None) -> None:
         # Both views always, whatever was displayed: the artifact is the record,
         # and which view was looked at should not change what was computed.
         artifact = {
-            "schema_version": 3,
             "selection": {"metric": metric, "split": "validation",
                           "direction": direction_of(metric),
                           "aggregation": aggregation, "tie_break": tie_break},

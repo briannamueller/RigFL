@@ -180,7 +180,14 @@ def test_submitted_grid_stays_fixed_when_working_grid_changes(
     submitted = stage_task_snapshot(path, tmp_path / "results")
     assert _write_grid(path, changed) is True
 
-    assert [json.loads(line) for line in path.read_text().splitlines()] == changed
+    persisted = [json.loads(line) for line in path.read_text().splitlines()]
+    assert [
+        {key: value for key, value in task.items()
+         if key not in {"kind", "schema_version"}}
+        for task in persisted
+    ] == changed
+    assert all(task["kind"] == "rigfl.sweep_task" for task in persisted)
+    assert all(task["schema_version"] == 1 for task in persisted)
     submitted_tasks = read_grid_tasks(submitted)
     assert len(submitted_tasks) == 1
     assert submitted_tasks[0]["algorithm"] == "local"
@@ -188,3 +195,37 @@ def test_submitted_grid_stays_fixed_when_working_grid_changes(
     assert submitted_tasks[0]["run_fingerprint"] == algorithm_run_fingerprint(
         "local", resolved_experiment(seed=0), LocalConfig().model_dump()
     )
+
+
+def test_grid_reader_rejects_an_unversioned_prototype_grid(tmp_path):
+    import pytest
+
+    grid = tmp_path / "grid.jsonl"
+    grid.write_text(json.dumps({
+        "algorithm": "local",
+        "experiment": {},
+        "algorithm_config": {},
+    }) + "\n")
+
+    with pytest.raises(ValueError, match="kind"):
+        read_grid_tasks(grid)
+
+
+def test_grid_reader_rejects_an_unsupported_submission_schema(tmp_path):
+    import pytest
+
+    grid = tmp_path / "grid.jsonl"
+    grid.write_text(json.dumps({
+        "kind": "rigfl.sweep_task",
+        "schema_version": 1,
+        "algorithm": "local",
+        "experiment": {},
+        "algorithm_config": {},
+    }) + "\n")
+    (tmp_path / "submission.json").write_text(json.dumps({
+        "kind": "rigfl.sweep_submission",
+        "schema_version": 2,
+    }))
+
+    with pytest.raises(ValueError, match="submission schema"):
+        read_grid_tasks(grid)

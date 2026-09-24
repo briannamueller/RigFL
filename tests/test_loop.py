@@ -53,7 +53,6 @@ def _assert_valid_result(result):
     assert isinstance(result, dict)
     # The loop records history and selects nothing; selection is explicit and
     # happens afterwards.
-    assert result["schema_version"] == 3
     assert result["selection_views_supported"] == ["global", "per-client"]
     hist = result["evaluation_history"]
     assert hist["evaluation_rounds"] and all(0 <= r < 2 for r in hist["evaluation_rounds"])

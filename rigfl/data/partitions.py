@@ -31,7 +31,8 @@ from rigfl.data.flower import generate_flower_partition
 from rigfl.data.transforms import data_transform_identity
 
 
-MANIFEST_SCHEMA_VERSION = 5
+MANIFEST_KIND = "rigfl.partition_manifest"
+MANIFEST_SCHEMA_VERSION = 1
 PARTITION_PIPELINE_VERSION = 5
 
 
@@ -178,6 +179,8 @@ def generate_partition(
                 ) from exc
             backend_metadata = generator(settings, temporary)
             manifest = {
+                "kind": MANIFEST_KIND,
+                "schema_version": MANIFEST_SCHEMA_VERSION,
                 "dataset": dataset,
                 "partition_id": partition_id,
                 "backend": backend_metadata["backend"],
@@ -191,7 +194,6 @@ def generate_partition(
                 "dataset_configuration": stored_settings(
                     settings, exclude={"backend", "partition"}, exclude_none=True
                 ),
-                "schema_version": MANIFEST_SCHEMA_VERSION,
                 "pipeline_version": PARTITION_PIPELINE_VERSION,
             }
             (temporary / "manifest.json").write_text(_format_json(manifest) + "\n")
@@ -215,6 +217,15 @@ def _read_manifest(path: Path) -> dict:
         manifest = json.loads(manifest_path.read_text())
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError(f"cannot read generated partition manifest: {manifest_path}") from exc
+    if not isinstance(manifest, dict):
+        raise ValueError(
+            f"generated partition manifest {manifest_path} is not an object"
+        )
+    if manifest.get("kind") != MANIFEST_KIND:
+        raise ValueError(
+            f"unsupported partition manifest kind in {manifest_path}: "
+            f"{manifest.get('kind')!r}"
+        )
     if manifest.get("schema_version") != MANIFEST_SCHEMA_VERSION:
         raise ValueError(
             f"unsupported partition manifest schema in {manifest_path}: "

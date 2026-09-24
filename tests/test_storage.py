@@ -15,6 +15,8 @@ def test_run_and_study_locations_are_separate(tmp_path):
 
 def test_saved_grid_selects_only_its_completed_runs(tmp_path):
     task = {
+        "kind": "rigfl.sweep_task",
+        "schema_version": 1,
         "algorithm": "fedprox",
         "experiment": {"dataset": "cifar10", "seed": 1},
         "algorithm_config": {"lr": 0.01, "mu": 0.1},

@@ -456,7 +456,8 @@ def _storage_url(results_dir: Path, supplied: str | None) -> str:
 
 def _study_protocol(spec: OptimizationSpec) -> dict:
     return {
-        "schema_version": 2,
+        "kind": "rigfl.hpo_protocol",
+        "schema_version": 1,
         "algorithm": spec.algorithm,
         "base_experiment": spec.base_experiment,
         "base_algorithm": spec.base_algorithm,

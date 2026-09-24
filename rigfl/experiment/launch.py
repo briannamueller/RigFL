@@ -42,7 +42,6 @@ from rigfl.experiment.config import (
 )
 from rigfl.experiment.device import resolve_device
 from rigfl.experiment.env import capture_env
-from rigfl.experiment.identity import IDENTITY_SCHEMA_VERSION
 from rigfl.experiment.paths import (
     filter_for_model,
     flatten_mapping,
@@ -56,16 +55,20 @@ from rigfl.experiment.registry import (
     config_class,
     ignored_experiment_fields,
     ignores_experiment_field,
-    legacy_algorithm_run_fingerprint,
     resolve_algorithm_config,
     resolve_algorithm_experiment,
 )
 from rigfl.experiment.run import resolve_experiment_data, run_one
 from rigfl.experiment.storage import (
+    GRID_TASK_KIND,
+    GRID_TASK_SCHEMA_VERSION,
     SUBMISSION_FILE,
+    SUBMISSION_KIND,
+    SUBMISSION_SCHEMA_VERSION,
     read_grid_tasks,
     run_store,
     study_directory,
+    validate_grid_task,
 )
 from rigfl.experiment.tuning import canonical_axis
 
@@ -399,13 +402,20 @@ def _check_grid(text: str, expected: int) -> None:
         raise ValueError(f"grid holds {len(lines)} task(s), expected {expected}")
     for i, line in enumerate(lines, 1):
         task = json.loads(line)
-        if "algorithm" not in task or "experiment" not in task:
-            raise ValueError(f"grid line {i} is not a task")
+        validate_grid_task(task, source=f"grid line {i}")
 
 
 def _write_grid(path: Path, grid: list[dict]) -> bool:
     """Write or replace the working grid, reusing identical contents."""
-    body = "".join(json.dumps(task) + "\n" for task in grid)
+    records = [
+        {
+            **task,
+            "kind": GRID_TASK_KIND,
+            "schema_version": GRID_TASK_SCHEMA_VERSION,
+        }
+        for task in grid
+    ]
+    body = "".join(json.dumps(task) + "\n" for task in records)
     if path.exists():
         try:
             existing = path.read_text()
@@ -510,6 +520,8 @@ def _materialize_submission(
         algorithm_config = cfg.model_dump(mode="json")
         fp = algorithm_run_fingerprint(name, exp, algorithm_config)
         saved_task = {
+            "kind": GRID_TASK_KIND,
+            "schema_version": GRID_TASK_SCHEMA_VERSION,
             "algorithm": name,
             "experiment": _difference(experiment, experiment_defaults),
             "algorithm_config": _difference(
@@ -518,18 +530,11 @@ def _materialize_submission(
             "run_fingerprint": fp,
             "result_file": result_filename(exp, name, fp),
         }
-        legacy_fp = legacy_algorithm_run_fingerprint(name, exp, algorithm_config)
-        if legacy_fp != fp:
-            saved_task["legacy_run_fingerprint"] = legacy_fp
-            saved_task["legacy_result_file"] = result_filename(
-                exp, name, legacy_fp
-            )
         resolved_tasks.append(saved_task)
 
     metadata = {
-        "kind": "rigfl.sweep_submission",
-        "schema_version": 1,
-        "identity_schema_version": IDENTITY_SCHEMA_VERSION,
+        "kind": SUBMISSION_KIND,
+        "schema_version": SUBMISSION_SCHEMA_VERSION,
         "experiment_defaults": experiment_defaults,
         "algorithm_defaults": algorithm_defaults,
         "submission_provenance": capture_env(),
@@ -642,48 +647,6 @@ def run_config(task: dict, out_dir: Path, *, dry_run: bool = False,
             f"{task_label}: result filename {path.name} does not match submitted "
             f"filename {submitted_file}; refusing to run a changed task"
         )
-    submitted_legacy_fp = task.get("legacy_run_fingerprint")
-    submitted_legacy_file = task.get("legacy_result_file")
-    if (
-        not force
-        and not path.exists()
-        and isinstance(submitted_legacy_fp, str)
-        and isinstance(submitted_legacy_file, str)
-    ):
-        legacy_path = out_dir / submitted_legacy_file
-        if legacy_path.exists():
-            try:
-                skip, message = existing_result_decision(
-                    legacy_path,
-                    expected_algorithm=name,
-                    expected_fingerprint=submitted_legacy_fp,
-                )
-            except ResultValidationError as error:
-                raise SystemExit(f"{task_label}: {error.report()}") from error
-            if message:
-                print(f"{task_label}: {message}")
-            if skip:
-                record = read_json(legacy_path)
-                record["_source_file"] = legacy_path.name
-                return record
-    if not force and not path.exists() and submitted_fp is None:
-        legacy_fp = legacy_algorithm_run_fingerprint(name, exp, cfg.model_dump())
-        legacy_path = out_dir / result_filename(exp, name, legacy_fp)
-        if legacy_fp != fp and legacy_path.exists():
-            try:
-                skip, message = existing_result_decision(
-                    legacy_path,
-                    expected_algorithm=name,
-                    expected_fingerprint=legacy_fp,
-                )
-            except ResultValidationError as error:
-                raise SystemExit(f"{task_label}: {error.report()}") from error
-            if message:
-                print(f"{task_label}: {message}")
-            if skip:
-                record = read_json(legacy_path)
-                record["_source_file"] = legacy_path.name
-                return record
     try:
         skip, message = existing_result_decision(
             path, expected_algorithm=name, expected_fingerprint=fp,

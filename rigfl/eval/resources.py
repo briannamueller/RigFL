@@ -396,7 +396,6 @@ class ResourceMonitor:
         communication = dict(self._communication)
         communication["total"] = sum(self._communication.values())
         return {
-            "schema_version": 1,
             "measurement": {
                 "communication": {
                     "basis": "logical algorithm payload bytes",

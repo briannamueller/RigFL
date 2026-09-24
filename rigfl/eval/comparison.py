@@ -596,7 +596,6 @@ def compare_configurations(
     context = next(iter(contexts))
     data_configuration = result_data_configuration(left_records[0])
     return {
-        "schema_version": 1,
         "kind": "rigfl.statistical_comparison",
         "data_condition": {
             "dataset": context[0],

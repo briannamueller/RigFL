@@ -296,7 +296,6 @@ def analyze_variance_pilot(
     ]
     _add_group_labels(groups, records)
     return {
-        "schema_version": 1,
         "kind": "rigfl.variance_pilot",
         "selection": {
             "metric": name,

@@ -92,7 +92,7 @@ def partition_summary(clients, num_classes: int, artifact=None, handle=None) -> 
         summary["biosilo"] = {
             "dataset": handle.dataset,
             "partition_id": handle.partition_id,
-            "schema_version": handle.schema_version,
+            "source_manifest_version": handle.schema_version,
             "settings": handle.settings,
             "provenance": handle.provenance,
         }

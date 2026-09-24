@@ -252,9 +252,7 @@ def summarize(records: list[dict], metric: str, *, view: str = "global",
 def summarize_resources(records: list[dict], *, include_intervals: bool = True) -> dict:
     """Resource totals across complete run replicates."""
     saved = [record.get("resources") for record in records]
-    if (not saved or any(not isinstance(item, dict)
-                         or item.get("schema_version") != 1
-                         for item in saved)):
+    if not saved or any(not isinstance(item, dict) for item in saved):
         return {"available": False}
 
     try:

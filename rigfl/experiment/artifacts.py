@@ -10,17 +10,10 @@ from itertools import pairwise
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from rigfl.experiment.identity import (
-    IDENTITY_SCHEMA_VERSION,
-    READABLE_IDENTITY_SCHEMA_VERSIONS,
-    fingerprint,
-    run_identity_input,
-)
+from rigfl.experiment.identity import fingerprint, run_identity_input
 
 RECORD_KIND = "rigfl.run_result"
-RECORD_SCHEMA_VERSION = 5
-READABLE_RECORD_SCHEMA_VERSIONS = {3, 4, 5}
-RESULT_SCHEMA_VERSION = 3
+RECORD_SCHEMA_VERSION = 1
 STATUS_COMPLETE = "complete"
 
 
@@ -132,15 +125,12 @@ def make_run_record(
         )
     record = {
         "kind": RECORD_KIND,
-        "record_schema_version": RECORD_SCHEMA_VERSION,
+        "schema_version": RECORD_SCHEMA_VERSION,
         "status": STATUS_COMPLETE,
         "run_fingerprint": run_fingerprint,
         "algorithm": algorithm,
         "config": {"experiment": experiment, "algorithm": algorithm_config},
-        "identity": {
-            "schema_version": IDENTITY_SCHEMA_VERSION,
-            "fingerprint_input": identity_input,
-        },
+        "identity": {"fingerprint_input": identity_input},
         **extra,
         "result": result,
     }
@@ -167,11 +157,10 @@ def validate_run_record(
         fail("document root is not an object")
     if record.get("kind") != RECORD_KIND:
         fail(f"kind is {record.get('kind')!r}, expected {RECORD_KIND!r}")
-    record_version = record.get("record_schema_version")
-    if record_version not in READABLE_RECORD_SCHEMA_VERSIONS:
+    if record.get("schema_version") != RECORD_SCHEMA_VERSION:
         fail(
-            f"record_schema_version is {record_version!r}, expected one of "
-            f"{sorted(READABLE_RECORD_SCHEMA_VERSIONS)}"
+            f"schema_version is {record.get('schema_version')!r}, "
+            f"expected {RECORD_SCHEMA_VERSION}"
         )
     if record.get("status") != STATUS_COMPLETE:
         fail(f"status is {record.get('status')!r}, not 'complete'")
@@ -202,37 +191,21 @@ def validate_run_record(
         )
 
     from rigfl.experiment.config import ResolvedExperimentConfig
-    from rigfl.experiment.registry import config_class, ignored_experiment_fields
+    from rigfl.experiment.registry import config_class
 
     identity = record.get("identity")
-    if record_version >= 5:
-        if not isinstance(identity, dict):
-            fail("identity is missing or is not an object")
-        identity_version = identity.get("schema_version")
-        if identity_version not in READABLE_IDENTITY_SCHEMA_VERSIONS:
-            fail(
-                "identity.schema_version is "
-                f"{identity_version!r}, expected one of "
-                f"{sorted(READABLE_IDENTITY_SCHEMA_VERSIONS)}"
-            )
-        saved_identity_input = identity.get("fingerprint_input")
-        if (
-            not isinstance(saved_identity_input, dict)
-            or not isinstance(saved_identity_input.get("experiment"), dict)
-            or not isinstance(saved_identity_input.get("algorithm"), dict)
-        ):
-            fail("identity.fingerprint_input is missing or is not an object")
-        computed_fingerprint = fingerprint(saved_identity_input)
-    else:
-        # Legacy records do not store their original fingerprint input.
-        legacy_input = run_identity_input(
-            algorithm,
-            config["experiment"],
-            config["algorithm"],
-            ignored_experiment_fields=ignored_experiment_fields(algorithm),
-            apply_historical_equivalence=False,
-        )
-        computed_fingerprint = fingerprint(legacy_input)
+    if not isinstance(identity, dict):
+        fail("identity is missing or is not an object")
+    if "schema_version" in identity:
+        fail("identity must not define a nested schema_version")
+    saved_identity_input = identity.get("fingerprint_input")
+    if (
+        not isinstance(saved_identity_input, dict)
+        or not isinstance(saved_identity_input.get("experiment"), dict)
+        or not isinstance(saved_identity_input.get("algorithm"), dict)
+    ):
+        fail("identity.fingerprint_input is missing or is not an object")
+    computed_fingerprint = fingerprint(saved_identity_input)
 
     try:
         experiment = ResolvedExperimentConfig(**config["experiment"])
@@ -251,11 +224,8 @@ def validate_run_record(
     result = record.get("result")
     if not isinstance(result, dict):
         fail("result is missing or is not an object")
-    if result.get("schema_version") != RESULT_SCHEMA_VERSION:
-        fail(
-            f"result.schema_version is {result.get('schema_version')!r}, "
-            f"expected {RESULT_SCHEMA_VERSION}"
-        )
+    if "schema_version" in result:
+        fail("result must not define a nested schema_version")
     history = result.get("evaluation_history")
     stopping = result.get("early_stopping")
     views = result.get("selection_views_supported")
@@ -277,7 +247,7 @@ def validate_run_record(
         _validate_local_selection(result.get("selection_provenance"), experiment, fail)
     _validate_early_stopping(stopping, experiment, history, fail,
                              iterative=iterative_result)
-    if record_version == 4 or "resources" in record:
+    if "resources" in record:
         _validate_resources(record.get("resources"), record.get("wall_seconds"),
                             experiment, fail)
     return record
@@ -321,8 +291,10 @@ def _validate_flop_settings(value: Any, fail) -> None:
 
 
 def _validate_resources(saved: Any, wall_seconds, experiment, fail) -> None:
-    if not isinstance(saved, dict) or saved.get("schema_version") != 1:
-        fail("resources is missing or uses an unsupported schema")
+    if not isinstance(saved, dict):
+        fail("resources is missing or is not an object")
+    if "schema_version" in saved:
+        fail("resources must not define a nested schema_version")
     measurement = saved.get("measurement")
     observed = saved.get("observed")
     if not isinstance(measurement, dict) or not isinstance(observed, dict):
