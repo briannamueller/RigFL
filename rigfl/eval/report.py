@@ -6,7 +6,7 @@ import json
 import math
 import statistics
 
-from rigfl.eval.metrics import canonical, direction_of
+from rigfl.eval.metrics import canonical, direction_of, uses_pooled_predictions
 from rigfl.eval.selection import (
     SelectionError,
     client_distribution,
@@ -149,13 +149,33 @@ def run_score(record: dict, metric: str, *, view: str = "global",
                         tie_break=tie_break)
     out: dict = {"selection_view": sel.get("selection_view", view)}
     for split in ("validation", "test"):
-        vals, weights = _values_and_weights(sel, name, split)
-        out[split] = _reduce(vals, weights, aggregation) if vals else None
+        out[split] = selected_metric_value(sel, name, split, aggregation)
     if sel.get("selected_round") is not None:
         out["selected_round"] = sel["selected_round"]
     elif "selected_rounds" in sel:
         out["selected_rounds"] = sel["selected_rounds"]
     return out
+
+
+def selected_metric_value(
+    selected: dict,
+    metric: str,
+    split: str,
+    aggregation: str,
+) -> float | None:
+    """One selected run-level value, using pooled samples when required."""
+    name = canonical(metric)
+    if (
+        selected.get("selection_view") == "global"
+        and uses_pooled_predictions(name)
+    ):
+        return (
+            selected.get("aggregate_metrics", {})
+            .get(split, {})
+            .get(name)
+        )
+    values, weights = _values_and_weights(selected, name, split)
+    return _reduce(values, weights, aggregation) if values else None
 
 
 def summarize(records: list[dict], metric: str, *, view: str = "global",
@@ -181,12 +201,16 @@ def summarize(records: list[dict], metric: str, *, view: str = "global",
     dists: list[dict] = []
     for sel in sels:
         tv, tw = _values_and_weights(sel, name, "test")
-        vv, vw = _values_and_weights(sel, name, "validation")
+        test_value = selected_metric_value(sel, name, "test", aggregation)
+        validation_value = selected_metric_value(
+            sel, name, "validation", aggregation
+        )
+        if test_value is not None:
+            test_scores.append(test_value)
         if tv:
-            test_scores.append(_reduce(tv, tw, aggregation))
             dists.append(client_distribution(tv, name, weights=tw))
-        if vv:
-            val_scores.append(_reduce(vv, vw, aggregation))
+        if validation_value is not None:
+            val_scores.append(validation_value)
         if sel.get("selected_round") is not None:
             rounds.append(sel["selected_round"])
         elif "selected_rounds" in sel:
@@ -212,7 +236,10 @@ def summarize(records: list[dict], metric: str, *, view: str = "global",
         "selection_view_fallback": any(
             s.get("selection_view_fallback") for s in sels),
         "selection_direction": direction_of(name),
-        "selection_aggregation": aggregation,
+        "selection_aggregation": (
+            sels[0].get("selection_aggregation", aggregation)
+            if sels else aggregation
+        ),
         "tie_break": tie_break,
         "mixed_rounds": any(s.get("mixed_rounds") for s in sels),
         "mixed_local_selections": any(

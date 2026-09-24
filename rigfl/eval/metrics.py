@@ -79,6 +79,127 @@ def log_loss(probs: torch.Tensor, labels: torch.Tensor, num_classes: int) -> flo
     return (-torch.log(true.clamp(min=LOG_LOSS_EPS, max=1.0))).mean().item()
 
 
+def _binary_ranking_inputs(
+    scores: torch.Tensor, labels: torch.Tensor, positive_class: int
+) -> tuple[list[float], list[bool]] | None:
+    """Return scores and binary targets when both outcome classes are present."""
+    values = [float(value) for value in scores.detach().cpu().tolist()]
+    positive = [int(label) == positive_class for label in labels.cpu().tolist()]
+    count = sum(positive)
+    if count == 0 or count == len(positive):
+        return None
+    return values, positive
+
+
+def _binary_auroc(
+    scores: torch.Tensor, labels: torch.Tensor, positive_class: int
+) -> float | None:
+    prepared = _binary_ranking_inputs(scores, labels, positive_class)
+    if prepared is None:
+        return None
+    values, positive = prepared
+    order = sorted(range(len(values)), key=values.__getitem__)
+    ranks = [0.0] * len(values)
+    start = 0
+    while start < len(order):
+        end = start + 1
+        while end < len(order) and values[order[end]] == values[order[start]]:
+            end += 1
+        average_rank = ((start + 1) + end) / 2
+        for index in order[start:end]:
+            ranks[index] = average_rank
+        start = end
+    positives = sum(positive)
+    negatives = len(positive) - positives
+    positive_rank_sum = sum(
+        rank for rank, is_positive in zip(ranks, positive) if is_positive
+    )
+    return (
+        positive_rank_sum - positives * (positives + 1) / 2
+    ) / (positives * negatives)
+
+
+def _binary_average_precision(
+    scores: torch.Tensor, labels: torch.Tensor, positive_class: int
+) -> float | None:
+    prepared = _binary_ranking_inputs(scores, labels, positive_class)
+    if prepared is None:
+        return None
+    values, positive = prepared
+    order = sorted(range(len(values)), key=values.__getitem__, reverse=True)
+    positives = sum(positive)
+    true_positives = 0
+    false_positives = 0
+    previous_recall = 0.0
+    average_precision = 0.0
+    start = 0
+    while start < len(order):
+        end = start + 1
+        while end < len(order) and values[order[end]] == values[order[start]]:
+            end += 1
+        group = order[start:end]
+        true_positives += sum(positive[index] for index in group)
+        false_positives += sum(not positive[index] for index in group)
+        recall = true_positives / positives
+        precision = true_positives / (true_positives + false_positives)
+        average_precision += (recall - previous_recall) * precision
+        previous_recall = recall
+        start = end
+    return average_precision
+
+
+def _one_vs_rest_scores(
+    probs: torch.Tensor,
+    labels: torch.Tensor,
+    num_classes: int,
+    positive_class: int | None,
+    scorer,
+) -> float | None:
+    probs = check_probabilities(probs, n=labels.numel(), num_classes=num_classes)
+    if labels.numel() == 0:
+        return None
+    if num_classes == 2:
+        if positive_class is None:
+            return None
+        if positive_class not in (0, 1):
+            raise ValueError(
+                f"positive_class must be 0 or 1 for binary classification, got "
+                f"{positive_class}"
+            )
+        return scorer(probs[:, positive_class], labels, positive_class)
+    scores = [
+        scorer(probs[:, class_id], labels, class_id)
+        for class_id in range(num_classes)
+    ]
+    if any(score is None for score in scores):
+        return None
+    return sum(scores) / len(scores)
+
+
+def auroc(
+    probs: torch.Tensor,
+    labels: torch.Tensor,
+    num_classes: int,
+    positive_class: int | None = None,
+) -> float | None:
+    """Binary or one-vs-rest macro area under the ROC curve."""
+    return _one_vs_rest_scores(
+        probs, labels, num_classes, positive_class, _binary_auroc
+    )
+
+
+def average_precision(
+    probs: torch.Tensor,
+    labels: torch.Tensor,
+    num_classes: int,
+    positive_class: int | None = None,
+) -> float | None:
+    """Binary or one-vs-rest macro average precision (RigFL's AUPRC)."""
+    return _one_vs_rest_scores(
+        probs, labels, num_classes, positive_class, _binary_average_precision
+    )
+
+
 # ── The registry ────────────────────────────────────────────────────────────
 
 #: What a metric function needs from a :class:`~rigfl.core.interfaces.Predictions`.
@@ -101,6 +222,10 @@ class MetricSpec:
     fn: object = None
     #: Which part of the prediction ``fn`` receives as its first argument.
     needs: str = "labels"
+    #: Whether binary evaluation requires the configured positive class.
+    uses_positive_class: bool = False
+    #: Whether a run-level value must be computed from pooled sample predictions.
+    pooled_global: bool = False
 
     @property
     def higher_is_better(self) -> bool:
@@ -124,12 +249,28 @@ METRICS: dict[str, MetricSpec] = {
                             "probability assigned to the true class, clamped at "
                             f"{LOG_LOSS_EPS:g}. Needs normalized class probabilities, "
                             "which a label-only algorithm does not provide."),
+    "auroc": MetricSpec(
+        "auroc", "maximize", computed=True, fn=auroc,
+        needs="probabilities", uses_positive_class=True, pooled_global=True,
+        note="Binary AUROC requires experiment.positive_class; multiclass AUROC "
+             "uses one-vs-rest macro averaging. It is unavailable when any "
+             "required positive or negative class is absent.",
+    ),
+    "auprc": MetricSpec(
+        "auprc", "maximize", computed=True, fn=average_precision,
+        needs="probabilities", uses_positive_class=True, pooled_global=True,
+        note="AUPRC is average precision. Binary AUPRC requires "
+             "experiment.positive_class; multiclass AUPRC uses one-vs-rest "
+             "macro averaging. It is unavailable when any required positive or "
+             "negative class is absent.",
+    ),
 }
 
 #: Short spellings accepted at config and CLI boundaries.
 ALIASES = {"acc": "accuracy", "bacc": "balanced_accuracy",
            "balanced_acc": "balanced_accuracy", "f1": "macro_f1",
-           "log_loss": "loss", "cross_entropy": "loss"}
+           "log_loss": "loss", "cross_entropy": "loss",
+           "roc_auc": "auroc", "average_precision": "auprc"}
 
 #: Metrics that RigFL evaluation computes, in a stable order.
 COMPUTED_METRICS = [n for n, s in METRICS.items() if s.computed]
@@ -155,6 +296,11 @@ def spec(name: str) -> MetricSpec:
 
 def direction_of(name: str) -> str:
     return spec(name).direction
+
+
+def uses_pooled_predictions(name: str) -> bool:
+    """Whether the run-level metric must be computed from pooled samples."""
+    return spec(name).pooled_global
 
 
 def require_computable(name: str) -> str:
@@ -210,18 +356,26 @@ def unavailable_reason(name: str) -> str:
     s = spec(name)
     if s.needs == "labels":
         return ""
-    return (f'"{s.name}" needs {s.needs} from the algorithm\'s prediction, and this run '
-            f"recorded none. An algorithm whose predict() returns bare labels -- or "
-            f"Predictions.labels_only -- can serve accuracy, balanced_accuracy "
-            f"and macro_f1, which depend only on which class was predicted, but not "
-            f'"{s.name}", which depends on how confidently. Return Predictions '
-            f"carrying normalized class probabilities to make it computable; one-hot "
-            f"probabilities derived from the labels would report a confidence the "
-            f"algorithm never expressed.")
+    reason = (
+        f'"{s.name}" needs {s.needs} from the algorithm\'s prediction, and this run '
+        f"recorded none. An algorithm whose predict() returns bare labels -- or "
+        f"Predictions.labels_only -- can serve accuracy, balanced_accuracy "
+        f"and macro_f1, which depend only on which class was predicted, but not "
+        f'"{s.name}", which depends on how confidently. Return Predictions '
+        f"carrying normalized class probabilities to make it computable; one-hot "
+        f"probabilities derived from the labels would report a confidence the "
+        f"algorithm never expressed."
+    )
+    return f"{reason} {s.note}" if s.note else reason
 
 
-def compute_all(output: "Predictions | torch.Tensor", labels: torch.Tensor,
-                num_classes: int) -> dict[str, float | None]:
+def compute_all(
+    output: "Predictions | torch.Tensor",
+    labels: torch.Tensor,
+    num_classes: int,
+    *,
+    positive_class: int | None = None,
+) -> dict[str, float | None]:
     """Every computed metric, for one client's predictions.
 
     Registry entries with functions are computed automatically. Metrics whose
@@ -255,7 +409,12 @@ def compute_all(output: "Predictions | torch.Tensor", labels: torch.Tensor,
     for name in COMPUTED_METRICS:
         s = METRICS[name]
         try:
-            out[name] = s.fn(metric_input(s, output), labels, num_classes)
+            arguments = (metric_input(s, output), labels, num_classes)
+            out[name] = (
+                s.fn(*arguments, positive_class)
+                if s.uses_positive_class
+                else s.fn(*arguments)
+            )
         except MetricInputUnavailable:
             out[name] = None
     return out

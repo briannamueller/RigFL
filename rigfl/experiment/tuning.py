@@ -14,8 +14,8 @@ from pathlib import Path
 from typing import Optional
 
 from rigfl.eval.metrics import canonical, direction_of
-from rigfl.eval.report import mean_ci, selection_for
-from rigfl.eval.selection import SelectionError, aggregate
+from rigfl.eval.report import mean_ci, selected_metric_value, selection_for
+from rigfl.eval.selection import SelectionError
 from rigfl.experiment.artifacts import (
     ResultValidationError,
     atomic_write_json,
@@ -522,9 +522,9 @@ def _candidate_view(recs: dict, expected: list, display: dict, metric: str, view
                 tie_break=tie_break, include_test=False,
             )
             name = canonical(metric)
-            values = selected.get("validation", {}).get(name, [])
-            weights = (selected.get("sample_counts") or {}).get("validation")
-            value = aggregate(values, weights, aggregation) if values else None
+            value = selected_metric_value(
+                selected, name, "validation", aggregation
+            )
         except (SelectionError, ValueError) as e:
             errors[str(seed)] = str(e)
             continue

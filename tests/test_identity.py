@@ -41,6 +41,13 @@ def test_split_seed_is_part_of_identity():
     assert run_fingerprint(first, {}) != run_fingerprint(second, {})
 
 
+def test_binary_positive_class_is_part_of_identity():
+    class_one = resolved_experiment(num_classes=2, positive_class=1)
+    class_zero = resolved_experiment(num_classes=2, positive_class=0)
+
+    assert run_fingerprint(class_one, {}) != run_fingerprint(class_zero, {})
+
+
 def test_environment_flags_do_not_change_identity():
     a = resolved_experiment()
     b = resolved_experiment(

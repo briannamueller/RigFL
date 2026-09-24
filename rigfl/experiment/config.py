@@ -40,6 +40,7 @@ _DATA_FIELDS = (
     "partition_scheme",
     "num_clients",
     "num_classes",
+    "positive_class",
     "validation_fraction",
     "input_kind",
     "input_spec",
@@ -173,6 +174,14 @@ class ExperimentConfig(BaseModel):
     )
     split_seed: int | None = Field(
         None, ge=0, description="Override for the client validation-split seed."
+    )
+    positive_class: int | None = Field(
+        None,
+        ge=0,
+        description=(
+            "Positive class id used by binary AUROC and AUPRC; required to "
+            "compute those metrics for a binary dataset."
+        ),
     )
     shared_dim: int = Field(
         512,
@@ -462,6 +471,20 @@ class ResolvedExperimentConfig(ExperimentConfig):
     input_kind: str
     input_spec: dict[str, Any]
     resolved_models: list[str] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _positive_class_matches_binary_target(self):
+        if self.positive_class is None:
+            return self
+        if self.num_classes != 2:
+            raise ValueError(
+                "experiment.positive_class is only valid for binary classification"
+            )
+        if self.positive_class >= self.num_classes:
+            raise ValueError(
+                f"experiment.positive_class must be in [0, {self.num_classes})"
+            )
+        return self
 
 
 # ── Run identity ─────────────────────────────────────────────────────────────

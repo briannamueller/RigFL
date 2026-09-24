@@ -18,6 +18,7 @@ from rigfl.eval.metrics import (
     direction_of,
     require_computable,
     unavailable_reason,
+    uses_pooled_predictions,
 )
 from rigfl.eval.protocol import evaluate_split
 from rigfl.eval.resources import measured, payload_bytes
@@ -43,7 +44,7 @@ class Client:
 def iterative(algorithm: IterativeAlgorithm, clients: list[Client], num_rounds: int,
               device: torch.device, num_classes: int, eval_gap: int = 1,
               verbose: bool = True, tracker=None, early_stopping=None,
-              resource_monitor=None) -> dict:
+              resource_monitor=None, positive_class: int | None = None) -> dict:
     """Train, recording every metric for every client at every evaluation round.
 
     Returns the canonical history. No round in it is marked selected; use
@@ -59,6 +60,10 @@ def iterative(algorithm: IterativeAlgorithm, clients: list[Client], num_rounds: 
     rounds_evaluated: list[int] = []
     per_client: dict[str, dict[str, dict[str, list]]] = {}
     counts: dict[str, dict[str, list]] = {"validation": {}, "test": {}}
+    aggregate_metrics: dict[str, dict[str, list]] = {
+        "validation": {},
+        "test": {},
+    }
     stop_reason = "completed_all_rounds"
     last_round = -1
 
@@ -90,13 +95,21 @@ def iterative(algorithm: IterativeAlgorithm, clients: list[Client], num_rounds: 
             evaluated = {
                 "validation": evaluate_split(algorithm, clients, shared, device, "val",
                                              num_classes,
-                                             resource_monitor=resource_monitor),
+                                             resource_monitor=resource_monitor,
+                                             positive_class=positive_class),
                 "test": evaluate_split(algorithm, clients, shared, device, "test",
                                        num_classes,
-                                       resource_monitor=resource_monitor),
+                                       resource_monitor=resource_monitor,
+                                       positive_class=positive_class),
             }
             rounds_evaluated.append(rnd)
-            _append(per_client, counts, evaluated, len(rounds_evaluated))
+            _append(
+                per_client,
+                counts,
+                aggregate_metrics,
+                evaluated,
+                len(rounds_evaluated),
+            )
 
             if tracker is not None:
                 _update_tracker_resources(tracker, resource_monitor)
@@ -116,6 +129,7 @@ def iterative(algorithm: IterativeAlgorithm, clients: list[Client], num_rounds: 
         "evaluation_rounds": rounds_evaluated,
         "clients": per_client,
         "client_sample_counts": counts,
+        "aggregate_metrics": aggregate_metrics,
     }
     _check_alignment(history)
 
@@ -162,7 +176,7 @@ def _update_tracker_resources(tracker, monitor) -> None:
         update(monitor.to_dict())
 
 
-def _append(per_client, counts, evaluated, n_rounds) -> None:
+def _append(per_client, counts, aggregate_metrics, evaluated, n_rounds) -> None:
     """Extend each client's metric vectors by one evaluation point.
 
     Vectors stay aligned with ``evaluation_rounds`` by construction: a client
@@ -181,6 +195,11 @@ def _append(per_client, counts, evaluated, n_rounds) -> None:
             while len(cseries) < n_rounds - 1:
                 cseries.append(None)
             cseries.append(block["sample_counts"].get(cid))
+        for name in COMPUTED_METRICS:
+            series = aggregate_metrics[split].setdefault(name, [])
+            while len(series) < n_rounds - 1:
+                series.append(None)
+            series.append(block["aggregate"].get(name))
 
 
 def _check_alignment(history: dict) -> None:
@@ -200,6 +219,13 @@ def _check_alignment(history: dict) -> None:
                 raise RuntimeError(
                     f"evaluation history is misaligned: client {cid} {split} "
                     f"sample counts have {len(series)} values for {n} rounds")
+    for split, metrics in history["aggregate_metrics"].items():
+        for name, series in metrics.items():
+            if len(series) != n:
+                raise RuntimeError(
+                    f"evaluation history is misaligned: aggregate {split}.{name} "
+                    f"has {len(series)} values for {n} rounds"
+                )
 
 
 def _print_round(rnd: int, evaluated: dict) -> None:
@@ -207,13 +233,26 @@ def _print_round(rnd: int, evaluated: dict) -> None:
     from rigfl.eval.protocol import mean_over_clients
     parts = []
     for m in COMPUTED_METRICS:
-        v = mean_over_clients(evaluated["validation"], m)
+        v = (
+            evaluated["validation"]["aggregate"].get(m)
+            if uses_pooled_predictions(m)
+            else mean_over_clients(evaluated["validation"], m)
+        )
         if v is not None:
             parts.append(f"{m} {v:.4f}")
     line = f"round {rnd:3d} | val " + " ".join(parts) if parts else f"round {rnd:3d}"
     if os.environ.get("RIGFL_LOG_TEST_ROUNDS") == "1":
-        tparts = [f"{m} {v:.4f}" for m in COMPUTED_METRICS
-                  if (v := mean_over_clients(evaluated["test"], m)) is not None]
+        tparts = [
+            f"{m} {v:.4f}"
+            for m in COMPUTED_METRICS
+            if (
+                v := (
+                    evaluated["test"]["aggregate"].get(m)
+                    if uses_pooled_predictions(m)
+                    else mean_over_clients(evaluated["test"], m)
+                )
+            ) is not None
+        ]
         if tparts:
             line += " | test " + " ".join(tparts)
     print(line)
@@ -264,11 +303,17 @@ class _EarlyStopping:
         if not self.enabled:
             return False
         block = evaluated[self.split]
-        vals = [m[self.metric] if m and self.metric in m else None
-                for m in block["clients"].values()]
-        weights = list(block["sample_counts"].values())
-        value = aggregate(vals, weights if self.aggregation == "weighted_mean" else None,
-                          self.aggregation)
+        if uses_pooled_predictions(self.metric):
+            value = block["aggregate"].get(self.metric)
+        else:
+            vals = [m[self.metric] if m and self.metric in m else None
+                    for m in block["clients"].values()]
+            weights = list(block["sample_counts"].values())
+            value = aggregate(
+                vals,
+                weights if self.aggregation == "weighted_mean" else None,
+                self.aggregation,
+            )
         if value is None:
             # No validation data skips the update; an unavailable metric is an
             # invalid stopping policy.
@@ -304,7 +349,11 @@ class _EarlyStopping:
             "metric": self.metric,
             "split": self.split,
             "direction": self.direction,
-            "aggregation": self.aggregation,
+            "aggregation": (
+                "pooled"
+                if uses_pooled_predictions(self.metric)
+                else self.aggregation
+            ),
             "patience": self.patience,
             "min_delta": self.min_delta,
             "best_round": self.best_round,

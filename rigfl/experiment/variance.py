@@ -9,8 +9,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from rigfl.eval.metrics import canonical, direction_of
-from rigfl.eval.report import selection_for
-from rigfl.eval.selection import aggregate
+from rigfl.eval.report import selected_metric_value, selection_for
 from rigfl.experiment.artifacts import atomic_write_json, atomic_write_text
 from rigfl.experiment.collect import (
     algorithm_variant,
@@ -65,9 +64,9 @@ def _validation_score(
         tie_break=tie_break,
         include_test=False,
     )
-    values = selected.get("validation", {}).get(metric, [])
-    weights = (selected.get("sample_counts") or {}).get("validation")
-    value = aggregate(values, weights, aggregation)
+    value = selected_metric_value(
+        selected, metric, "validation", aggregation
+    )
     if value is None:
         source = record.get("_source_file", "result record")
         raise VariancePilotError(f"{source} has no validation {metric}")

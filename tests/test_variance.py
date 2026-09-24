@@ -55,6 +55,10 @@ def _record(partition_seed: int, split_seed: int, experiment_seed: int) -> dict:
                 "evaluation_rounds": [0],
                 "clients": clients,
                 "client_sample_counts": counts,
+                "aggregate_metrics": {
+                    "validation": {"accuracy": [score]},
+                    "test": {"accuracy": [score]},
+                },
             },
             "early_stopping": {
                 "enabled": False,

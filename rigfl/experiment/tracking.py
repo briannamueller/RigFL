@@ -47,16 +47,24 @@ class WandbTracker(Tracker):
         choosing hyperparameters, which is how validation-based selection gets
         quietly undone by hand. Set RIGFL_LOG_TEST_ROUNDS=1 to see them anyway.
         """
-        from rigfl.eval.metrics import COMPUTED_METRICS
+        from rigfl.eval.metrics import COMPUTED_METRICS, uses_pooled_predictions
         from rigfl.eval.protocol import mean_over_clients
         payload = {"round": rnd}
         for m in COMPUTED_METRICS:
-            v = mean_over_clients(val, m)
+            v = (
+                val["aggregate"].get(m)
+                if uses_pooled_predictions(m)
+                else mean_over_clients(val, m)
+            )
             if v is not None:
                 payload[f"val/{m}"] = v
         if os.environ.get("RIGFL_LOG_TEST_ROUNDS") == "1":
             for m in COMPUTED_METRICS:
-                v = mean_over_clients(test, m)
+                v = (
+                    test["aggregate"].get(m)
+                    if uses_pooled_predictions(m)
+                    else mean_over_clients(test, m)
+                )
                 if v is not None:
                     payload[f"test/{m}"] = v
         resources = getattr(self, "resources", None)

@@ -19,7 +19,12 @@ import math
 import statistics
 from typing import Any, Literal, Optional
 
-from rigfl.eval.metrics import canonical, direction_of, unavailable_reason
+from rigfl.eval.metrics import (
+    canonical,
+    direction_of,
+    unavailable_reason,
+    uses_pooled_predictions,
+)
 
 Aggregation = Literal["mean", "weighted_mean"]
 TieBreak = Literal["earliest", "latest"]
@@ -74,15 +79,25 @@ def select_global(history: dict, metric: str, *, aggregation: Aggregation = "mea
     rounds = history["evaluation_rounds"]
     clients = history["clients"]
     weights = history.get("client_sample_counts", {}).get(split)
+    pooled = uses_pooled_predictions(name)
+    pooled_series = (
+        history.get("aggregate_metrics", {}).get(split, {}).get(name, [])
+    )
 
     better = _better(direction)
     allowed = range(len(rounds))
     best_i: Optional[int] = None
     best_val: Optional[float] = None
     for i in allowed:
-        vals = [clients[c][split].get(name, [None] * len(rounds))[i] for c in clients]
-        w = [weights[c][i] for c in clients] if weights else None
-        agg = aggregate(vals, w, aggregation)
+        if pooled:
+            agg = pooled_series[i] if i < len(pooled_series) else None
+        else:
+            vals = [
+                clients[c][split].get(name, [None] * len(rounds))[i]
+                for c in clients
+            ]
+            w = [weights[c][i] for c in clients] if weights else None
+            agg = aggregate(vals, w, aggregation)
         if agg is None:
             continue
         if best_val is None or better(agg, best_val):
@@ -101,7 +116,7 @@ def select_global(history: dict, metric: str, *, aggregation: Aggregation = "mea
         "selection_metric": name,
         "selection_split": split,
         "selection_direction": direction,
-        "selection_aggregation": aggregation,
+        "selection_aggregation": "pooled" if pooled else aggregation,
         "tie_break": tie_break,
         "selected_round": rounds[best_i],
         "selected_index": best_i,
@@ -115,9 +130,15 @@ def select_global(history: dict, metric: str, *, aggregation: Aggregation = "mea
             else ("validation",)
         ),
         "mixed_rounds": False,
+        "aggregate_metrics": {
+            "validation": _aggregate_at(history, best_i, "validation")
+        },
     }
     if include_test:
         selected["test"] = _slice(history, best_i, "test")
+        selected["aggregate_metrics"]["test"] = _aggregate_at(
+            history, best_i, "test"
+        )
     return selected
 
 
@@ -226,6 +247,15 @@ def _slice(history: dict, index: int, split: str) -> dict[str, list]:
     return {m: [clients[c][split].get(m, [])[index] if index < len(clients[c][split].get(m, []))
                 else None for c in clients]
             for m in _metric_names(history, split)}
+
+
+def _aggregate_at(history: dict, index: int, split: str) -> dict[str, float | None]:
+    """Pooled-sample metrics at one evaluation round."""
+    metrics = history.get("aggregate_metrics", {}).get(split, {})
+    return {
+        name: values[index] if index < len(values) else None
+        for name, values in metrics.items()
+    }
 
 
 # ── Client-distribution statistics ───────────────────────────────────────────

@@ -622,6 +622,29 @@ def _validate_history(history: Any, experiment, fail) -> None:
                 ):
                     fail(f"client {client_id} {split}.{name} contains an invalid value")
 
+    aggregate_metrics = history.get("aggregate_metrics")
+    if not isinstance(aggregate_metrics, dict):
+        fail("aggregate_metrics is missing")
+    for split in ("validation", "test"):
+        metrics = aggregate_metrics.get(split)
+        if not isinstance(metrics, dict) or set(metrics) != metric_names:
+            fail(
+                f"aggregate_metrics.{split} does not record the same metric names"
+            )
+        for name, values in metrics.items():
+            if not isinstance(values, list) or len(values) != n_rounds:
+                fail(f"aggregate_metrics.{split}.{name} is not round-aligned")
+            if any(
+                value is not None
+                and (
+                    not isinstance(value, (int, float))
+                    or isinstance(value, bool)
+                    or not math.isfinite(float(value))
+                )
+                for value in values
+            ):
+                fail(f"aggregate_metrics.{split}.{name} contains an invalid value")
+
     counts = history.get("client_sample_counts")
     if not isinstance(counts, dict):
         fail("client_sample_counts is missing")

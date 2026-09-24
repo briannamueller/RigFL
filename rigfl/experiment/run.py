@@ -295,7 +295,8 @@ def run_one(name, exp: ExperimentConfig, cfg, device, *, data: ResolvedData | No
                         num_classes=exp.num_classes, eval_gap=exp.eval_gap,
                         verbose=not exp.quiet, tracker=tracker,
                         early_stopping=exp.early_stopping,
-                        resource_monitor=monitor)
+                        resource_monitor=monitor,
+                        positive_class=exp.positive_class)
     resources = monitor.to_dict()
 
     # The fingerprint is computed from the resolved experiment, including the

@@ -56,6 +56,9 @@ def test_every_metric_vector_aligns_with_evaluation_rounds():
     for split, per_client in h["client_sample_counts"].items():
         for cid, series in per_client.items():
             assert len(series) == n
+    for split, per_metric in h["aggregate_metrics"].items():
+        for name, series in per_metric.items():
+            assert len(series) == n, f"aggregate/{split}/{name}: {len(series)} != {n}"
 
 
 def test_evaluation_rounds_need_not_start_at_one_or_be_contiguous():

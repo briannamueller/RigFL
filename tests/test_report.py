@@ -193,6 +193,25 @@ def test_summary_aggregates_the_way_selection_did():
     assert abs(weighted["test_mean"] - 0.9) < 1e-9       # client 0 holds 90%
 
 
+def test_summary_uses_pooled_predictions_for_run_level_auroc():
+    record = _record("local", 0, [0.5, 0.5], [0.5, 0.5], rounds=(0, 1))
+    history = record["result"]["evaluation_history"]
+    for client in history["clients"].values():
+        client["validation"]["auroc"] = [0.1, 0.1]
+        client["test"]["auroc"] = [0.1, 0.1]
+    history["aggregate_metrics"] = {
+        "validation": {"auroc": [0.2, 0.9]},
+        "test": {"auroc": [0.4, 0.8]},
+    }
+
+    summary = summarize([record], "auroc", **_SEL)
+
+    assert summary["selected_rounds"] == [1]
+    assert summary["val_mean"] == pytest.approx(0.9)
+    assert summary["test_mean"] == pytest.approx(0.8)
+    assert summary["selection_aggregation"] == "pooled"
+
+
 def test_distribution_statistics_use_every_seed_not_just_the_last():
     a = _record("fedprox", 0, [.5], [.5], rounds=(0,), n_clients=2)
     b = _record("fedprox", 1, [.5], [.5], rounds=(0,), n_clients=2)

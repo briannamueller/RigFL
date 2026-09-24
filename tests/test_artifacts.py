@@ -32,6 +32,8 @@ def _result(rounds: int = 2, clients: int = 2) -> dict:
                 "balanced_accuracy": list(values),
                 "macro_f1": list(values),
                 "loss": [1.0] * rounds,
+                "auroc": list(values),
+                "auprc": list(values),
             }
             for split in ("validation", "test")
         }
@@ -41,12 +43,24 @@ def _result(rounds: int = 2, clients: int = 2) -> dict:
         split: {str(cid): [10] * rounds for cid in range(clients)}
         for split in ("validation", "test")
     }
+    aggregate_metrics = {
+        split: {
+            "accuracy": list(values),
+            "balanced_accuracy": list(values),
+            "macro_f1": list(values),
+            "loss": [1.0] * rounds,
+            "auroc": list(values),
+            "auprc": list(values),
+        }
+        for split in ("validation", "test")
+    }
     return {
         "selection_views_supported": ["global", "per-client"],
         "evaluation_history": {
             "evaluation_rounds": list(range(rounds)),
             "clients": per_client,
             "client_sample_counts": counts,
+            "aggregate_metrics": aggregate_metrics,
         },
         "early_stopping": {
             "enabled": False,
@@ -249,6 +263,9 @@ def test_an_internally_aligned_but_truncated_history_is_incomplete():
                 values.pop()
     for per_client in history["client_sample_counts"].values():
         for values in per_client.values():
+            values.pop()
+    for metrics in history["aggregate_metrics"].values():
+        for values in metrics.values():
             values.pop()
     with pytest.raises(ResultValidationError, match="incomplete"):
         validate_run_record(record)

@@ -7,7 +7,7 @@ import contextlib
 import torch
 from torch import nn
 
-from rigfl.eval.metrics import canonical, compute_all
+from rigfl.eval.metrics import COMPUTED_METRICS, canonical, compute_all
 from rigfl.eval.resources import measured
 from rigfl.prediction import Predictions, as_predictions
 
@@ -50,7 +50,8 @@ def _eval_mode(*objects):
 @torch.no_grad()
 def evaluate_split(algorithm, clients, shared, device, split: str, num_classes: int,
                    shared_by_client: list | None = None,
-                   resource_monitor=None) -> dict:
+                   resource_monitor=None,
+                   positive_class: int | None = None) -> dict:
     """Every computed metric for every client on one split, keyed by client id.
 
     A client with no data is recorded as ``None``. Sample counts accompany the
@@ -58,6 +59,8 @@ def evaluate_split(algorithm, clients, shared, device, split: str, num_classes: 
     """
     per_client: dict[str, dict[str, float] | None] = {}
     counts: dict[str, int | None] = {}
+    pooled_outputs: list[Predictions] = []
+    pooled_labels: list[torch.Tensor] = []
 
     for cid, client in enumerate(clients):
         key = str(cid)
@@ -83,10 +86,31 @@ def evaluate_split(algorithm, clients, shared, device, split: str, num_classes: 
             per_client[key], counts[key] = None, None
             continue
         output, labels = _concat(outputs), torch.cat(labels)
-        per_client[key] = compute_all(output, labels, num_classes)
+        per_client[key] = compute_all(
+            output,
+            labels,
+            num_classes,
+            positive_class=positive_class,
+        )
         counts[key] = int(labels.numel())
+        pooled_outputs.append(output)
+        pooled_labels.append(labels)
 
-    return {"clients": per_client, "sample_counts": counts}
+    aggregate = (
+        compute_all(
+            _concat(pooled_outputs),
+            torch.cat(pooled_labels),
+            num_classes,
+            positive_class=positive_class,
+        )
+        if pooled_outputs
+        else {name: None for name in COMPUTED_METRICS}
+    )
+    return {
+        "clients": per_client,
+        "sample_counts": counts,
+        "aggregate": aggregate,
+    }
 
 
 def _to_cpu(out: Predictions) -> Predictions:

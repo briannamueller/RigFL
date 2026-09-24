@@ -14,8 +14,7 @@ from pydantic import BaseModel, ConfigDict
 
 from rigfl.cli import legacy_config_argv
 from rigfl.eval.metrics import canonical, direction_of
-from rigfl.eval.report import selection_for
-from rigfl.eval.selection import aggregate
+from rigfl.eval.report import selected_metric_value, selection_for
 from rigfl.experiment.config import ExperimentConfig
 from rigfl.experiment.launch import (
     _apply_replicate,
@@ -284,9 +283,9 @@ def _validation_value(record: dict, spec: OptimizationSpec) -> float:
         include_test=False,
     )
     name = canonical(spec.metric)
-    values = selected.get("validation", {}).get(name, [])
-    weights = (selected.get("sample_counts") or {}).get("validation")
-    score = aggregate(values, weights, spec.selection_aggregation) if values else None
+    score = selected_metric_value(
+        selected, name, "validation", spec.selection_aggregation
+    )
     if score is None:
         raise ValueError(f"run produced no validation {spec.metric}")
     return score
