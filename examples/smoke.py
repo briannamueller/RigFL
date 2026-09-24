@@ -10,12 +10,10 @@ from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from rigfl.algorithms.fedgh import FedGH, FedGHConfig
-from rigfl.algorithms.fedkd import FedKD, FedKDConfig
 from rigfl.algorithms.fedproto import FedProto, FedProtoConfig
 from rigfl.algorithms.fedtgp import FedTGP, FedTGPConfig
 from rigfl.algorithms.fml import FML, FMLConfig
 from rigfl.algorithms.global_ensemble import GlobalEnsemble, GlobalEnsembleConfig
-from rigfl.algorithms.lgfedavg import LGFedAvg, LGFedAvgConfig
 from rigfl.algorithms.local import Local, LocalConfig
 from rigfl.core import Client, ClientModel, LearnedProjection, iterative
 from rigfl.eval.report import format_table, summarize
@@ -89,11 +87,7 @@ ALGORITHMS = {
     "FedGH": lambda: FedGH(
         FedGHConfig(local_epochs=2, lr=0.05, server_epochs=1, server_lr=0.05),
         SHARED_DIM, NUM_CLASSES),
-    "LG-FedAvg": lambda: LGFedAvg(
-        LGFedAvgConfig(local_epochs=2, lr=0.05), SHARED_DIM, NUM_CLASSES),
     "FML": lambda: FML(FMLConfig(local_epochs=2, lr=0.05), mentee),
-    "FedKD": lambda: FedKD(
-        FedKDConfig(local_epochs=2, lr=0.05), mentee, SHARED_DIM),
     "FedTGP": lambda: FedTGP(
         FedTGPConfig(local_epochs=2, lr=0.05, server_epochs=2,
                      server_lr=0.05, margin_cap=100.0),

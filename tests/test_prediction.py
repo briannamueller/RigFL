@@ -196,12 +196,10 @@ def test_evaluation_refuses_invalid_predicted_class_ids(predictions, match):
 def _built_in_algorithms():
     """One instance of every shipped algorithm, with the pieces each needs."""
     from rigfl.algorithms.fedgh import FedGH, FedGHConfig
-    from rigfl.algorithms.fedkd import FedKD, FedKDConfig
     from rigfl.algorithms.fedproto import FedProto, FedProtoConfig
     from rigfl.algorithms.fedtgp import FedTGP, FedTGPConfig
     from rigfl.algorithms.fml import FML, FMLConfig
     from rigfl.algorithms.global_ensemble import GlobalEnsemble, GlobalEnsembleConfig
-    from rigfl.algorithms.lgfedavg import LGFedAvg, LGFedAvgConfig
     from rigfl.algorithms.local import Local, LocalConfig
 
     def aux():
@@ -218,11 +216,7 @@ def _built_in_algorithms():
             FedProtoConfig(lamda=1.0, local_epochs=1, lr=0.05)),
         "fedgh": FedGH(
             FedGHConfig(local_epochs=1, lr=0.05), SHARED_DIM, NUM_CLASSES),
-        "lgfedavg": LGFedAvg(
-            LGFedAvgConfig(local_epochs=1, lr=0.05), SHARED_DIM, NUM_CLASSES),
         "fml": FML(FMLConfig(local_epochs=1, lr=0.05), aux),
-        "fedkd": FedKD(
-            FedKDConfig(local_epochs=1, lr=0.05), aux, SHARED_DIM),
         "fedtgp": FedTGP(
             FedTGPConfig(lamda=1.0, local_epochs=1, lr=0.05),
             NUM_CLASSES, SHARED_DIM),
@@ -269,9 +263,9 @@ def test_every_built_in_algorithm_preserves_the_prediction_contract(name):
         assert (p >= 0).all()
         assert torch.allclose(p.sum(1), torch.ones(p.shape[0]), atol=1e-5)
         assert torch.equal(out.labels, out.probabilities.argmax(dim=1)), name
-        if name in ("local", "fml", "fedkd"):
+        if name in ("local", "fml"):
             old = model(x).argmax(dim=1)
-        elif name in ("fedgh", "lgfedavg"):
+        elif name == "fedgh":
             model.head.load_state_dict(shared.state_dict())
             old = model(x).argmax(dim=1)
         elif name == "global":

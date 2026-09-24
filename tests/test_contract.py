@@ -4,9 +4,17 @@ from __future__ import annotations
 
 import inspect
 
+import pytest
+
 from rigfl.core.config import AlgorithmConfig
 from rigfl.core.interfaces import Algorithm
-from rigfl.experiment.registry import REGISTRY, AlgorithmSpec, build_algorithm
+from rigfl.experiment.registry import (
+    ALL_ALGORITHMS,
+    REGISTRY,
+    AlgorithmSpec,
+    build_algorithm,
+    register_algorithm,
+)
 
 
 def test_default_construction_hook_stores_the_validated_configuration():
@@ -41,6 +49,32 @@ def test_one_registry_entry_is_enough_to_construct_an_ordinary_algorithm(
 
     assert isinstance(algorithm, ExampleAlgorithm)
     assert algorithm.config is config
+
+
+def test_external_algorithm_registration_is_explicit_and_refuses_replacement():
+    class ExternalConfig(AlgorithmConfig):
+        pass
+
+    class ExternalAlgorithm(Algorithm):
+        pass
+
+    spec = AlgorithmSpec(
+        ExternalAlgorithm,
+        ExternalConfig,
+        requires_client_model=False,
+        ignored_experiment_fields=("rounds",),
+    )
+    try:
+        register_algorithm("external_example", spec)
+
+        assert REGISTRY["external_example"] is spec
+        assert ALL_ALGORITHMS[-1] == "external_example"
+        with pytest.raises(ValueError, match="already registered"):
+            register_algorithm("external_example", spec)
+    finally:
+        REGISTRY.pop("external_example", None)
+        if "external_example" in ALL_ALGORITHMS:
+            ALL_ALGORITHMS.remove("external_example")
 
 
 def test_registered_algorithms_accept_the_standard_runner_calls():

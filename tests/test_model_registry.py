@@ -166,8 +166,8 @@ def test_model_family_sweep_does_not_duplicate_homogeneous_algorithms(monkeypatc
     assert sum(task["algorithm"] == "fedproto" for task in grid) == 2
 
 
-@pytest.mark.parametrize("algorithm", ["fml", "fedkd"])
-def test_aux_model_defaults_to_first_family_member(algorithm):
+def test_aux_model_defaults_to_first_family_member():
+    algorithm = "fml"
     exp = resolved_experiment(
         model="cifar_resnet18", model_family="image_heterogeneous_3"
     )
@@ -191,8 +191,8 @@ def test_aux_model_defaults_to_first_family_member(algorithm):
     )
 
 
-@pytest.mark.parametrize("algorithm", ["fml", "fedkd"])
-def test_aux_model_defaults_to_model_without_a_family(algorithm):
+def test_aux_model_defaults_to_model_without_a_family():
+    algorithm = "fml"
     exp = resolved_experiment(model="cifar_resnet18", model_family=None)
     cfg = resolve_algorithm_config(algorithm, exp, config_class(algorithm)())
 
@@ -442,8 +442,8 @@ def test_dataset_supplies_architecture_compatibility_context():
 
 def test_local_training_settings_remain_on_every_algorithm_that_uses_them():
     locally_trained = {
-        "local", "global", "fedproto", "fedgh", "lgfedavg", "fml",
-        "fedkd", "fedtgp", "fedavg", "fedprox",
+        "local", "global", "fedproto", "fedgh", "fml", "fedtgp",
+        "fedavg", "fedprox",
     }
     for name in locally_trained:
         assert {"local_epochs", "lr"} <= set(config_class(name).model_fields)

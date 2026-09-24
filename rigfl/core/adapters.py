@@ -7,7 +7,6 @@ every client's heterogeneous backbone to emit the same representation width.
 How the original papers reach that shared width:
 
 * **FedProto / FedGH** — a learned ``Linear`` sized to a fixed width.
-* **FedKD** — a learned projection ``W_h`` for hidden-state distillation.
 * **FedTGP** — parameter-free ``AdaptiveAvgPool1d`` (its own design).
 
 RigFL makes the adapter an explicit, swappable component, so each algorithm uses
@@ -33,9 +32,8 @@ class Adapter(nn.Module):
 class LearnedProjection(Adapter):
     """Default adapter: a learned linear map ``native_dim -> shared_dim``.
 
-    Matches how FedProto/FedGH reach a fixed representation width and FedKD's
-    ``W_h`` — learnable, and free of the channel-averaging information loss that
-    pooling incurs.
+    Matches how FedProto/FedGH reach a fixed representation width: learnable,
+    and free of the channel-averaging information loss that pooling incurs.
     """
 
     def __init__(self, native_dim: int, shared_dim: int, bias: bool = True) -> None:

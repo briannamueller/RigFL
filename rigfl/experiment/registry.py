@@ -20,14 +20,12 @@ from rigfl.algorithms.fedapen import FedAPEN, FedAPENConfig
 from rigfl.algorithms.fedavg import FedAvg, FedAvgConfig
 from rigfl.algorithms.fedcac import FedCAC, FedCACConfig
 from rigfl.algorithms.fedgh import FedGH, FedGHConfig
-from rigfl.algorithms.fedkd import FedKD, FedKDConfig
 from rigfl.algorithms.fedpac import FedPAC, FedPACConfig
 from rigfl.algorithms.fedproto import FedProto, FedProtoConfig
 from rigfl.algorithms.fedprox import FedProx, FedProxConfig
 from rigfl.algorithms.fedtgp import FedTGP, FedTGPConfig
 from rigfl.algorithms.fml import FML, FMLConfig
 from rigfl.algorithms.global_ensemble import GlobalEnsemble, GlobalEnsembleConfig
-from rigfl.algorithms.lgfedavg import LGFedAvg, LGFedAvgConfig
 from rigfl.algorithms.local import Local, LocalConfig
 from rigfl.algorithms.pfedmoe import PFedMoE, PFedMoEConfig, ProxyExtractor
 from rigfl.core import ClientModel, LearnedProjection, iterative
@@ -102,9 +100,7 @@ REGISTRY = {
     "global":   AlgorithmSpec(GlobalEnsemble, GlobalEnsembleConfig),
     "fedproto": AlgorithmSpec(FedProto, FedProtoConfig),
     "fedgh":    AlgorithmSpec(FedGH, FedGHConfig),
-    "lgfedavg": AlgorithmSpec(LGFedAvg, LGFedAvgConfig),
     "fml":      AlgorithmSpec(FML, FMLConfig),
-    "fedkd":    AlgorithmSpec(FedKD, FedKDConfig),
     "fedtgp":   AlgorithmSpec(FedTGP, FedTGPConfig),
     "pfedmoe":  AlgorithmSpec(PFedMoE, PFedMoEConfig),
 }
@@ -113,11 +109,33 @@ _RUNNER_IGNORED_EXPERIMENT_FIELDS = {}
 
 # Algorithms used by the baseline sweep, plus Local as the reference condition.
 # Global Ensemble remains callable explicitly and through ``all``.
-BASELINES = ["local", "fedproto", "fedgh", "lgfedavg", "fml", "fedkd", "fedtgp"]
+BASELINES = ["local", "fedproto", "fedgh", "fml", "fedtgp"]
 ALL_ALGORITHMS = BASELINES + [
     "fedavg", "fedprox", "fedcac", "fedapa", "fedapen", "fedamp", "apple",
     "fedpac", "pfedmoe", "global",
 ]
+
+
+def register_algorithm(name: str, spec: AlgorithmSpec) -> None:
+    """Register one explicitly imported external algorithm.
+
+    RigFL does not discover plugins. An external research repository calls this
+    function before parsing or running its configurations, and owns any custom
+    runner included in ``spec``.
+    """
+    if not name or name != name.lower() or not name.replace("_", "").isalnum():
+        raise ValueError(
+            "algorithm name must be a lowercase identifier containing only "
+            "letters, numbers, and underscores"
+        )
+    if name in REGISTRY:
+        raise ValueError(f"algorithm '{name}' is already registered")
+    if not isinstance(spec, AlgorithmSpec):
+        raise TypeError("spec must be an AlgorithmSpec")
+    if not issubclass(spec.config, AlgorithmConfig):
+        raise TypeError("algorithm config must inherit from AlgorithmConfig")
+    REGISTRY[name] = spec
+    ALL_ALGORITHMS.append(name)
 
 
 def config_class(name: str) -> type[AlgorithmConfig]:
@@ -185,7 +203,7 @@ def resolve_algorithm_config(name: str, exp: ExperimentConfig,
         input_kind=input_kind,
         use_family=algorithm_spec(name).supports_model_heterogeneity,
     )
-    if name in {"fml", "fedkd"}:
+    if name == "fml":
         selected = cfg.aux_model or (
             names[0] if exp.model_family is not None else exp.model
         )
@@ -267,7 +285,7 @@ def build_algorithm(name: str, exp: ResolvedExperimentConfig,
                     client_sample_counts=None):
     """Construct a registered algorithm through its standard factory hook.
 
-    ``aux_backbone`` builds the complete meme or mentee used by FML and FedKD;
+    ``aux_backbone`` builds the complete meme model used by FML;
     ``proxy_backbone`` builds pFedMoE's headless proxy extractor;
     ``shared_backbone`` builds FedAPEN's complete shared classifier.
     ``initial_client_models`` and ``client_sample_counts`` describe clients
@@ -277,7 +295,7 @@ def build_algorithm(name: str, exp: ResolvedExperimentConfig,
     exp = resolve_algorithm_experiment(name, exp)
     cfg = resolve_algorithm_config(name, exp, cfg)
     sd, nc = exp.shared_dim, exp.num_classes
-    if name in {"fml", "fedkd"} and aux_backbone is None:
+    if name == "fml" and aux_backbone is None:
         aux_backbone = instantiate_backbones(
             [cfg.aux_model],
             input_spec=model_input_spec or exp.input_spec,
