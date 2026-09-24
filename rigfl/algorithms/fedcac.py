@@ -61,6 +61,7 @@ def critical_parameter_mask(
     *,
     parameter_names: tuple[str, ...],
     tau: float,
+    always_critical_names: tuple[str, ...] = (),
 ) -> Mask:
     """FedCAC Eqs. 5-6: top-``tau`` sensitivity within each parameter tensor."""
     mask: Mask = {}
@@ -72,6 +73,8 @@ def critical_parameter_mask(
             indices = torch.topk(sensitivity, count, sorted=False).indices
             selected[indices] = True
         mask[name] = selected.reshape_as(trained[name])
+    for name in always_critical_names:
+        mask[name] = torch.ones_like(trained[name], dtype=torch.bool)
     return mask
 
 
@@ -149,6 +152,13 @@ class FedCAC(Algorithm):
         self.parameter_names = tuple(
             name for name, _ in self.model_template.named_parameters()
         )
+        self.always_critical_names = tuple(
+            f"{module_name}.{buffer_name}" if module_name else buffer_name
+            for module_name, module in self.model_template.named_modules()
+            if isinstance(module, torch.nn.modules.batchnorm._BatchNorm)
+            for buffer_name in ("running_mean", "running_var")
+            if getattr(module, buffer_name, None) is not None
+        )
 
     @classmethod
     def from_config(cls, config, *, model_template=None, experiment=None, **resources):
@@ -162,7 +172,7 @@ class FedCAC(Algorithm):
         initial = clone_state_dict(self.model_template.state_dict())
         empty_mask = {
             name: torch.zeros_like(initial[name], dtype=torch.bool)
-            for name in self.parameter_names
+            for name in (*self.parameter_names, *self.always_critical_names)
         }
         return FedCACState(
             initial,
@@ -202,6 +212,7 @@ class FedCAC(Algorithm):
         mask = critical_parameter_mask(
             initial, trained, parameter_names=self.parameter_names,
             tau=self.config.tau,
+            always_critical_names=self.always_critical_names,
         )
         return FedCACUpload(trained, mask)
 
