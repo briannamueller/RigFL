@@ -163,12 +163,20 @@ def test_flop_estimation_is_opt_in_and_separates_operation_categories():
             torch.mm(torch.ones(1, 2), torch.ones(2, 1))
     resources = monitor.to_dict()
 
+    # Matrix multiplication uses 2*m*n*k FLOPs under multiply-add=2:
+    # 2*2*3*4 = 48 and 2*1*2*1 = 4.
     assert resources["operations"]["matmul"]["flops"] == 48
     assert resources["operations"]["validation"]["flops"] == 4
     assert resources["observed"]["flops"] == {
         "algorithm_operations": 48,
         "evaluation": 4,
         "total": 52,
+    }
+    assert resources["measurement"]["flop_estimation"] == {
+        "enabled": True,
+        "method": "torch.utils.flop_counter.FlopCounterMode",
+        "convention": "multiply-add=2",
+        "torch_version": str(torch.__version__),
     }
 
 
