@@ -112,7 +112,7 @@ def test_missing_biosilo_partition_reports_the_generate_command(tmp_path):
 
     with pytest.raises(
         FileNotFoundError,
-        match=r"python -m rigfl\.data\.generate --dataset biomedical",
+        match=r"rigfl data generate --dataset biomedical",
     ):
         load_biosilo_partition(
             settings, data_dir=tmp_path, dataset_name="biomedical"

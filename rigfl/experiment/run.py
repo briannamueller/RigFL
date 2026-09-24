@@ -28,7 +28,7 @@ from rigfl.data.config import (
 )
 from rigfl.data.partitions import (
     build_partition_clients,
-    generate_partition,
+    load_partition,
 )
 from rigfl.eval.resources import ResourceMonitor
 from rigfl.experiment.artifacts import (
@@ -132,7 +132,7 @@ def resolve_experiment_data(
             settings = settings.model_copy(
                 update={"partition": settings.partition.model_copy(update=overrides)}
             )
-        artifact, _ = generate_partition(
+        artifact = load_partition(
             exp.dataset,
             config_path=exp.dataset_config,
             data_dir=exp.data_dir,

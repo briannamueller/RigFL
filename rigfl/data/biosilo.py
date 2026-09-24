@@ -68,9 +68,9 @@ def load_biosilo_partition(
     if not (path / "manifest.json").is_file():
         configured_name = dataset_name or settings.source_dataset
         command = [
-            "python",
-            "-m",
-            "rigfl.data.generate",
+            "rigfl",
+            "data",
+            "generate",
             "--dataset",
             configured_name,
         ]

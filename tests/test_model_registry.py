@@ -271,8 +271,8 @@ def test_requested_models_are_recorded_explicitly(monkeypatch):
         },
     )
     monkeypatch.setattr(
-        "rigfl.experiment.run.generate_partition",
-        lambda *args, **kwargs: (artifact, False),
+        "rigfl.experiment.run.load_partition",
+        lambda *args, **kwargs: artifact,
     )
     monkeypatch.setattr(
         "rigfl.experiment.run.dataset_settings",

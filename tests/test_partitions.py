@@ -388,11 +388,41 @@ def test_experiment_uses_alias_to_resolve_partition(monkeypatch, tmp_path):
     )
 
 
-def test_experiment_generates_a_missing_flower_partition(monkeypatch, tmp_path):
+def test_experiment_requires_explicit_flower_partition_generation(
+    monkeypatch, tmp_path
+):
     config = _config(tmp_path / "datasets.yaml")
+
+    def unexpected_generation(*args, **kwargs):
+        raise AssertionError("experiment startup must not generate data")
+
     monkeypatch.setitem(
-        partitions.BACKEND_GENERATORS, "flower", _fake_flower_backend
+        partitions.BACKEND_GENERATORS, "flower", unexpected_generation
     )
+
+    with pytest.raises(FileNotFoundError) as error:
+        resolve_experiment_data(
+            ExperimentConfig(
+                dataset=DATASET,
+                dataset_config=str(config),
+                data_dir=str(tmp_path / "data"),
+            )
+        )
+
+    message = str(error.value)
+    assert "rigfl data generate" in message
+    assert f"--dataset {DATASET}" in message
+    assert f"--dataset-config {config}" in message
+    assert f"--data-dir {tmp_path / 'data'}" in message
+    assert "--partition-seed 7" in message
+    assert "--split-seed 13" in message
+
+
+def test_explicitly_generated_flower_partition_resolves_for_experiment(
+    monkeypatch, tmp_path
+):
+    config = _config(tmp_path / "datasets.yaml")
+    generated, _ = _generate(monkeypatch, config, tmp_path / "data")
 
     resolved, data = resolve_experiment_data(
         ExperimentConfig(
@@ -402,7 +432,7 @@ def test_experiment_generates_a_missing_flower_partition(monkeypatch, tmp_path):
         )
     )
 
-    assert data.artifact.path.is_dir()
+    assert data.artifact.path == generated.path
     assert resolved.partition_id == data.artifact.partition_id
 
 
@@ -421,6 +451,20 @@ def test_experiment_seed_overrides_generate_and_resolve_the_matching_partition(
         partition_seed=17,
         split_seed=23,
         seed=31,
+    )
+    settings = dataset_settings(DATASET, config)
+    settings = settings.model_copy(
+        update={
+            "partition": settings.partition.model_copy(
+                update={"partition_seed": 17, "split_seed": 23}
+            )
+        }
+    )
+    generate_partition(
+        DATASET,
+        config_path=config,
+        data_dir=tmp_path / "data",
+        settings=settings,
     )
 
     resolved, data = resolve_experiment_data(base)

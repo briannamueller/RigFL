@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import tempfile
 from dataclasses import dataclass
@@ -245,9 +246,28 @@ def load_partition(
         dataset, config_path=config_path, data_dir=data_dir, settings=settings
     )
     if not path.exists():
+        command = [
+            "rigfl",
+            "data",
+            "generate",
+            "--dataset",
+            dataset,
+            "--dataset-config",
+            str(config_path),
+            "--data-dir",
+            str(data_dir),
+        ]
+        if settings.partition.partition_seed is not None:
+            command.extend([
+                "--partition-seed",
+                str(settings.partition.partition_seed),
+            ])
+        if settings.partition.split_seed is not None:
+            command.extend(["--split-seed", str(settings.partition.split_seed)])
+        formatted_command = " ".join(shlex.quote(part) for part in command)
         raise FileNotFoundError(
             f"generated partition for dataset {dataset!r} was not found at {path}. "
-            f"Run: rigfl data generate --dataset {dataset}"
+            f"Run: {formatted_command}"
         )
     manifest = _read_manifest(path)
     expected = {
