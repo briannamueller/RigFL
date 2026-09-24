@@ -15,10 +15,7 @@ from pydantic import BaseModel, ConfigDict
 from rigfl.eval.metrics import canonical, direction_of
 from rigfl.eval.report import selection_for
 from rigfl.eval.selection import aggregate
-from rigfl.experiment.config import (
-    ExperimentConfig,
-    IntensificationConfig,
-)
+from rigfl.experiment.config import ExperimentConfig
 from rigfl.experiment.launch import (
     _apply_replicate,
     _replicate_conditions,
@@ -42,7 +39,6 @@ from rigfl.experiment.tuning import (
     Candidate,
     candidate_hash,
     canonical_axis,
-    parse_intensification,
     rank,
     write_manifest,
     write_ranking,
@@ -84,7 +80,6 @@ class OptimizationSpec(BaseModel):
     selection_view: Literal["global", "per-client"]
     selection_aggregation: Literal["mean", "weighted_mean"]
     tie_break: Literal["earliest", "latest"]
-    intensification: IntensificationConfig | None
 
 
 def parse_optimization(spec: dict) -> OptimizationSpec:
@@ -207,9 +202,6 @@ def parse_optimization(spec: dict) -> OptimizationSpec:
         selection_view=tuning.selection_view,
         selection_aggregation=tuning.selection_aggregation,
         tie_break=tuning.tie_break,
-        intensification=parse_intensification(
-            tuning.intensification, conditions or None
-        ),
     )
     sample = {
         path: _first_value(distribution) for path, distribution in search_space.items()
@@ -390,9 +382,6 @@ def _manifest(spec: OptimizationSpec, study, target_trials: int | None = None) -
             "round_tie_break": spec.tie_break,
             "fixed": True,
         },
-        "intensification": (
-            spec.intensification.to_dict() if spec.intensification else None
-        ),
         "condition_axes": [],
         "candidates": [candidate.to_dict() for candidate in candidates],
         "run_store": "../runs",

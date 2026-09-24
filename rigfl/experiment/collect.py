@@ -5,7 +5,7 @@
 Use ``--group-by`` to choose explicit labels for hyperparameter variants:
 
     python -m rigfl.experiment.collect --results-dir results/runs \
-        --group-by algorithm.graphroute.graph.k algorithm.graphroute.gnn.arch
+        --group-by algorithm.mu
 """
 
 from __future__ import annotations

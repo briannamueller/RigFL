@@ -20,7 +20,7 @@ from rigfl.experiment.tuning import (
 )
 
 
-def _raw(*, intensification: bool = False) -> dict:
+def _raw() -> dict:
     tuning = {
         "sampler": {"class": "GridSampler", "options": {"seed": 4}},
         "metric": "accuracy",
@@ -35,19 +35,6 @@ def _raw(*, intensification: bool = False) -> dict:
             },
         },
     }
-    if intensification:
-        tuning["intensification"] = {
-            "top_k": 2,
-            "replicates": [
-                {
-                    "partition_seed": seed,
-                    "split_seed": seed,
-                    "experiment_seed": seed,
-                }
-                for seed in (10, 11)
-            ],
-            "practical_threshold": 0.01,
-        }
     return {
         "name": "fedprox_grid",
         "algorithms": ["fedprox"],
@@ -366,7 +353,7 @@ def test_duplicate_result_for_one_candidate_and_replicate_is_rejected():
         place_records(records + [duplicate], manifest)
 
 
-def test_ranking_without_intensification_writes_a_final_selection(tmp_path):
+def test_ranking_writes_a_final_selection(tmp_path):
     spec, manifest = _study()
     records = _records(
         spec,
@@ -389,22 +376,6 @@ def test_ranking_without_intensification_writes_a_final_selection(tmp_path):
         source.startswith("../runs/")
         for source in selection["groups"][0]["selected_result_files"]
     )
-
-
-def test_ranking_with_intensification_is_not_called_a_final_selection(tmp_path):
-    spec, manifest = _study(_raw(intensification=True))
-    records = _records(
-        spec,
-        manifest,
-        lambda candidate, _: _flat(1.0 - candidate / 10, 0.0),
-    )
-    artifact = _rank(records, manifest)
-
-    written = write_ranking(artifact, records, manifest, tmp_path / "study")
-
-    assert {path.name for path in written} == {"ranking.json", "grid.jsonl"}
-    assert not (tmp_path / "study" / "selection.json").exists()
-    assert not (tmp_path / "study" / "selected.yaml").exists()
 
 
 def test_study_document_round_trips(tmp_path):

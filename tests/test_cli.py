@@ -56,3 +56,41 @@ def test_init_command_reports_next_steps(tmp_path, capsys):
     output = capsys.readouterr().out
     assert f"Created RigFL project in {project}" in output
     assert "python -m rigfl.data.generate --dataset cifar10" in output
+
+
+def test_task_command_runs_one_indexed_grid_task(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "rigfl.experiment.launch.run_task",
+        lambda grid, index, out_dir, **options: calls.append(
+            (grid, index, out_dir, options)
+        ),
+    )
+
+    main([
+        "task", "snapshot/grid.jsonl", "3",
+        "--results-root", str(tmp_path), "--dry-run",
+    ])
+
+    assert calls == [(
+        "snapshot/grid.jsonl",
+        3,
+        tmp_path / "runs",
+        {"dry_run": True, "force": False},
+    )]
+
+
+def test_snapshot_command_reports_scheduler_neutral_task_command(
+    tmp_path, monkeypatch, capsys
+):
+    snapshot = tmp_path / "snapshots" / "fixed" / "grid.jsonl"
+    monkeypatch.setattr(
+        "rigfl.experiment.launch.stage_task_snapshot",
+        lambda grid, results_root: snapshot,
+    )
+
+    main(["snapshot", "working/grid.jsonl", "--results-root", str(tmp_path)])
+
+    output = capsys.readouterr().out
+    assert f"Wrote immutable task snapshot: {snapshot}" in output
+    assert f"rigfl task {snapshot} 1" in output

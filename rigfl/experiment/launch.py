@@ -1,12 +1,12 @@
-"""Expand an experiment into runnable configurations and submit an SGE array.
+"""Expand an experiment into independently runnable task configurations.
 
 Sweep axes form a Cartesian product; zipped replicates do not. Fixed settings
 belong under ``base``; ``launch`` writes one configuration per task to
 ``grid.jsonl``.
 
-    python -m rigfl.experiment.launch --config configs/experiments/cifar_baselines.yaml --queue gpu
+    python -m rigfl.experiment.launch --config configs/experiments/cifar_baselines.yaml
     python -m rigfl.experiment.launch --name demo --algorithms local,fedproto \
-        --seeds 0-2 --sweep algorithm.lamda=0.1,1,10 --queue gpu
+        --seeds 0-2 --sweep algorithm.lamda=0.1,1,10
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ import argparse
 import difflib
 import itertools
 import json
-import shlex
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -289,9 +288,9 @@ def build_grid(spec: dict) -> list[dict]:
 
     An ``algorithm.x`` axis only multiplies the grid for algorithms that actually have
     field ``x``; for algorithms without it, that axis collapses to a single entry. So
-    ``--algorithms all --sweep algorithm.graphroute.graph.k=3,5,10`` gives
-    FedDES three variants and every other algorithm exactly one -- no duplicate
-    configs, no manual per-algorithm scoping."""
+    ``--algorithms all --sweep algorithm.mu=0.01,0.1`` gives FedProx two
+    variants and every other algorithm exactly one -- no duplicate configs,
+    no manual per-algorithm scoping."""
     return expand(spec)[0]
 
 
@@ -542,10 +541,10 @@ def _materialize_submission(
     return snapshot
 
 
-def _stage_sge_grid(
+def stage_task_snapshot(
     grid_path: Path, results_root: str | Path | None = None
 ) -> Path:
-    """Copy a working grid so queued SGE tasks cannot observe later edits."""
+    """Resolve and copy a grid so external tasks cannot observe later edits."""
     try:
         body = grid_path.read_text()
         task_count = len(body.splitlines())
@@ -569,39 +568,6 @@ def _stage_sge_grid(
         body,
         validate=lambda text: _check_grid(text, task_count),
     )
-    return snapshot
-
-
-def _qsub_command(grid_path: Path, results_root: str, queue: str,
-                  task_count: int) -> list[str]:
-    return [
-        "qsub", "-t", f"1-{task_count}", "-q", queue, "-l", "ngpus=1",
-        "scripts/run_grid.sh", str(grid_path), results_root,
-    ]
-
-
-def _submit_or_show_sge(grid_path: Path, results_root: str, queue: str | None,
-                        task_count: int, submit: bool) -> Path | None:
-    if not submit:
-        command = [
-            "python", "-m", "rigfl.experiment.launch",
-            "--grid", str(grid_path),
-            "--results-root", results_root,
-            "--queue", queue or "<gpu-queue>",
-            "--submit",
-        ]
-        print(f"\nSubmit:\n  {shlex.join(command)}")
-        return None
-
-    if not queue:
-        raise SystemExit("--submit requires --queue (e.g. --queue gpu)")
-
-    import subprocess
-
-    snapshot = _stage_sge_grid(grid_path, results_root)
-    qsub = _qsub_command(snapshot, results_root, queue, task_count)
-    print(f"Submitting fixed grid snapshot: {snapshot}")
-    subprocess.run(qsub, check=True)
     return snapshot
 
 
@@ -754,10 +720,9 @@ def _spec_from_args(args) -> dict:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="Declare + submit a RigFL sweep.")
+    p = argparse.ArgumentParser(description="Declare a RigFL sweep task grid.")
     p.add_argument("--config", help="YAML sweep file (overrides the CLI sweep flags)")
     p.add_argument("--name", default="sweep")
-    p.add_argument("--queue", help="SGE queue used with --submit (e.g. gpu)")
     p.add_argument("--algorithms", default="baselines", help="'all' | 'baselines' | comma list")
     p.add_argument("--seeds", default="0-2")
     p.add_argument("--sweep", nargs="*", default=[], help="extra axes, e.g. algorithm.lamda=0.1,1,10")
@@ -765,12 +730,13 @@ def main() -> None:
     p.add_argument("--grid-task", type=int, help="run the Nth config from --grid")
     p.add_argument(
         "--grid",
-        help="existing grid.jsonl to inspect, submit, or run with --grid-task",
+        help="existing grid.jsonl to inspect, snapshot, or run with --grid-task",
     )
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--force", action="store_true", help="re-run tasks even if the result exists")
     p.add_argument(
-        "--submit", action="store_true", help="submit an SGE array through qsub"
+        "--snapshot", action="store_true",
+        help="write an immutable resolved task snapshot for external execution",
     )
     args = p.parse_args()
 
@@ -792,14 +758,13 @@ def main() -> None:
         _validate_biosilo_partitions(grid)
         n = len(grid)
         print(f"Grid contains {n} tasks: {grid_path}")
-        submitted = _submit_or_show_sge(
-            grid_path, args.results_root, args.queue, n, args.submit
-        )
-        if submitted is not None:
+        if args.snapshot:
+            snapshot = stage_task_snapshot(grid_path, args.results_root)
+            print(f"Wrote immutable task snapshot: {snapshot}")
             print(
-                "Collect this submission when done:\n  python -m "
+                "Collect this snapshot when done:\n  python -m "
                 "rigfl.experiment.collect --results-dir "
-                f"{run_store(args.results_root)} --grid {submitted}"
+                f"{run_store(args.results_root)} --grid {snapshot}"
             )
         return
 
@@ -820,10 +785,10 @@ def main() -> None:
     action = "Wrote" if created else "Reused"
     print(f"{action} {n} tasks at {grid_path}")
     print(f"  algorithms: {sorted({c['algorithm'] for c in grid})}")
-    submitted = _submit_or_show_sge(
-        grid_path, args.results_root, args.queue, n, args.submit
-    )
-    collection_grid = submitted or grid_path
+    collection_grid = grid_path
+    if args.snapshot:
+        collection_grid = stage_task_snapshot(grid_path, args.results_root)
+        print(f"Wrote immutable task snapshot: {collection_grid}")
     collect = (
         "python -m rigfl.experiment.collect --results-dir "
         f"{run_store(args.results_root)} --grid {collection_grid}"

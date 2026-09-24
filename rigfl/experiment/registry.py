@@ -16,7 +16,6 @@ from torch import nn
 from rigfl.algorithms.apple import APPLE, APPLEConfig
 from rigfl.algorithms.fedamp import FedAMP, FedAMPConfig
 from rigfl.algorithms.fedavg import FedAvg, FedAvgConfig
-from rigfl.algorithms.feddes import FedDES, FedDESConfig
 from rigfl.algorithms.fedgh import FedGH, FedGHConfig
 from rigfl.algorithms.fedkd import FedKD, FedKDConfig
 from rigfl.algorithms.fedpac import FedPAC, FedPACConfig
@@ -27,7 +26,7 @@ from rigfl.algorithms.fml import FML, FMLConfig
 from rigfl.algorithms.global_ensemble import GlobalEnsemble, GlobalEnsembleConfig
 from rigfl.algorithms.lgfedavg import LGFedAvg, LGFedAvgConfig
 from rigfl.algorithms.local import Local, LocalConfig
-from rigfl.core import ClientModel, LearnedProjection, iterative, p2p_one_shot
+from rigfl.core import ClientModel, LearnedProjection, iterative
 from rigfl.core.adapters import AdaptivePool
 from rigfl.core.config import AlgorithmConfig
 from rigfl.experiment.config import (
@@ -91,24 +90,15 @@ REGISTRY = {
     "fml":      AlgorithmSpec(FML, FMLConfig),
     "fedkd":    AlgorithmSpec(FedKD, FedKDConfig),
     "fedtgp":   AlgorithmSpec(FedTGP, FedTGPConfig),
-    "feddes":   AlgorithmSpec(
-        FedDES,
-        FedDESConfig,
-        runner=p2p_one_shot,
-        requires_client_model=False,
-        ignored_experiment_fields=("shared_dim",),
-    ),
 }
 
-_RUNNER_IGNORED_EXPERIMENT_FIELDS = {
-    p2p_one_shot: ("rounds", "eval_gap", "early_stopping"),
-}
+_RUNNER_IGNORED_EXPERIMENT_FIELDS = {}
 
 # Algorithms used by the baseline sweep, plus Local as the reference condition.
-# Global Ensemble and FedDES remain callable explicitly and through ``all``.
+# Global Ensemble remains callable explicitly and through ``all``.
 BASELINES = ["local", "fedproto", "fedgh", "lgfedavg", "fml", "fedkd", "fedtgp"]
 ALL_ALGORITHMS = BASELINES + [
-    "fedavg", "fedprox", "fedamp", "apple", "fedpac", "global", "feddes",
+    "fedavg", "fedprox", "fedamp", "apple", "fedpac", "global",
 ]
 
 

@@ -19,8 +19,7 @@ from rigfl.experiment.artifacts import (
     write_run_record,
 )
 from rigfl.experiment.config import run_fingerprint
-from rigfl.experiment.identity import fingerprint, run_identity_input
-from rigfl.experiment.registry import ignored_experiment_fields
+from rigfl.experiment.identity import fingerprint
 from tests.helpers import resolved_experiment
 
 
@@ -133,33 +132,6 @@ def test_saved_configuration_must_match_its_fingerprint():
     ] = "partition-other"
     with pytest.raises(ResultValidationError, match="fingerprint"):
         validate_run_record(record)
-
-
-def test_legacy_identity_does_not_receive_a_setting_added_later():
-    from rigfl.algorithms.feddes import FedDESConfig
-
-    exp = resolved_experiment(rounds=2, eval_gap=1, num_clients=2)
-    algorithm = FedDESConfig(base_models_per_client="all").model_dump()
-    algorithm.pop("base_models_per_client")
-    old_input = run_identity_input(
-        "feddes",
-        exp.model_dump(),
-        algorithm,
-        ignored_experiment_fields=ignored_experiment_fields("feddes"),
-        apply_historical_equivalence=False,
-    )
-    old_fingerprint = fingerprint(old_input)
-    record = make_run_record(
-        algorithm="feddes",
-        experiment=exp.model_dump(),
-        algorithm_config=algorithm,
-        result=_result(),
-        run_fingerprint=old_fingerprint,
-    )
-    record["record_schema_version"] = 3
-    record.pop("identity")
-
-    validate_run_record(record, expected_fingerprint=old_fingerprint)
 
 
 def test_requested_configuration_must_match_the_saved_configuration():

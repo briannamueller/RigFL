@@ -26,12 +26,9 @@ from rigfl.experiment.artifacts import (
 )
 from rigfl.experiment.config import (
     ExperimentConfig,
-    IntensificationConfig,
-    ReplicateCondition,
     algorithm_identity,
     fingerprint,
     hashable,
-    replicate_conditions_from_count,
 )
 from rigfl.experiment.paths import (
     flatten_mapping,
@@ -98,62 +95,6 @@ def _norm(v):
 
 
 # ── The tuning declaration ───────────────────────────────────────────────────
-
-def parse_intensification(
-    value, screening_conditions: list[dict[str, int]] | None
-) -> IntensificationConfig | None:
-    if value is None:
-        return None
-    if isinstance(value, IntensificationConfig):
-        parsed = value
-    else:
-        from pydantic import ValidationError
-
-        try:
-            parsed = IntensificationConfig.model_validate(value)
-        except ValidationError as error:
-            first = error.errors(include_url=False)[0]
-            location = ".".join(str(part) for part in first["loc"])
-            raise SystemExit(
-                f"invalid tuning.intensification at {location}: {first['msg']}"
-            ) from error
-    if screening_conditions is None:
-        raise SystemExit(
-            "tuning.intensification requires top-level replicates so its data and "
-            "training conditions can be checked against the screening conditions"
-        )
-    if isinstance(parsed.replicates, int):
-        # A count continues the screening seeds, so the conditions are new by
-        # construction rather than by the check below.
-        parsed = parsed.model_copy(
-            update={
-                "replicates": [
-                    ReplicateCondition(**condition)
-                    for condition in replicate_conditions_from_count(
-                        parsed.replicates, start=len(screening_conditions)
-                    )
-                ]
-            }
-        )
-    replicates = [condition.model_dump() for condition in parsed.replicates]
-    screening_data = {
-        (item["partition_seed"], item["split_seed"])
-        for item in screening_conditions
-    }
-    repeated_data = sorted(
-        screening_data
-        & {
-            (item["partition_seed"], item["split_seed"])
-            for item in replicates
-        }
-    )
-    if repeated_data:
-        raise SystemExit(
-            "intensification replicates must use data-seed pairs not used for "
-            f"screening; repeated pairs: {repeated_data}"
-        )
-    return parsed
-
 
 # ── Candidates ───────────────────────────────────────────────────────────────
 
@@ -724,76 +665,6 @@ def selected_configuration(
             "sweep": sweep}
 
 
-def build_intensification_plan(
-    artifact: dict, records: list[dict], manifest: dict
-) -> dict | None:
-    intensification = manifest.get("intensification")
-    if not intensification:
-        return None
-    placed, _, _ = place_records(records, manifest)
-    by_key = {str(key): value for key, value in placed.items()}
-    shortlists = []
-    for group in artifact["groups"]:
-        for view, ranking in group["rankings"].items():
-            candidate_ids = ranking["order"][: intensification["top_k"]]
-            if not candidate_ids:
-                raise TuningError(
-                    f"{group['label']} / {view} has no eligible candidates for "
-                    "intensification"
-                )
-            configurations = []
-            for screening_rank, candidate_id in enumerate(candidate_ids, 1):
-                runs = by_key[group["group_key"]][candidate_id]
-                record = runs[min(runs, key=str)]
-                candidate = next(
-                    item
-                    for item in group["candidates"]
-                    if item["id"] == candidate_id
-                )
-                configurations.append(
-                    {
-                        "screening_rank": screening_rank,
-                        "candidate_id": candidate_id,
-                        "candidate_parameters": candidate["parameters"],
-                        "candidate_config_hash": candidate["config_hash"],
-                        "screening_validation": candidate["views"][view][
-                            "validation"
-                        ],
-                        "screening_result_files": [
-                            runs[seed].get("_source_file")
-                            for seed in sorted(runs, key=str)
-                        ],
-                        "configuration": selected_configuration(
-                            record,
-                            manifest,
-                            replicate_conditions=intensification["replicates"],
-                        ),
-                    }
-                )
-            shortlists.append(
-                {
-                    "group_id": group["group_id"],
-                    "group_key": group["group_key"],
-                    "label": group["label"],
-                    "algorithm": group["algorithm"],
-                    "condition": group["condition"],
-                    "selection_view": view,
-                    "configurations": configurations,
-                }
-            )
-    return {
-        "top_k": intensification["top_k"],
-        "intensification_replicates": [
-            dict(condition) for condition in intensification["replicates"]
-        ],
-        "practical_threshold": intensification["practical_threshold"],
-        "tail_fraction": intensification["tail_fraction"],
-        "prefer": intensification["prefer"],
-        "ranking": intensification["ranking"],
-        "shortlists": shortlists,
-    }
-
-
 def _slug(text: str) -> str:
     keep = [c if (c.isalnum() or c in "-_.") else "-" for c in str(text)]
     out = "".join(keep).strip("-")
@@ -898,29 +769,22 @@ def _write_final_selection(
 def write_ranking(
     artifact: dict, records: list[dict], manifest: dict, out_dir: Path
 ) -> list[Path]:
-    """Write the initial ranking and either select or prepare intensification."""
+    """Write the validation ranking and selected configuration."""
     out_dir = Path(out_dir)
     normalized = loads(dumps(artifact, indent=None))
     normalized["run_store"] = manifest.get("run_store", "../runs")
-    normalized["intensification_plan"] = build_intensification_plan(
-        artifact, records, manifest
-    )
     out_dir.mkdir(parents=True, exist_ok=True)
     ranking_path = out_dir / "ranking.json"
     atomic_write_json(ranking_path, normalized, validate=_check_ranking)
     written = [ranking_path]
-    if normalized["intensification_plan"] is not None:
-        from rigfl.experiment.intensification import prepare_intensification
-        written.append(prepare_intensification(ranking_path))
-    else:
-        written.extend(
-            _write_final_selection(
-                normalized,
-                _selected_groups(normalized, records, manifest),
-                out_dir,
-                selected_from="initial_ranking",
-            )
+    written.extend(
+        _write_final_selection(
+            normalized,
+            _selected_groups(normalized, records, manifest),
+            out_dir,
+            selected_from="initial_ranking",
         )
+    )
     return written
 
 

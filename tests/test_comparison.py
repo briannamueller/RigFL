@@ -9,7 +9,6 @@ import pytest
 
 from rigfl.eval.comparison import (
     ConfigurationComparisonError,
-    apply_holm,
     compare_configurations,
     format_comparisons,
 )
@@ -137,8 +136,6 @@ def test_comparison_pairs_clients_and_orients_gain():
     assert _estimate(result, "harm_rate") == 0.25
     assert result["uncertainty"]["available"] is True
     assert result["effects"]["mean_gain"]["ci_low"] is not None
-    assert result["randomization_test"]["available"] is False
-    assert result["randomization_test"]["run_count"] == 2
 
 
 def test_comparison_is_reproducible_and_changes_sign_when_swapped():
@@ -159,17 +156,17 @@ def test_comparison_is_reproducible_and_changes_sign_when_swapped():
 
 def test_comparison_table_includes_local_contrasts_without_client_analysis():
     local = [_record("local", 0, [[0.5], [0.7]], setting=1)]
-    feddes = [_record("feddes", 0, [[0.6], [0.5]], setting=2)]
+    fedprox = [_record("fedprox", 0, [[0.6], [0.5]], setting=2)]
     fml = [_record("fml", 0, [[0.7], [0.68]], setting=3)]
 
     method_comparison = compare_configurations(
-        feddes, fml, "accuracy", left_label="feddes", right_label="fml",
+        fedprox, fml, "accuracy", left_label="fedprox", right_label="fml",
         practical_threshold=0.05,
     )
     comparisons = [
         method_comparison,
         compare_configurations(
-            feddes, local, "accuracy", left_label="feddes", right_label="local",
+            fedprox, local, "accuracy", left_label="fedprox", right_label="local",
             practical_threshold=0.05,
         ),
         compare_configurations(
@@ -178,8 +175,8 @@ def test_comparison_table_includes_local_contrasts_without_client_analysis():
         ),
     ]
     table = format_comparisons(comparisons)
-    assert "feddes − fml" in table
-    assert "feddes − local" in table
+    assert "fedprox − fml" in table
+    assert "fedprox − local" in table
     assert "local − fml" in table
 
 
@@ -274,40 +271,16 @@ def test_legacy_results_without_partition_metadata_keep_partition_identity():
 
 
 def test_one_shot_fallback_is_recorded_for_each_side():
-    left = [_record("feddes", 0, [[0.6]])]
+    left = [_record("fedprox", 0, [[0.6]])]
     left[0]["result"]["selection_views_supported"] = ["per-client"]
     right = [_record("local", 0, [[0.5]], setting=2)]
     result = compare_configurations(
-        left, right, "accuracy", left_label="feddes", right_label="local"
+        left, right, "accuracy", left_label="fedprox", right_label="local"
     )
     assert result["protocol"]["selection_views"] == {
-        "feddes": "per-client",
+        "fedprox": "per-client",
         "local": "global",
     }
-
-
-def test_holm_adjustment_is_monotone_in_p_value_order():
-    comparisons = [
-        {"randomization_test": {"available": True, "p_value": 0.03}},
-        {"randomization_test": {"available": True, "p_value": 0.01}},
-        {"randomization_test": {"available": False}},
-    ]
-    apply_holm(comparisons)
-    assert comparisons[1]["randomization_test"]["adjusted_p_value"] == 0.02
-    assert comparisons[0]["randomization_test"]["adjusted_p_value"] == 0.03
-    assert "adjusted_p_value" not in comparisons[2]["randomization_test"]
-
-
-def test_randomization_test_requires_six_runs():
-    left = [_record("a", seed, [[0.8], [0.7]]) for seed in range(6)]
-    right = [_record("b", seed, [[0.5], [0.6]], setting=2) for seed in range(6)]
-    result = compare_configurations(
-        left, right, "accuracy", left_label="a", right_label="b"
-    )
-    assert result["randomization_test"]["available"] is True
-    assert result["randomization_test"]["experimental_unit"] == (
-        "replicate_condition"
-    )
 
 
 def test_final_comparison_rejects_crossed_seed_conditions():

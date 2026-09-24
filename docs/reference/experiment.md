@@ -71,17 +71,6 @@ Replicate entries must be unique and use distinct `experiment_seed` values. Repl
 | `tuning.sampler.class` | string | `optuna.samplers.TPESampler` | non-empty | Import path of the Optuna sampler class. |
 | `tuning.sampler.options` | mapping | `{"seed":0}` | — | Arguments passed to the sampler constructor. |
 
-## Intensification settings
-
-| Setting | Type | Default | Allowed | Description |
-|---|---|---|---|---|
-| `tuning.intensification.top_k` | integer | `5` | ≥ 2 | Leading candidates evaluated on additional replicates. |
-| `tuning.intensification.replicates` | integer \| list[replicate settings] | required | — | Additional replicate conditions, or a count continuing the top-level replicate seeds. |
-| `tuning.intensification.practical_threshold` | number | required | > 0 | Largest difference treated as practically equivalent. |
-| `tuning.intensification.tail_fraction` | number | `0.1` | > 0; ≤ 1 | Client tail used for worst-tail gain. |
-| `tuning.intensification.prefer` | string | `validation` | `validation`, `communication`, `flops`, `time` | Criterion used among practically equivalent candidates. |
-| `tuning.intensification.ranking` | string | `pooled` | `pooled`, `intensification` | Replicates a shortlisted candidate is ranked on: the screening and intensification replicates together, or intensification only. |
-
 ## Categorical search parameters
 
 | Setting | Type | Default | Allowed | Description |

@@ -8,14 +8,12 @@ import pytest
 import torch
 import torch.nn as nn
 
-from rigfl.core import ClientModel, Identity
 from rigfl.data.config import FlowerDatasetSettings
 from rigfl.experiment.artifacts import validate_run_record
 from rigfl.experiment.config import ExperimentConfig, run_fingerprint
 from rigfl.experiment.launch import build_grid
-from rigfl.experiment.registry import (algorithm_run_fingerprint, build_algorithm,
+from rigfl.experiment.registry import (algorithm_run_fingerprint,
                                        config_class, resolve_algorithm_config,
-                                       resolve_algorithm_experiment,
                                        resolve_algorithm_models)
 from rigfl.experiment.run import ResolvedData, resolve_experiment_data, run_one
 from rigfl.models.registry import (
@@ -137,17 +135,15 @@ def test_mixed_sweep_resolves_models_by_algorithm_capability():
         "fedavg_cnn", "cifar_resnet18", "cifar_mobilenet_v2"
     ]
     assert resolve_algorithm_models("fedproto", exp).resolved_models == expected_family
-    assert resolve_algorithm_models("feddes", exp).resolved_models == expected_family
-
     grid = build_grid({
-        "algorithms": ["fedavg", "fedproto", "feddes"],
+        "algorithms": ["fedavg", "fedproto"],
         "base": {"experiment": {
             "model": "fedavg_cnn",
             "model_family": "image_heterogeneous_3",
         }},
     })
     assert [task["algorithm"] for task in grid] == [
-        "fedavg", "fedproto", "feddes"
+        "fedavg", "fedproto"
     ]
 
 
@@ -327,8 +323,8 @@ def test_unresolved_dataset_does_not_assume_image_inputs(monkeypatch):
     exp = ExperimentConfig(model="custom_numeric")
 
     assert resolve_algorithm_config(
-        "feddes", exp, config_class("feddes")()
-    ) == config_class("feddes")()
+        "local", exp, config_class("local")()
+    ) == config_class("local")()
 
     grid = build_grid({
         "algorithms": ["local"],
@@ -407,7 +403,7 @@ def test_numeric_partition_runs_through_experiment_infrastructure(
 def test_unknown_architecture_fails_during_algorithm_validation():
     exp = ExperimentConfig(model="does_not_exist")
     with pytest.raises(ValueError, match="Unknown model"):
-        resolve_algorithm_config("feddes", exp, config_class("feddes")())
+        resolve_algorithm_config("local", exp, config_class("local")())
 
 
 def test_dataset_supplies_architecture_compatibility_context():
@@ -418,72 +414,7 @@ def test_dataset_supplies_architecture_compatibility_context():
         resolved_models=["fedavg_cnn"],
     )
     with pytest.raises(ValueError, match="does not accept numeric inputs"):
-        resolve_algorithm_config("feddes", exp, config_class("feddes")())
-
-
-def test_feddes_rejects_algorithm_level_model_selection():
-    Cfg = config_class("feddes")
-    assert "models" not in Cfg.model_fields
-    assert "model_family" not in Cfg.model_fields
-
-    with pytest.raises(Exception, match="models"):
-        Cfg(models=["fedavg_cnn"])
-    with pytest.raises(Exception, match="model_family"):
-        Cfg(model_family="image_heterogeneous_3")
-
-
-def test_feddes_relevant_settings_still_change_its_fingerprint():
-    exp = resolved_experiment()
-    default = resolve_algorithm_config("feddes", exp, config_class("feddes")())
-    changed_epochs = resolve_algorithm_config(
-        "feddes", exp,
-        config_class("feddes")(graphroute={"base": {"epochs": 101}}),
-    )
-    changed_lr = resolve_algorithm_config(
-        "feddes", exp,
-        config_class("feddes")(graphroute={"base": {"lr": 0.001}}),
-    )
-
-    original = run_fingerprint(exp, default.model_dump())
-    assert original != run_fingerprint(exp, changed_epochs.model_dump())
-    assert original != run_fingerprint(exp, changed_lr.model_dump())
-
-
-def test_feddes_shared_dimension_does_not_change_its_fingerprint():
-    exp = resolved_experiment(shared_dim=64)
-    other = exp.model_copy(update={"shared_dim": 1024})
-    cfg = config_class("feddes")().model_dump()
-
-    assert algorithm_run_fingerprint("feddes", exp, cfg) == algorithm_run_fingerprint(
-        "feddes", other, cfg
-    )
-    assert algorithm_run_fingerprint(
-        "local", exp, config_class("local")().model_dump()
-    ) != algorithm_run_fingerprint(
-        "local", other, config_class("local")().model_dump()
-    )
-
-
-def test_one_shot_round_controls_are_inapplicable_to_execution_and_identity():
-    configured = resolved_experiment(
-        rounds=300,
-        eval_gap=5,
-        early_stopping={"enabled": True, "metric": "accuracy", "patience": 20},
-    )
-    other = resolved_experiment(
-        rounds=10,
-        eval_gap=1,
-        early_stopping={"enabled": False},
-    )
-    cfg = config_class("feddes")().model_dump()
-
-    effective = resolve_algorithm_experiment("feddes", configured)
-    assert effective.rounds == ExperimentConfig().rounds
-    assert effective.eval_gap == ExperimentConfig().eval_gap
-    assert effective.early_stopping.enabled is False
-    assert algorithm_run_fingerprint(
-        "feddes", configured, cfg
-    ) == algorithm_run_fingerprint("feddes", other, cfg)
+        resolve_algorithm_config("local", exp, config_class("local")())
 
 
 def test_local_training_settings_remain_on_every_algorithm_that_uses_them():
@@ -493,35 +424,3 @@ def test_local_training_settings_remain_on_every_algorithm_that_uses_them():
     }
     for name in locally_trained:
         assert {"local_epochs", "lr"} <= set(config_class(name).model_fields)
-
-
-def test_feddes_builds_its_pool_from_the_experiment_architectures(monkeypatch):
-    class TinyBackbone(nn.Module):
-        out_dim = 3
-
-        def __init__(self, input_spec=None):
-            super().__init__()
-            self.linear = nn.Linear(4, self.out_dim)
-
-        def forward(self, x):
-            return torch.relu(self.linear(x))
-
-    monkeypatch.setitem(
-        MODEL_ARCHITECTURE_REGISTRY, "custom", ("image", TinyBackbone)
-    )
-    exp = resolved_experiment(
-        num_classes=3, shared_dim=5, model="custom",
-        resolved_models=["custom"],
-        input_spec={"input_kind": "image", "shape": [4]},
-    )
-    algorithm = build_algorithm(
-        "feddes", exp, config_class("feddes")(cache_dir=""),
-        model_input_spec={"input_kind": "image", "shape": (4,)})
-
-    assert algorithm.model_ids == ["custom"]
-    assert len(algorithm.base_models) == 1
-    assert isinstance(algorithm.base_models[0], ClientModel)
-    assert isinstance(algorithm.base_models[0].backbone, TinyBackbone)
-    assert isinstance(algorithm.base_models[0].adapter, Identity)
-    assert algorithm.base_models[0].head.in_features == TinyBackbone.out_dim
-    assert algorithm.base_models[0](torch.randn(2, 4)).shape == (2, 3)

@@ -1,5 +1,4 @@
-# Expand and submit with:
-#   python -m rigfl.experiment.launch --config configs/experiments/cifar_baselines.yaml --queue gpu
+# Expand into a task grid with the supported sweep command.
 # Version this experiment definition with the code used to run it.
 
 name: cifar_baselines

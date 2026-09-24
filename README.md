@@ -50,7 +50,6 @@ machinery.
 | [FML](https://arxiv.org/abs/2006.16765) | `fml` |
 | [FedKD](https://www.nature.com/articles/s41467-022-29763-x) | `fedkd` |
 | [FedTGP](https://ojs.aaai.org/index.php/AAAI/article/view/29617) | `fedtgp` |
-| [FedDES](https://arxiv.org/abs/2603.28006) | `feddes` |
 
 Local training (`local`) and Global Ensemble (`global`) are available as
 reference baselines.
@@ -256,24 +255,20 @@ task. Tasks run independently by their 1-based index, so the grid can be execute
 sequentially in a shell loop or in parallel as an array job on any scheduler:
 
 ```bash
-python -m rigfl.experiment.launch \
-  --grid results/cifar10_sweep/grid.jsonl \
-  --grid-task 1
+rigfl task results/cifar10_sweep/grid.jsonl 1
 ```
 
-Regenerating a sweep with the same name replaces this working grid. For an SGE
-array, submit through RigFL so queued tasks receive a fixed copy of the grid:
+Regenerating a sweep with the same name replaces this working grid. Before
+handing tasks to any external scheduler, create an immutable resolved snapshot:
 
 ```bash
-python -m rigfl.experiment.launch \
-  --grid results/cifar10_sweep/grid.jsonl \
-  --queue gpu \
-  --submit
+rigfl snapshot results/cifar10_sweep/grid.jsonl
 ```
 
-Submission copies and their logs are stored below
-`results/cifar10_sweep/submissions/`; later changes to the working grid do not
-affect an array that has already been submitted.
+The command prints the fixed snapshot path. A scheduler script only needs to
+call `rigfl task SNAPSHOT_GRID INDEX`; RigFL does not submit jobs or impose a
+particular scheduler. Later changes to the working grid do not affect tasks run
+from the snapshot.
 
 RigFL also supports hyperparameter tuning with Optuna. See the
 [hyperparameter-tuning guide](https://github.com/briannamueller/RigFL/blob/main/docs/hyperparameter_tuning.md).

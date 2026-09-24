@@ -20,16 +20,6 @@ tuning:
     options:
       seed: 17
   metric: accuracy
-  intensification:
-    top_k: 5
-    replicates:
-      - {partition_seed: 10, split_seed: 10, experiment_seed: 10}
-      - {partition_seed: 11, split_seed: 11, experiment_seed: 11}
-      - {partition_seed: 12, split_seed: 12, experiment_seed: 12}
-      - {partition_seed: 13, split_seed: 13, experiment_seed: 13}
-      - {partition_seed: 14, split_seed: 14, experiment_seed: 14}
-      - {partition_seed: 15, split_seed: 15, experiment_seed: 15}
-    practical_threshold: 0.005
   search_space:
     algorithm.lr:
       type: float

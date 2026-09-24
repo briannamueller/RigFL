@@ -19,8 +19,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from rigfl.core import (Client, ClientModel, LearnedProjection, iterative,
-                        p2p_one_shot)
+from rigfl.core import Client, ClientModel, LearnedProjection, iterative
 from rigfl.eval.metrics import (LOG_LOSS_EPS, MetricInputUnavailable, compute_all,
                                 log_loss, macro_f1, metric_input, register, spec,
                                 unregister)
@@ -312,50 +311,6 @@ def test_a_class_with_no_global_prototype_gets_zero_probability():
     assert out.probabilities[0, 1].item() == 0.0
     assert out.probabilities.sum().item() == pytest.approx(1.0, abs=1e-6)
     assert out.labels.item() in (0, 2)
-
-
-# ── 10: FedDES keeps GraphRoute's soft_probs ─────────────────────────────────
-
-def test_feddes_returns_graphroutes_soft_probs():
-    """The distribution ``evaluate_ensemble`` already computes, not a re-derivation."""
-    pytest.importorskip("graphroute")
-    from rigfl.algorithms.feddes import FedDES, FedDESConfig
-
-    algorithm = FedDES(
-        FedDESConfig(
-            graphroute={"graph": {"pool_calibrate": False}}, cache_dir=""
-        ),
-        [lambda: nn.Linear(INPUT_DIM, NUM_CLASSES)],
-        NUM_CLASSES,
-    )     # calibration is not what this tests
-    captured = {}
-    import graphroute.selection as gsel
-    real = gsel.evaluate_ensemble
-
-    def spy(*a, **kw):
-        soft, hard = real(*a, **kw)
-        captured["soft"], captured["hard"] = soft.clone(), hard.clone()
-        return soft, hard
-
-    gsel.evaluate_ensemble = spy
-    try:
-        torch.manual_seed(0)
-        clients = _clients()
-        result = p2p_one_shot(algorithm, clients, num_rounds=1, device=DEVICE,
-                              num_classes=NUM_CLASSES, verbose=False)
-    finally:
-        gsel.evaluate_ensemble = real
-
-    assert captured, "evaluate_ensemble was never called"
-    assert torch.allclose(captured["soft"].sum(1), torch.ones_like(captured["soft"].sum(1)),
-                          atol=1e-4)
-    # Preparation is complete before the first evaluated round, so round 0
-    # already carries the actual GraphRoute/FedDES distribution.
-    hist = result["evaluation_history"]
-    assert hist["evaluation_rounds"] == [0]
-    i = 0
-    losses = [c["validation"]["loss"][i] for c in hist["clients"].values()]
-    assert all(v is not None and math.isfinite(v) for v in losses)
 
 
 # ── 21: label-only algorithms ───────────────────────────────────────────────────

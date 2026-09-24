@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import itertools
 import json
 import math
 import random
@@ -18,9 +17,7 @@ from rigfl.experiment.config import (
 )
 
 BOOTSTRAP_REPLICATES = 2000
-RANDOMIZATION_REPLICATES = 10000
 RANDOM_SEED = 0
-MIN_RANDOMIZATION_RUNS = 6
 
 
 class ConfigurationComparisonError(ValueError):
@@ -453,46 +450,6 @@ def _run_gain(pairs: list[dict], aggregation: str) -> float:
     return sum(pair["gain"] * weight for pair, weight in zip(pairs, weights)) / total
 
 
-def _randomization_test(pairs: list[dict], aggregation: str) -> dict:
-    by_run: dict[tuple, list[dict]] = {}
-    for pair in pairs:
-        key = _pair_replicate_key(pair)
-        by_run.setdefault(key, []).append(pair)
-    values = [
-        _run_gain(by_run[key], aggregation) for key in sorted(by_run, key=repr)
-    ]
-    if len(values) < MIN_RANDOMIZATION_RUNS:
-        return {
-            "available": False,
-            "reason": (f"at least {MIN_RANDOMIZATION_RUNS} paired runs are required"),
-            "run_count": len(values),
-        }
-    observed = abs(statistics.mean(values))
-    if len(values) <= 20:
-        null = [
-            abs(statistics.mean(sign * value for sign, value in zip(signs, values)))
-            for signs in itertools.product((-1, 1), repeat=len(values))
-        ]
-        p_value = sum(value >= observed - 1e-15 for value in null) / len(null)
-        method = "exact_paired_sign_flip"
-    else:
-        rng = random.Random(RANDOM_SEED)
-        exceed = 0
-        for _ in range(RANDOMIZATION_REPLICATES):
-            value = abs(statistics.mean(rng.choice((-1, 1)) * item for item in values))
-            exceed += value >= observed - 1e-15
-        p_value = (exceed + 1) / (RANDOMIZATION_REPLICATES + 1)
-        method = "monte_carlo_paired_sign_flip"
-    return {
-        "available": True,
-        "method": method,
-        "experimental_unit": "replicate_condition",
-        "run_count": len(values),
-        "p_value": p_value,
-        "adjusted_p_value": None,
-    }
-
-
 def _resource_value(record: dict, name: str):
     resources = record.get("resources", {})
     if name == "communication_bytes":
@@ -672,37 +629,19 @@ def compare_configurations(
         "effects": estimates,
         "uncertainty": uncertainty,
         "practical_conclusion": decision,
-        "randomization_test": _randomization_test(pairs, aggregation),
         "resources": _resource_differences(left_index, right_index),
         "run_level_differences": run_level,
         "paired_differences": pairs,
     }
 
 
-def apply_holm(comparisons: list[dict]) -> None:
-    """Add Holm-adjusted p-values across the available declared contrasts."""
-    available = [
-        (index, comparison["randomization_test"]["p_value"])
-        for index, comparison in enumerate(comparisons)
-        if comparison["randomization_test"].get("available")
-    ]
-    ordered = sorted(available, key=lambda item: item[1])
-    running = 0.0
-    count = len(ordered)
-    for rank, (index, p_value) in enumerate(ordered):
-        adjusted = min(1.0, (count - rank) * p_value)
-        running = max(running, adjusted)
-        comparisons[index]["randomization_test"]["adjusted_p_value"] = running
-
-
 def format_comparisons(comparisons: list[dict]) -> str:
     """Format the central effect and uncertainty for declared contrasts."""
     out = [
         (
-            "| data | contrast | selection | mean gain | 95% CI | practical conclusion "
-            "| p | Holm p |"
+            "| data | contrast | selection | mean gain | 95% CI | practical conclusion |"
         ),
-        "|---|---|---|---:|---:|---|---:|---:|",
+        "|---|---|---|---:|---:|---|",
     ]
     for comparison in comparisons:
         left = comparison["left"]["label"]
@@ -713,9 +652,6 @@ def format_comparisons(comparisons: list[dict]) -> str:
             if mean["ci_low"] is None
             else f"[{mean['ci_low']:.4f}, {mean['ci_high']:.4f}]"
         )
-        test = comparison["randomization_test"]
-        p_value = test.get("p_value")
-        adjusted = test.get("adjusted_p_value")
         views = comparison["protocol"]["selection_views"]
         selection = views[left]
         if views[left] != views[right]:
@@ -733,8 +669,6 @@ def format_comparisons(comparisons: list[dict]) -> str:
                     f"{mean['estimate']:.4f}",
                     interval,
                     _conclusion(comparison),
-                    "—" if p_value is None else f"{p_value:.4g}",
-                    "—" if adjusted is None else f"{adjusted:.4g}",
                 ]
             )
             + " |"

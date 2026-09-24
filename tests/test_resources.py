@@ -10,9 +10,9 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from rigfl.algorithms.fedtgp import FedTGP, FedTGPConfig
 from rigfl.algorithms.global_ensemble import GlobalEnsemble, GlobalEnsembleConfig
-from rigfl.core import Algorithm, Client, LocalSelection, Predictions
+from rigfl.core import Algorithm, Client, Predictions
 from rigfl.core.config import AlgorithmConfig
-from rigfl.core.round import iterative, p2p_one_shot
+from rigfl.core.round import iterative
 from rigfl.eval.report import summarize_resources
 from rigfl.eval.resources import (
     ResourceDelta,
@@ -141,33 +141,6 @@ def test_fedtgp_broadcast_counts_prototypes_not_the_private_generator():
     assert algorithm.communication_payload_bytes(
         shared, kind="server_to_client") == 48
     assert payload_bytes(shared) > 48
-
-
-class _OneShot(Algorithm):
-    def __init__(self):
-        super().__init__(AlgorithmConfig())
-
-    def prepare(self, model, train_loader, ctx):
-        return torch.zeros(1)
-
-    def one_shot_communication(self, outgoing):
-        return [outgoing for _ in outgoing]
-
-    def local_computation(self, model, incoming, train_loader, ctx):
-        return LocalSelection(0, "accuracy", 1.0)
-
-    def predict(self, client, x, shared):
-        return Predictions.from_logits(client.model(x))
-
-
-def test_one_shot_runner_counts_each_peer_delivery():
-    monitor = ResourceMonitor(DEVICE)
-    with monitor:
-        p2p_one_shot(_OneShot(), _clients(3), num_rounds=1, device=DEVICE,
-                     num_classes=2, verbose=False, resource_monitor=monitor)
-    communication = monitor.to_dict()["observed"]["communication_bytes"]
-    assert communication["peer_to_peer"] == 24
-    assert communication["total"] == 24
 
 
 def test_flop_estimation_is_opt_in_and_separates_operation_categories():

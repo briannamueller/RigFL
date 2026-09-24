@@ -57,16 +57,7 @@ class HistoricalAbsence:
 
 # Keep this list limited to scientific settings whose pre-option behavior is
 # unambiguous.  Operational settings belong in the ordinary exclusion lists.
-HISTORICAL_ABSENCES = (
-    HistoricalAbsence(
-        introduced_in=1,
-        section="algorithm",
-        path="base_models_per_client",
-        equivalent_value="all",
-        algorithms=frozenset({"feddes"}),
-        included_in_pre_schema_fingerprints=True,
-    ),
-)
+HISTORICAL_ABSENCES: tuple[HistoricalAbsence, ...] = ()
 
 
 _ENVIRONMENT_ONLY_EXPERIMENT_FIELDS = (

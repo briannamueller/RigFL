@@ -114,7 +114,7 @@ Use `--dataset` to filter by dataset. You can combine it with `--grid`. With
 `--grid`, the runs column shows completed/expected runs, and the report lists
 completed and missing seed combinations for each row.
 
-For an exact past SGE submission, use its fixed grid at
+For an exact past scheduler run, use its fixed grid at
 `results/<sweep-name>/submissions/<submission>/grid.jsonl` instead of the
 replaceable working grid.
 
@@ -175,9 +175,7 @@ short identifier to each label; use those full labels with `--reference` or
 The comparison table reports the mean test-performance difference, a 95%
 confidence interval when available, and a practical conclusion. Positive
 differences favor the first name, even for metrics such as loss where lower is
-better. With at least six matched seed repetitions, it also reports a paired-test
-p-value. When several comparisons are requested, their p-values receive a Holm
-adjustment.
+better.
 
 Available resource differences appear in a separate table.
 

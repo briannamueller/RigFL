@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 from typing import Annotated, Literal, get_args, get_origin
 
-from graphroute.config import GraphRouteSettings
 from pydantic import BaseModel
 
 from rigfl.data.config import (
@@ -26,7 +25,6 @@ from rigfl.experiment.config import (
     ExperimentFileConfig,
     FloatDistribution,
     IntegerDistribution,
-    IntensificationConfig,
     ReplicateCondition,
     SamplerConfig,
     TuningConfig,
@@ -241,17 +239,6 @@ def _table(rows: list[list[str]]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _defaults_table(rows: list[list[str]], upstream_rows: dict[str, list[str]]) -> str:
-    lines = [
-        "| Setting | GraphRoute default | RigFL default |",
-        "|---|---|---|",
-    ]
-    lines.extend(
-        f"| {row[0]} | {upstream_rows[row[0]][2]} | {row[2]} |" for row in rows
-    )
-    return "\n".join(lines) + "\n"
-
-
 def _section(
     title: str,
     model: type[BaseModel],
@@ -272,19 +259,6 @@ def _header(title: str, intro: str | None = None) -> str:
     return f"{text}\n{intro}\n" if intro else text
 
 
-def _changed_paths(left: dict, right: dict, prefix: str = "") -> set[str]:
-    changed = set()
-    for name in left.keys() | right.keys():
-        path = f"{prefix}.{name}" if prefix else name
-        left_value = left.get(name, _MISSING)
-        right_value = right.get(name, _MISSING)
-        if isinstance(left_value, dict) and isinstance(right_value, dict):
-            changed |= _changed_paths(left_value, right_value, path)
-        elif left_value != right_value:
-            changed.add(path)
-    return changed
-
-
 def render_experiment_reference() -> str:
     parts = [
         _header(
@@ -303,16 +277,13 @@ def render_experiment_reference() -> str:
             "Tuning settings",
             TuningConfig,
             "tuning",
-            exclude={"sampler", "intensification"},
+            exclude={"sampler"},
         ),
         _section(
             "Sampler settings",
             SamplerConfig,
             "tuning.sampler",
             defaults=_model_defaults(TuningConfig)["sampler"],
-        ),
-        _section(
-            "Intensification settings", IntensificationConfig, "tuning.intensification"
         ),
         _section(
             "Categorical search parameters",
@@ -363,59 +334,6 @@ def render_algorithm_reference() -> str:
         "## Capabilities\n\n" + capability_table,
     ]
     for name, spec in REGISTRY.items():
-        if name == "feddes":
-            effective = spec.config().graphroute.model_dump(mode="json")
-            upstream = GraphRouteSettings().model_dump(mode="json")
-            changed = {
-                f"`algorithm.graphroute.{path}`"
-                for path in _changed_paths(effective, upstream)
-            }
-            generated_rows = _rows(spec.config, "algorithm")
-            upstream_rows = {
-                row[0]: row for row in _rows(GraphRouteSettings, "algorithm.graphroute")
-            }
-            feddes_rows = [
-                next(row for row in generated_rows if row[0] == f"`{path}`")
-                for path in (
-                    "algorithm.base_models_per_client",
-                    "algorithm.cache_dir",
-                )
-            ]
-            override_rows = [row for row in generated_rows if row[0] in changed]
-            settings_rows = [
-                [
-                    "`algorithm.graphroute`",
-                    "mapping",
-                    "see below",
-                    "—",
-                    "Settings passed to GraphRoute.",
-                ],
-                *feddes_rows,
-            ]
-            parts.append(
-                f"## `{name}`\n\n"
-                "`base.models` is set from the experiment's model selection and "
-                "cannot be configured here. `base_models_per_client` chooses "
-                "whether each client trains the full selected family or its "
-                "standard client-ID-assigned model. `base.split_mode` must be "
-                "`oof_stacking`. Other "
-                "settings under `algorithm.graphroute` follow the "
-                "[GraphRoute configuration guide]"
-                "(https://github.com/briannamueller/GraphRoute#configuration).\n\n"
-                "FedDES additionally provides `local_embedding` as a GraphRoute "
-                "node or edge feature source. It concatenates representations "
-                "from the current client's locally trained models in their "
-                "stable pool order; with `base_models_per_client: assigned`, it "
-                "is simply that client's one model representation. "
-                "`graph.embedding_normalization: per_model_l2` normalizes each "
-                "local model representation before concatenation. Unlike "
-                "GraphRoute's built-in `embedding_concat`, `local_embedding` "
-                "does not use models communicated by other clients.\n\n"
-                f"{_table(settings_rows)}\n"
-                "### GraphRoute defaults changed by RigFL\n\n"
-                f"{_defaults_table(override_rows, upstream_rows)}"
-            )
-            continue
         parts.append(f"## `{name}`\n\n{_table(_rows(spec.config, 'algorithm'))}")
     return "\n".join(parts)
 
@@ -514,7 +432,6 @@ def rigfl_owned_models() -> set[type[BaseModel]]:
         ReplicateCondition,
         SamplerConfig,
         TuningConfig,
-        IntensificationConfig,
         CategoricalDistribution,
         IntegerDistribution,
         FloatDistribution,

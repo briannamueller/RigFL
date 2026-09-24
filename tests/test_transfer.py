@@ -158,8 +158,8 @@ def test_resolved_client_models_must_match():
 
 def test_resolved_client_models_must_match_within_each_replicate():
     algorithm = [
-        _record("feddes", 0, [[0.6]]),
-        _record("feddes", 1, [[0.6]]),
+        _record("fedprox", 0, [[0.6]]),
+        _record("fedprox", 1, [[0.6]]),
     ]
     local = [
         _record("local", 0, [[0.5]]),
@@ -177,7 +177,7 @@ def test_resolved_client_models_must_match_within_each_replicate():
 
 
 def test_one_shot_fallback_uses_per_client_selection_for_local():
-    algorithm = _record("feddes", 0, [[0.6], [0.6]])
+    algorithm = _record("fedprox", 0, [[0.6], [0.6]])
     algorithm["result"]["selection_views_supported"] = ["per-client"]
     local = _record(
         "local",

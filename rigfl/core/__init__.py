@@ -1,11 +1,10 @@
 """RigFL core: algorithm contracts and their execution runners."""
 
 from rigfl.core.adapters import Adapter, AdaptivePool, Identity, LearnedProjection
-from rigfl.core.interfaces import (Algorithm, IterativeAlgorithm, LocalSelection,
-                                   OneShotContext, P2POneShotAlgorithm)
+from rigfl.core.interfaces import Algorithm, IterativeAlgorithm
 from rigfl.prediction import Predictions, as_predictions
 from rigfl.core.model import ClientModel, assemble_model, assemble_native_model
-from rigfl.core.round import Client, iterative, p2p_one_shot
+from rigfl.core.round import Client, iterative
 
 __all__ = [
     "Adapter",
@@ -17,12 +16,8 @@ __all__ = [
     "assemble_native_model",
     "Algorithm",
     "IterativeAlgorithm",
-    "P2POneShotAlgorithm",
-    "OneShotContext",
-    "LocalSelection",
     "Predictions",
     "as_predictions",
     "Client",
     "iterative",
-    "p2p_one_shot",
 ]

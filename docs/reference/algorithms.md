@@ -17,7 +17,6 @@
 | `fml` | yes |
 | `fedkd` | yes |
 | `fedtgp` | yes |
-| `feddes` | yes |
 
 ## `local`
 
@@ -140,28 +139,3 @@
 | `algorithm.server_epochs` | integer | `1` | ≥ 1 | Server prototype-training epochs per round. |
 | `algorithm.server_lr` | number | `0.01` | > 0 | Server optimizer learning rate. |
 | `algorithm.margin_cap` | number | `100.0` | > 0 | Maximum adaptive contrastive margin. |
-
-## `feddes`
-
-`base.models` is set from the experiment's model selection and cannot be configured here. `base_models_per_client` chooses whether each client trains the full selected family or its standard client-ID-assigned model. `base.split_mode` must be `oof_stacking`. Other settings under `algorithm.graphroute` follow the [GraphRoute configuration guide](https://github.com/briannamueller/GraphRoute#configuration).
-
-FedDES additionally provides `local_embedding` as a GraphRoute node or edge feature source. It concatenates representations from the current client's locally trained models in their stable pool order; with `base_models_per_client: assigned`, it is simply that client's one model representation. `graph.embedding_normalization: per_model_l2` normalizes each local model representation before concatenation. Unlike GraphRoute's built-in `embedding_concat`, `local_embedding` does not use models communicated by other clients.
-
-| Setting | Type | Default | Allowed | Description |
-|---|---|---|---|---|
-| `algorithm.graphroute` | mapping | see below | — | Settings passed to GraphRoute. |
-| `algorithm.base_models_per_client` | string | `assigned` | `all`, `assigned` | Base models trained by each client: every model in the experiment family, or the single model assigned by client ID. |
-| `algorithm.cache_dir` | string | `pool_cache` | — | Directory used to reuse trained base pools; empty disables caching. |
-
-### GraphRoute defaults changed by RigFL
-
-| Setting | GraphRoute default | RigFL default |
-|---|---|---|
-| `algorithm.graphroute.base.oof_folds` | `5` | `3` |
-| `algorithm.graphroute.base.epochs` | `300` | `100` |
-| `algorithm.graphroute.base.batch_size` | `10` | `64` |
-| `algorithm.graphroute.gnn.epochs` | `300` | `500` |
-| `algorithm.graphroute.gnn.patience` | `20` | `50` |
-| `algorithm.graphroute.gnn.es_metric` | `val_loss` | `val_acc` |
-| `algorithm.graphroute.gnn.ens_combination_mode` | `soft_weighted_voting` | `hard_weighted_voting` |
-| `algorithm.graphroute.gnn.voting_weight_space` | `null` | `sig` |

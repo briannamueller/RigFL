@@ -355,68 +355,6 @@ class RunFileConfig(BaseModel):
     )
 
 
-class IntensificationConfig(BaseModel):
-    """Evaluation of leading search candidates on additional conditions."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    top_k: Annotated[
-        StrictInt,
-        Field(
-            ge=2, description="Leading candidates evaluated on additional replicates."
-        ),
-    ] = 5
-    replicates: Annotated[
-        int | list[ReplicateCondition],
-        Field(
-            description=(
-                "Additional replicate conditions, or a count continuing the "
-                "top-level replicate seeds."
-            )
-        ),
-    ]
-    practical_threshold: Annotated[
-        StrictInt | StrictFloat,
-        Field(
-            gt=0, description="Largest difference treated as practically equivalent."
-        ),
-    ]
-    tail_fraction: Annotated[
-        StrictInt | StrictFloat,
-        Field(gt=0, le=1, description="Client tail used for worst-tail gain."),
-    ] = 0.10
-    prefer: Literal["validation", "communication", "flops", "time"] = Field(
-        "validation",
-        description="Criterion used among practically equivalent candidates.",
-    )
-    ranking: Literal["pooled", "intensification"] = Field(
-        "pooled",
-        description=(
-            "Replicates a shortlisted candidate is ranked on: the screening and "
-            "intensification replicates together, or intensification only."
-        ),
-    )
-
-    @model_validator(mode="after")
-    def _validate_replicates(self):
-        if isinstance(self.replicates, int):
-            replicate_conditions_from_count(self.replicates)
-            return self
-        conditions = [condition.model_dump() for condition in self.replicates]
-        identities = {tuple(condition.values()) for condition in conditions}
-        if len(identities) != len(conditions):
-            raise ValueError("replicates contains a duplicate")
-        seeds = [condition.experiment_seed for condition in self.replicates]
-        if len(set(seeds)) != len(seeds):
-            raise ValueError("replicates must have distinct experiment_seed values")
-        self.practical_threshold = float(self.practical_threshold)
-        self.tail_fraction = float(self.tail_fraction)
-        return self
-
-    def to_dict(self) -> dict:
-        return self.model_dump()
-
-
 class TuningConfig(BaseModel):
     """Validation-based Optuna search settings."""
 
@@ -450,11 +388,6 @@ class TuningConfig(BaseModel):
     tie_break: Literal["earliest", "latest"] = Field(
         "earliest", description="Round chosen when validation values tie."
     )
-    intensification: IntensificationConfig | None = Field(
-        None, description="Optional evaluation of leading candidates on new replicates."
-    )
-
-
 class ExperimentFileConfig(BaseModel):
     """A RigFL sweep or Optuna-study file."""
 

@@ -12,6 +12,13 @@ dist/
 venv/
 .env
 
+# Local infrastructure state
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+
 # Notebooks
 .ipynb_checkpoints/
 

@@ -19,7 +19,6 @@ from rigfl.data.biosilo import (
 )
 from rigfl.data.builder import MultiTensor
 from rigfl.data.config import BioSiloDatasetSettings, dataset_settings
-from rigfl.data.features import graphroute_feature_extractor
 from rigfl.experiment.artifacts import validate_run_record
 from rigfl.experiment.config import ExperimentConfig
 from rigfl.experiment.launch import _validate_biosilo_partitions
@@ -163,42 +162,6 @@ def test_biosilo_input_forms_map_to_model_families(tmp_path):
 
     assert image_kind == "image"
     assert image_model(torch.randn(1, 4, 240, 240)).shape == (1, 512)
-
-
-def test_biosilo_feature_groups_are_available_to_graphroute():
-    from graphroute.config import GraphConfig
-
-    handle = SimpleNamespace(
-        inputs=[
-            {"name": "ts", "shape": [24, 8], "dtype": "float32"},
-            {"name": "static", "shape": [7], "dtype": "float32"},
-        ],
-        feature_groups={
-            "diagnoses": {"input": "static", "start": 4, "stop": 7}
-        },
-    )
-    _, input_spec = biosilo_input_spec(handle)
-    extractor = graphroute_feature_extractor(
-        GraphConfig(
-            node_feature_source="embedding_concat",
-            edge_feature_source="diagnoses",
-        ),
-        input_spec,
-    )
-    inputs = MultiTensor((torch.randn(3, 24, 8), torch.randn(3, 7)))
-
-    assert input_spec["feature_groups"] == handle.feature_groups
-    assert torch.equal(extractor(inputs), inputs[1][:, 4:7])
-
-
-def test_unknown_dataset_feature_source_is_rejected():
-    from graphroute.config import GraphConfig
-
-    with pytest.raises(ValueError, match="not available for this dataset"):
-        graphroute_feature_extractor(
-            GraphConfig(edge_feature_source="diagnoses"),
-            {"fields": [{"name": "x", "shape": [5]}]},
-        )
 
 
 def test_temporal_models_accept_biosilo_multi_input_batches(tmp_path):
@@ -445,53 +408,4 @@ def test_biosilo_runs_through_experiment_infrastructure(
     assert [row["source_client_id"] for row in record["partition"]["per_client"]] == [
         "site-0", "site-1", "site-2"
     ]
-    validate_run_record(record)
-
-
-def test_feddes_accepts_a_biosilo_dataset_feature_source(tmp_path, monkeypatch):
-    pytest.importorskip("graphroute")
-    from biosilo.datasets import synthetic
-
-    monkeypatch.setattr(
-        synthetic,
-        "feature_groups",
-        lambda manifest: {
-            "selected_features": {"input": "flat", "start": 1, "stop": 3}
-        },
-        raising=False,
-    )
-    config_path, _, _ = _generate_configured(
-        tmp_path, n_inputs=2, with_groups=True
-    )
-    experiment = ExperimentConfig(
-        dataset="biomedical",
-        dataset_config=str(config_path),
-        data_dir=str(tmp_path),
-        model="temporal_gru",
-        rounds=1,
-        shared_dim=8,
-        batch=8,
-        quiet=True,
-    )
-    resolved, data = resolve_experiment_data(experiment)
-
-    record = run_one(
-        "feddes",
-        resolved,
-        config_class("feddes")(
-            graphroute={
-                "base": {"epochs": 1, "oof_folds": 2},
-                "graph": {
-                    "edge_feature_source": "selected_features",
-                    "pool_calibrate": False,
-                },
-                "gnn": {"arch": "mlp", "epochs": 2, "patience": 1},
-            },
-            cache_dir="",
-        ),
-        torch.device("cpu"),
-        data=data,
-    )
-
-    assert record["result"]["selection_views_supported"] == ["per-client"]
     validate_run_record(record)

@@ -39,8 +39,8 @@ def _record(algorithm, seed, val_series, test_series, rounds=(0, 1, 2), n_client
 
 
 def test_summarize_reports_the_selected_rounds_test_value():
-    recs = [_record("feddes", 0, [.1, .9, .2], [.5, .7, .6]),
-            _record("feddes", 1, [.1, .8, .2], [.5, .9, .6])]
+    recs = [_record("fedprox", 0, [.1, .9, .2], [.5, .7, .6]),
+            _record("fedprox", 1, [.1, .8, .2], [.5, .9, .6])]
     s = summarize(recs, "accuracy", **_SEL)
     assert s["seeds"] == 2
     assert s["runs"] == 2
@@ -56,7 +56,7 @@ def test_summarize_single_seed_omits_a_confidence_interval():
 
 
 def _one_shot_record():
-    record = _record("feddes", 0, [.8], [.7], rounds=(0,))
+    record = _record("fedprox", 0, [.8], [.7], rounds=(0,))
     record["result"]["selection_views_supported"] = ["per-client"]
     record["result"]["selection_provenance"] = {
         "view": "per-client", "stage": "local_computation", "metric": "accuracy",
@@ -82,8 +82,8 @@ def test_one_shot_result_cannot_claim_a_different_selection_metric():
 
 
 def test_summarize_rejects_duplicate_seeds():
-    records = [_record("feddes", 0, [.9], [.8], rounds=(0,)),
-               _record("feddes", 0, [.9], [.7], rounds=(0,))]
+    records = [_record("fedprox", 0, [.9], [.8], rounds=(0,)),
+               _record("fedprox", 0, [.9], [.7], rounds=(0,))]
 
     with pytest.raises(ValueError, match="more than one record for replicate condition"):
         summarize(records, "accuracy", **_SEL)
@@ -93,7 +93,7 @@ def test_summarize_keys_runs_by_the_full_seed_condition():
     records = []
     for partition_seed in range(2):
         record = _record(
-            "feddes",
+            "fedprox",
             0,
             [0.5],
             [0.5 + 0.01 * partition_seed],
@@ -111,8 +111,8 @@ def test_summarize_keys_runs_by_the_full_seed_condition():
     assert summary["test_mean"] == pytest.approx(0.505)
     assert summary["independent_replicates"] is False
     assert summary["test_ci"] is None
-    table = format_table({"feddes": summary}, "accuracy")
-    assert "| feddes § |" in table
+    table = format_table({"fedprox": summary}, "accuracy")
+    assert "| fedprox § |" in table
     assert "rigfl.experiment.variance" in table
 
 
@@ -163,13 +163,13 @@ def test_zipped_resource_summary_keeps_confidence_intervals():
 
 
 def test_format_table_names_the_metric_and_flags_mixed_rounds():
-    rows = {"feddes": summarize([_record("feddes", 0, [.1, .9], [.5, .7], rounds=(0, 1))],
+    rows = {"fedprox": summarize([_record("fedprox", 0, [.1, .9], [.5, .7], rounds=(0, 1))],
                                 "accuracy", **_SEL)}
     table = format_table(rows, "accuracy")
-    assert "test accuracy" in table and "feddes" in table
+    assert "test accuracy" in table and "fedprox" in table
     assert "*" not in table.split("\n")[2]              # global view: not mixed
 
-    mixed = {"feddes": summarize([_record("feddes", 0, [.1, .9], [.5, .7], rounds=(0, 1))],
+    mixed = {"fedprox": summarize([_record("fedprox", 0, [.1, .9], [.5, .7], rounds=(0, 1))],
                                  "accuracy", view="per-client", aggregation="mean",
                                  tie_break="earliest")}
     assert "mixes rounds" in format_table(mixed, "accuracy")
@@ -179,7 +179,7 @@ def test_summary_aggregates_the_way_selection_did():
     """A round chosen on a weighted validation mean must be reported as a
     weighted mean -- otherwise row ordering uses a number the selection never
     optimised."""
-    rec = _record("feddes", 0, [.5], [.5], rounds=(0,), n_clients=2)
+    rec = _record("fedprox", 0, [.5], [.5], rounds=(0,), n_clients=2)
     hist = rec["result"]["evaluation_history"]
     hist["clients"]["0"]["test"]["accuracy"] = [1.0]
     hist["clients"]["1"]["test"]["accuracy"] = [0.0]
@@ -195,8 +195,8 @@ def test_summary_aggregates_the_way_selection_did():
 
 
 def test_distribution_statistics_use_every_seed_not_just_the_last():
-    a = _record("feddes", 0, [.5], [.5], rounds=(0,), n_clients=2)
-    b = _record("feddes", 1, [.5], [.5], rounds=(0,), n_clients=2)
+    a = _record("fedprox", 0, [.5], [.5], rounds=(0,), n_clients=2)
+    b = _record("fedprox", 1, [.5], [.5], rounds=(0,), n_clients=2)
     a["result"]["evaluation_history"]["clients"]["0"]["test"]["accuracy"] = [1.0]
     a["result"]["evaluation_history"]["clients"]["1"]["test"]["accuracy"] = [1.0]
     b["result"]["evaluation_history"]["clients"]["0"]["test"]["accuracy"] = [0.0]
@@ -211,11 +211,11 @@ def test_lower_is_better_table_omits_tail_columns():
     from rigfl.eval import metrics
     metrics.register("dev_loss", "minimize", fn=lambda p, y, c: 0.0)
     try:
-        rec = _record("feddes", 0, [.5], [.5], rounds=(0,))
+        rec = _record("fedprox", 0, [.5], [.5], rounds=(0,))
         for c in rec["result"]["evaluation_history"]["clients"].values():
             c["validation"]["dev_loss"] = [0.3]
             c["test"]["dev_loss"] = [0.4]
-        rows = {"feddes": summarize([rec], "dev_loss", **_SEL)}
+        rows = {"fedprox": summarize([rec], "dev_loss", **_SEL)}
         table = format_table(rows, "dev_loss")
         assert (
             "| algorithm | selection | val dev_loss | test dev_loss | seeds | runs |"
@@ -228,7 +228,7 @@ def test_lower_is_better_table_omits_tail_columns():
 
 def test_weighted_mean_without_counts_raises_instead_of_silently_unweighting():
     from rigfl.eval.selection import SelectionError
-    rec = _record("feddes", 0, [0.5], [0.5], rounds=(0,))
+    rec = _record("fedprox", 0, [0.5], [0.5], rounds=(0,))
     rec["result"]["evaluation_history"]["client_sample_counts"] = {"validation": {},
                                                                    "test": {}}
     with pytest.raises(SelectionError, match="sample counts"):

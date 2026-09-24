@@ -8,13 +8,11 @@ from __future__ import annotations
 
 import math
 
-import pytest
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from rigfl.core import (Client, ClientModel, LearnedProjection, LocalSelection,
-                        Predictions, iterative, p2p_one_shot)
+from rigfl.core import Client, ClientModel, LearnedProjection, iterative
 from rigfl.algorithms.fedproto import FedProto, FedProtoConfig
 from rigfl.algorithms.local import Local, LocalConfig
 
@@ -90,54 +88,3 @@ def test_iterative_fedproto_aggregating_algorithm():
                            num_rounds=2, device=DEVICE, num_classes=NUM_CLASSES,
                            verbose=False)
     _assert_valid_result(result)
-
-
-class _OneShot:
-    def __init__(self):
-        self.events = []
-
-    def prepare(self, model, train_loader, ctx):
-        self.events.append(f"prepare:{ctx.client_id}")
-        return ctx.client_id
-
-    def one_shot_communication(self, outgoing):
-        self.events.append(f"communicate:{outgoing}")
-        return [tuple(outgoing) for _ in outgoing]
-
-    def local_computation(self, model, incoming, train_loader, ctx):
-        assert incoming == (0, 1)
-        self.events.append(f"compute:{ctx.client_id}")
-        return LocalSelection(ctx.client_id + 4, "accuracy", 0.8 + ctx.client_id / 10)
-
-    def predict(self, client, x, shared):
-        return Predictions.from_logits(client.model(x))
-
-
-def test_p2p_one_shot_has_one_communication_and_no_federated_round_loop():
-    algorithm = _OneShot()
-    result = p2p_one_shot(
-        algorithm, _clients(), num_rounds=99, device=DEVICE,
-        num_classes=NUM_CLASSES, eval_gap=17, verbose=False)
-
-    assert algorithm.events == [
-        "prepare:0", "prepare:1", "communicate:[0, 1]", "compute:0", "compute:1"
-    ]
-    assert result["selection_views_supported"] == ["per-client"]
-    assert result["evaluation_history"]["evaluation_rounds"] == [0]
-    assert result["selection_provenance"] == {
-        "view": "per-client",
-        "stage": "local_computation",
-        "metric": "accuracy",
-        "clients": {
-            "0": {"selected_step": 4, "validation_value": 0.8},
-            "1": {"selected_step": 5, "validation_value": 0.9},
-        },
-    }
-
-
-def test_p2p_one_shot_rejects_round_level_early_stopping():
-    with pytest.raises(ValueError, match="cannot be enabled"):
-        p2p_one_shot(
-            _OneShot(), _clients(), num_rounds=2, device=DEVICE,
-            num_classes=NUM_CLASSES, verbose=False,
-            early_stopping={"enabled": True, "metric": "accuracy"})

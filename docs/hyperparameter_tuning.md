@@ -154,75 +154,6 @@ aggregated across clients. `per-client` selects a reporting round separately for
 each client. `selection_aggregation` controls whether clients contribute equally
 (`mean`) or according to their validation sample counts (`weighted_mean`).
 
-## Optional intensification
-
-A large search may evaluate many configurations on a modest number of
-replicates. Intensification evaluates the leading candidates on additional,
-previously unused replicate conditions before making the final selection. It is
-optional and does not run automatically.
-
-Add an intensification plan to the tuning configuration:
-
-```yaml
-tuning:
-  # metric, sampler, and search_space omitted here
-  intensification:
-    top_k: 5
-    replicates: 3
-    practical_threshold: 0.005
-    prefer: validation
-    ranking: pooled
-```
-
-After the initial study, RigFL writes the additional tasks to:
-
-```text
-results/<study-name>/intensification/grid.jsonl
-```
-
-Run those tasks using the same grid execution command used for ordinary sweeps:
-
-```bash
-python -m rigfl.experiment.launch \
-  --grid results/<study-name>/intensification/grid.jsonl \
-  --grid-task 1
-```
-
-Each grid index is an independent task and can be submitted as a scheduler
-array. For a small local study, the intensification command can run all missing
-tasks directly:
-
-```bash
-python -m rigfl.experiment.intensification \
-  --ranking results/<study-name>/ranking.json \
-  --run
-```
-
-If the grid was executed separately, omit `--run` after all tasks finish:
-
-```bash
-python -m rigfl.experiment.intensification \
-  --ranking results/<study-name>/ranking.json
-```
-
-An intensification count continues the screening seeds rather than restarting,
-so three screening replicates followed by `replicates: 3` here uses seeds 3, 4,
-and 5. That satisfies the rule that intensification must not reuse a screening
-data-seed pair; write the list out to choose the seeds yourself.
-
-`ranking` sets which replicates the shortlisted candidates are ranked on.
-`pooled`, the default, ranks each candidate on its screening and intensification
-replicates together. `intensification` ranks on the new replicates alone, which
-keeps shortlisting and ranking on separate data conditions at the cost of half
-the evidence. Pooled ranking reads the screening results again, so they must
-still be in `results/runs/`.
-
-`practical_threshold` defines how close another candidate must be to
-the leader to be treated as practically equivalent. `prefer` may remain
-`validation`, or may select the lowest communication, FLOPs, or runtime among
-the candidates found to be practically equivalent. Runtime can be compared only
-when its recorded hardware and software information matches.
-
 ## Study files
 
 Completed experiments are stored in `results/runs`. The study's other files are
@@ -234,12 +165,9 @@ under `results/<study-name>/`:
 ├── study.json
 ├── ranking.json
 ├── selection.json
-├── selected.yaml
-└── intensification/       # when configured
-    ├── grid.jsonl
-    └── evaluation.json
+└── selected.yaml
 ```
 
-When intensification is configured, `selection.json` and `selected.yaml` appear
-after its tasks finish. `selected.yaml` can be passed to
-`rigfl.experiment.launch`, but the selected runs already contain test results.
+`selection.json` records why the validation-ranked configuration was selected.
+`selected.yaml` can be passed to `rigfl launch`, but the selected runs already
+contain test results.

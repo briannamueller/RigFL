@@ -81,8 +81,7 @@ REGISTRY = {
 > **Runner note:** `AlgorithmSpec` uses the `iterative` runner by default. If an
 > algorithm genuinely cannot be expressed as repeated local training followed
 > by aggregation, define a different runner and matching operation protocol
-> instead of changing the meaning of the standard operations. FedDES is one
-> such exception and uses `p2p_one_shot`.
+> instead of changing the meaning of the standard operations.
 
 ### Return predictions
 

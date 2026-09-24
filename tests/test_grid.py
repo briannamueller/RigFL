@@ -1,8 +1,8 @@
 """Sweep-grid expansion: an algorithm-specific axis multiplies only the algorithms it applies to.
 
-The property that matters for mixed sweeps: ``algorithm.graphroute.graph.k``
-(a FedDES-only field)
-must give FedDES one task per value and every other algorithm exactly one task -- no
+The property that matters for mixed sweeps: ``algorithm.mu``
+(a FedProx-only field)
+must give FedProx one task per value and every other algorithm exactly one task -- no
 duplicate configs that the fingerprint would later skip as "already done".
 """
 
@@ -12,7 +12,7 @@ import json
 
 from rigfl.algorithms.local import LocalConfig
 from rigfl.experiment import launch as launch_module
-from rigfl.experiment.launch import _stage_sge_grid, _write_grid, build_grid
+from rigfl.experiment.launch import _write_grid, build_grid, stage_task_snapshot
 from rigfl.experiment.registry import algorithm_run_fingerprint
 from rigfl.experiment.storage import read_grid_tasks
 from tests.helpers import resolved_experiment
@@ -27,19 +27,19 @@ def _counts(grid):
 
 def test_algorithm_axis_multiplies_only_applicable_algorithms():
     grid = build_grid({
-        "algorithms": ["local", "fedproto", "feddes"],
-        "sweep": {"algorithm.graphroute.graph.k": [3, 5, 10]},
+        "algorithms": ["local", "fedproto", "fedprox"],
+        "sweep": {"algorithm.mu": [0.1, 0.2, 0.3]},
     })
     counts = _counts(grid)
-    assert counts["feddes"] == 3                       # one task per k value
-    assert counts["local"] == 1                        # no GraphRoute k
+    assert counts["fedprox"] == 3                     # one task per mu value
+    assert counts["local"] == 1                       # no FedProx mu
     assert counts["fedproto"] == 1
 
 
 def test_no_duplicate_configs():
     grid = build_grid({
-        "algorithms": ["local", "fedproto", "feddes"],
-        "sweep": {"algorithm.graphroute.graph.k": [3, 5, 10]},
+        "algorithms": ["local", "fedproto", "fedprox"],
+        "sweep": {"algorithm.mu": [0.1, 0.2, 0.3]},
     })
     keys = {json.dumps(t, sort_keys=True) for t in grid}
     assert len(keys) == len(grid)                           # every task config is distinct
@@ -47,71 +47,23 @@ def test_no_duplicate_configs():
 
 def test_relevant_experiment_axis_multiplies_all_algorithms():
     grid = build_grid({
-        "algorithms": ["local", "feddes"],
+        "algorithms": ["local", "fedprox"],
         "sweep": {
             "experiment.seed": [0, 1],
             "experiment.batch": [16, 32],
         },
     })
     counts = _counts(grid)
-    assert counts["local"] == 4 and counts["feddes"] == 4  # 2 seeds x 2 batches each
-
-
-def test_shared_dimension_does_not_multiply_feddes_runs():
-    grid = build_grid({
-        "algorithms": ["local", "feddes"],
-        "sweep": {"experiment.shared_dim": [64, 128]},
-    })
-
-    assert _counts(grid) == {"local": 2, "feddes": 1}
-    assert "shared_dim" not in next(
-        task["experiment"] for task in grid if task["algorithm"] == "feddes"
-    )
-
-
-def test_shared_dimension_axis_is_rejected_for_feddes_only_sweep():
-    import pytest
-
-    with pytest.raises(SystemExit, match="does not apply"):
-        build_grid({
-            "algorithms": ["feddes"],
-            "sweep": {"experiment.shared_dim": [64, 128]},
-        })
-
-
-def test_round_controls_apply_only_to_iterative_methods_in_a_mixed_grid():
-    grid = build_grid({
-        "algorithms": ["local", "feddes"],
-        "base": {
-            "experiment": {
-                "rounds": 300,
-                "eval_gap": 5,
-                "early_stopping": {
-                    "enabled": True,
-                    "metric": "accuracy",
-                    "patience": 20,
-                },
-            },
-        },
-        "sweep": {"experiment.early_stopping.patience": [10, 20]},
-    })
-
-    assert _counts(grid) == {"local": 2, "feddes": 1}
-    local = next(task for task in grid if task["algorithm"] == "local")
-    assert local["experiment"]["rounds"] == 300
-    assert local["experiment"]["eval_gap"] == 5
-    assert local["experiment"]["early_stopping"]["enabled"] is True
-    feddes = next(task for task in grid if task["algorithm"] == "feddes")
-    assert not ({"rounds", "eval_gap", "early_stopping"} & feddes["experiment"].keys())
+    assert counts["local"] == 4 and counts["fedprox"] == 4
 
 
 def test_algorithm_specific_axis_lands_in_algorithm_config():
     grid = build_grid({
-        "algorithms": ["feddes"],
-        "sweep": {"algorithm.graphroute.graph.k": [7]},
+        "algorithms": ["fedprox"],
+        "sweep": {"algorithm.mu": [0.7]},
     })
-    assert grid[0]["algorithm_config"]["graphroute"]["graph"]["k"] == 7
-    assert "graphroute" not in grid[0]["experiment"]
+    assert grid[0]["algorithm_config"]["mu"] == 0.7
+    assert "mu" not in grid[0]["experiment"]
 
 
 def test_misspelt_algorithm_axis_is_refused():
@@ -121,12 +73,12 @@ def test_misspelt_algorithm_axis_is_refused():
     from rigfl.experiment.launch import build_grid
     with pytest.raises(SystemExit) as e:
         build_grid({
-            "algorithms": ["feddes"],
-            "sweep": {"algorithm.graphroute.graph.kk": [3, 5]},
+            "algorithms": ["fedprox"],
+            "sweep": {"algorithm.muu": [0.1, 0.2]},
         })
     msg = str(e.value)
-    assert "algorithm.graphroute.graph.kk" in msg
-    assert 'Did you mean "graphroute.graph.k"?' in msg
+    assert "algorithm.muu" in msg
+    assert 'Did you mean "mu"?' in msg
 
 
 def test_misspelt_experiment_axis_is_refused():
@@ -135,7 +87,7 @@ def test_misspelt_experiment_axis_is_refused():
     from rigfl.experiment.launch import build_grid
     with pytest.raises(SystemExit) as e:
         build_grid({
-            "algorithms": ["feddes"],
+            "algorithms": ["fedprox"],
             "sweep": {"experiment.btach": [16, 32]},
         })
     assert 'Did you mean "batch"?' in str(e.value)
@@ -148,17 +100,17 @@ def test_misspelt_fixed_algorithm_setting_is_refused():
     from rigfl.experiment.launch import build_grid
     with pytest.raises(SystemExit, match="base.algorithm"):
         build_grid({
-            "algorithms": ["feddes"],
-            "base": {"algorithm": {"graphroute": {"graph": {"kk": 3}}}},
+            "algorithms": ["fedprox"],
+            "base": {"algorithm": {"muu": 0.2}},
         })
 
 
 def test_fixed_algorithm_settings_are_scoped_across_mixed_algorithms():
     grid = build_grid({
-        "algorithms": ["fedprox", "feddes"],
+        "algorithms": ["fedprox", "fml"],
         "base": {
             "experiment": {"model": "fedavg_cnn"},
-            "algorithm": {"mu": 0.2, "graphroute": {"graph": {"k": 7}}},
+            "algorithm": {"mu": 0.2, "beta": 0.7},
         },
     })
 
@@ -169,31 +121,29 @@ def test_fixed_algorithm_settings_are_scoped_across_mixed_algorithms():
             "algorithm_config": {"mu": 0.2},
         },
         {
-            "algorithm": "feddes",
+            "algorithm": "fml",
             "experiment": {"model": "fedavg_cnn"},
-            "algorithm_config": {"graphroute": {"graph": {"k": 7}}},
+            "algorithm_config": {"beta": 0.7},
         },
     ]
 
 
 def test_two_exclusive_algorithm_axes_do_not_form_a_cross_product():
     grid = build_grid({
-        "algorithms": ["fedprox", "feddes"],
+        "algorithms": ["fedprox", "fml"],
         "base": {"experiment": {"model": "fedavg_cnn"}},
         "sweep": {
             "algorithm.mu": [0.0, 0.1, 0.2],
-            "algorithm.graphroute.graph.k": [3, 5, 7],
+            "algorithm.beta": [0.2, 0.5, 0.8],
         },
     })
 
-    assert _counts(grid) == {"fedprox": 3, "feddes": 3}
+    assert _counts(grid) == {"fedprox": 3, "fml": 3}
     assert [task["algorithm_config"] for task in grid if task["algorithm"] == "fedprox"] == [
         {"mu": 0.0}, {"mu": 0.1}, {"mu": 0.2}
     ]
-    assert [task["algorithm_config"] for task in grid if task["algorithm"] == "feddes"] == [
-        {"graphroute": {"graph": {"k": 3}}},
-        {"graphroute": {"graph": {"k": 5}}},
-        {"graphroute": {"graph": {"k": 7}}},
+    assert [task["algorithm_config"] for task in grid if task["algorithm"] == "fml"] == [
+        {"beta": 0.2}, {"beta": 0.5}, {"beta": 0.8},
     ]
 
 
@@ -202,8 +152,8 @@ def test_fixed_setting_supported_by_no_selected_algorithm_is_an_error():
 
     with pytest.raises(SystemExit, match="No selected algorithm"):
         build_grid({
-            "algorithms": ["feddes"],
-            "base": {"algorithm": {"local_epochs": 2}},
+            "algorithms": ["fedprox"],
+            "base": {"algorithm": {"beta": 0.5}},
         })
 
 
@@ -227,7 +177,7 @@ def test_submitted_grid_stays_fixed_when_working_grid_changes(
     monkeypatch.setattr(launch_module, "capture_env", lambda: {"git_commit": "one"})
 
     assert _write_grid(path, original) is True
-    submitted = _stage_sge_grid(path, tmp_path / "results")
+    submitted = stage_task_snapshot(path, tmp_path / "results")
     assert _write_grid(path, changed) is True
 
     assert [json.loads(line) for line in path.read_text().splitlines()] == changed

@@ -17,8 +17,7 @@ from rigfl.models.tabular import TabularLinear, TabularMLP, TabularResidualMLP
 from rigfl.models.temporal import TemporalCNN, TemporalGRU, TemporalLSTM
 
 
-# Short YAML name -> input kind + feature-extractor class. The resolved names
-# select both federated client models and FedDES's native classifier pool.
+# Short YAML name -> input kind + feature-extractor class.
 MODEL_ARCHITECTURE_REGISTRY: dict[str, tuple[str, type[nn.Module]]] = {
     "lenet5": ("image", LeNet5),
     "fedavg_mnist_cnn": ("image", FedAvgMNISTCNN),

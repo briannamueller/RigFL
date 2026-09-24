@@ -10,7 +10,6 @@ from pathlib import Path
 
 from rigfl.eval.comparison import (
     ConfigurationComparisonError,
-    apply_holm,
     compare_configurations,
     comparison_context,
     format_comparisons,
@@ -357,7 +356,6 @@ def main() -> None:
     except (ConfigurationComparisonError, ValueError) as error:
         raise SystemExit(f"cannot compare configurations: {error}") from error
 
-    apply_holm(comparisons)
     table = format_comparisons(comparisons)
     print(table)
     if args.out:

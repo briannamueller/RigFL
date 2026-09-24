@@ -1,8 +1,6 @@
 """Algorithm runners and their shared evaluation-history recorder.
 
-Iterative reporting-round selection is performed later from recorded history.
-One-shot algorithms instead retain locally validation-selected models and record
-that provenance alongside their single final evaluation.
+Reporting-round selection is performed later from recorded history.
 """
 
 from __future__ import annotations
@@ -14,8 +12,7 @@ from dataclasses import dataclass, field
 import torch
 from torch.utils.data import DataLoader
 
-from rigfl.core.interfaces import (IterativeAlgorithm, LocalSelection,
-                                   OneShotContext, P2POneShotAlgorithm)
+from rigfl.core.interfaces import IterativeAlgorithm
 from rigfl.core.model import ClientModel
 from rigfl.eval.metrics import (COMPUTED_METRICS, direction_of, require_computable,
                                 unavailable_reason)
@@ -127,138 +124,6 @@ def iterative(algorithm: IterativeAlgorithm, clients: list[Client], num_rounds: 
     }
 
 
-def p2p_one_shot(algorithm: P2POneShotAlgorithm, clients: list[Client],
-                 num_rounds: int, device: torch.device, num_classes: int,
-                 eval_gap: int = 1, verbose: bool = True, tracker=None,
-                 early_stopping=None, resource_monitor=None) -> dict:
-    """Execute local preparation, one all-to-all exchange, and computation once.
-
-    ``num_rounds`` and ``eval_gap`` are accepted so registry runners share one
-    invocation shape. They do not control this runner: its algorithm-specific
-    local computation owns any internal optimization limit and validation-based
-    selection.
-    """
-    del num_rounds, eval_gap
-    _require_operations(
-        algorithm, "p2p_one_shot",
-        ("prepare", "one_shot_communication", "local_computation", "predict"),
-    )
-    _start_clients(clients)
-    es = _EarlyStopping(early_stopping)
-    if es.enabled:
-        raise ValueError(
-            "experiment early_stopping applies to iterative federated rounds and "
-            "cannot be enabled for the p2p_one_shot runner. Configure the "
-            "algorithm's local-computation stopping policy instead."
-        )
-
-    outgoing = []
-    for cid, client in enumerate(clients):
-        ctx = OneShotContext(device=device, client_id=cid,
-                             client_state=client.state,
-                             validation_loader=client.val_loader,
-                             resource_monitor=resource_monitor)
-        with measured(resource_monitor, "prepare", category="algorithm",
-                      client_id=cid):
-            outgoing.append(
-                algorithm.prepare(client.model, client.train_loader, ctx))
-
-    if resource_monitor is not None:
-        sizes = [_payload_size(algorithm, payload, kind="peer_to_peer")
-                 for payload in outgoing]
-        for sender, size in enumerate(sizes):
-            for receiver in range(len(clients)):
-                if sender != receiver:
-                    resource_monitor.record_transfer(
-                        "peer_to_peer", size, sender=sender, receiver=receiver)
-
-    with measured(resource_monitor, "one_shot_communication",
-                  category="algorithm"):
-        incoming = algorithm.one_shot_communication(outgoing)
-    if not isinstance(incoming, list) or len(incoming) != len(clients):
-        raise ValueError(
-            "p2p_one_shot one_shot_communication must return one incoming "
-            "payload per client."
-        )
-
-    local_selections: dict[str, LocalSelection] = {}
-    for cid, (client, payload) in enumerate(zip(clients, incoming)):
-        ctx = OneShotContext(device=device, client_id=cid,
-                             client_state=client.state,
-                             validation_loader=client.val_loader,
-                             resource_monitor=resource_monitor)
-        with measured(resource_monitor, "local_computation",
-                      category="algorithm", client_id=cid):
-            selected = algorithm.local_computation(
-                client.model, payload, client.train_loader, ctx)
-        if not isinstance(selected, LocalSelection):
-            raise TypeError(
-                "p2p_one_shot local_computation must return LocalSelection."
-            )
-        local_selections[str(cid)] = selected
-
-    if resource_monitor is not None:
-        resource_monitor.checkpoint(0)
-
-    metrics = {require_computable(selection.metric)
-               for selection in local_selections.values()}
-    if len(metrics) != 1:
-        raise ValueError(
-            "p2p_one_shot clients must select their retained models with the "
-            "same validation metric."
-        )
-    selection_metric = next(iter(metrics))
-    evaluated = {
-        "validation": evaluate_split(
-            algorithm, clients, None, device, "val", num_classes,
-            shared_by_client=incoming, resource_monitor=resource_monitor),
-        "test": evaluate_split(
-            algorithm, clients, None, device, "test", num_classes,
-            shared_by_client=incoming, resource_monitor=resource_monitor),
-    }
-    per_client: dict[str, dict[str, dict[str, list]]] = {}
-    counts: dict[str, dict[str, list]] = {"validation": {}, "test": {}}
-    _append(per_client, counts, evaluated, 1)
-    history = {
-        "evaluation_rounds": [0],
-        "clients": per_client,
-        "client_sample_counts": counts,
-    }
-    _check_alignment(history)
-
-    if tracker is not None:
-        _update_tracker_resources(tracker, resource_monitor)
-        tracker.log_round(0, evaluated["validation"], evaluated["test"])
-    if verbose:
-        _print_one_shot(evaluated)
-
-    return {
-        "schema_version": 3,
-        "selection_views_supported": ["per-client"],
-        "selection_provenance": {
-            "view": "per-client",
-            "stage": "local_computation",
-            "metric": selection_metric,
-            "clients": {
-                cid: {
-                    "selected_step": selected.selected_step,
-                    "validation_value": selected.validation_value,
-                }
-                for cid, selected in local_selections.items()
-            },
-        },
-        "evaluation_history": history,
-        "early_stopping": {
-            "enabled": False,
-            "termination_reason": "not_applicable",
-            "stopped_at_round": None,
-            "metric": None, "split": None, "direction": None,
-            "aggregation": None, "patience": None, "min_delta": None,
-            "best_round": None, "best_value": None,
-        },
-    }
-
-
 def _start_run(algorithm, clients: list[Client], device: torch.device,
                total_rounds: int) -> None:
     """Bind experiment-wide values once and reset per-client run state."""
@@ -349,25 +214,6 @@ def _print_round(rnd: int, evaluated: dict) -> None:
                   if (v := mean_over_clients(evaluated["test"], m)) is not None]
         if tparts:
             line += " | test " + " ".join(tparts)
-    print(line)
-
-
-def _print_one_shot(evaluated: dict) -> None:
-    """Show the validation metrics after one-shot local computation."""
-    from rigfl.eval.protocol import mean_over_clients
-    parts = []
-    for metric in COMPUTED_METRICS:
-        value = mean_over_clients(evaluated["validation"], metric)
-        if value is not None:
-            parts.append(f"{metric} {value:.4f}")
-    line = "local computation | val " + " ".join(parts)
-    if os.environ.get("RIGFL_LOG_TEST_ROUNDS") == "1":
-        test_parts = [
-            f"{metric} {value:.4f}" for metric in COMPUTED_METRICS
-            if (value := mean_over_clients(evaluated["test"], metric)) is not None
-        ]
-        if test_parts:
-            line += " | test " + " ".join(test_parts)
     print(line)
 
 

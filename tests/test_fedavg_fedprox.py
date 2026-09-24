@@ -17,7 +17,7 @@ from rigfl.algorithms.fedavg import (
     weighted_average_states,
 )
 from rigfl.algorithms.fedprox import FedProx, FedProxConfig, proximal_penalty
-from rigfl.core import Client, ClientModel, Identity, iterative, p2p_one_shot
+from rigfl.core import Client, ClientModel, Identity, iterative
 from rigfl.data.builder import build_clients
 from rigfl.experiment.artifacts import validate_run_record
 from rigfl.experiment.config import ExperimentConfig, run_fingerprint
@@ -205,8 +205,6 @@ def test_algorithms_are_registered_configured_and_sweepable_without_joining_base
 
     assert algorithm_spec("fedavg").runner is iterative
     assert algorithm_spec("local").runner is iterative
-    assert algorithm_spec("feddes").runner is p2p_one_shot
-
     grid = build_grid({
         "algorithms": ["fedavg", "fedprox"],
         "base": {"experiment": {"model": "fedavg_cnn"}},

@@ -160,7 +160,7 @@ def test_package_versions_come_from_installed_metadata():
     """Not from a ``__version__`` attribute a package may not define."""
     from rigfl.experiment.env import _package
 
-    for name in ("rigfl", "graphroute"):
+    for name in ("rigfl", "biosilo"):
         info = _package(name)
         if info is None:                              # not installed here
             continue

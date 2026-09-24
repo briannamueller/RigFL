@@ -24,7 +24,6 @@ dependencies = [
     "pyarrow<15",
     "pillow<11",
     "pandas<2.3",
-    "graphroute>=0.1.7,<0.2",
 ]
 
 [project.urls]

@@ -72,14 +72,14 @@ def _rec(algorithm, seed, result_acc, **algorithm_cfg):
     }
 
 
-def _feddes_config(k):
-    return {"graphroute": {"graph": {"k": k}}}
+def _fedprox_config(mu):
+    return {"mu": mu}
 
 
 def test_field_reads_algorithm_and_experiment_and_name():
-    rec = _rec("feddes", 0, 0.7, **_feddes_config(5))
-    assert _field(rec, "algorithm") == "feddes"
-    assert _field(rec, "algorithm.graphroute.graph.k") == 5
+    rec = _rec("fedprox", 0, 0.7, **_fedprox_config(5))
+    assert _field(rec, "algorithm") == "fedprox"
+    assert _field(rec, "algorithm.mu") == 5
     assert _field(rec, "experiment.batch") == 32
 
 
@@ -93,35 +93,35 @@ def test_missing_flop_setting_matches_the_disabled_default():
 
 
 def test_both_omits_an_unsupported_view_instead_of_duplicating_fallback():
-    feddes = _rec("feddes", 0, 0.7)
-    feddes["result"]["selection_views_supported"] = ["per-client"]
+    fedprox = _rec("fedprox", 0, 0.7)
+    fedprox["result"]["selection_views_supported"] = ["per-client"]
     local = _rec("local", 0, 0.5)
-    by_algorithm = {"feddes": [feddes], "local": [local]}
+    by_algorithm = {"fedprox": [fedprox], "local": [local]}
 
     assert set(_records_supporting(by_algorithm, "global")) == {"local"}
     assert set(_records_supporting(by_algorithm, "per-client")) == {
-        "feddes", "local"
+        "fedprox", "local"
     }
 
 
 def test_group_by_hyperparameter_makes_one_row_per_setting():
-    by_algorithm = {"feddes": [
-        _rec("feddes", 0, 0.60, **_feddes_config(3)),
-        _rec("feddes", 1, 0.62, **_feddes_config(3)),
-        _rec("feddes", 0, 0.80, **_feddes_config(5)),
-        _rec("feddes", 1, 0.82, **_feddes_config(5)),
+    by_algorithm = {"fedprox": [
+        _rec("fedprox", 0, 0.60, **_fedprox_config(3)),
+        _rec("fedprox", 1, 0.62, **_fedprox_config(3)),
+        _rec("fedprox", 0, 0.80, **_fedprox_config(5)),
+        _rec("fedprox", 1, 0.82, **_fedprox_config(5)),
     ]}
-    rows = _rows(by_algorithm, ["algorithm.graphroute.graph.k"])
-    assert set(rows) == {"feddes k=3", "feddes k=5"}
-    assert rows["feddes k=3"]["seeds"] == 2
-    assert abs(rows["feddes k=3"]["test_mean"] - 0.61) < 1e-9
-    assert abs(rows["feddes k=5"]["test_mean"] - 0.81) < 1e-9
+    rows = _rows(by_algorithm, ["algorithm.mu"])
+    assert set(rows) == {"fedprox mu=3", "fedprox mu=5"}
+    assert rows["fedprox mu=3"]["seeds"] == 2
+    assert abs(rows["fedprox mu=3"]["test_mean"] - 0.61) < 1e-9
+    assert abs(rows["fedprox mu=5"]["test_mean"] - 0.81) < 1e-9
 
 
 def test_group_by_rejects_unlabelled_algorithm_variants():
-    records = {"feddes": [
-        _rec("feddes", 0, 0.60, **_feddes_config(3)),
-        _rec("feddes", 1, 0.80, **_feddes_config(5)),
+    records = {"fedprox": [
+        _rec("fedprox", 0, 0.60, **_fedprox_config(3)),
+        _rec("fedprox", 1, 0.80, **_fedprox_config(5)),
     ]}
 
     with pytest.raises(ValueError, match="multiple algorithm configurations"):
@@ -130,13 +130,13 @@ def test_group_by_rejects_unlabelled_algorithm_variants():
 
 def test_group_by_keeps_algorithms_separate():
     by_algorithm = {
-        "feddes": [_rec("feddes", 0, 0.8, **_feddes_config(5))],
+        "fedprox": [_rec("fedprox", 0, 0.8, **_fedprox_config(5))],
         "local": [_rec("local", 0, 0.5)],
     }
-    rows = _rows(by_algorithm, ["algorithm.graphroute.graph.k"])
-    # Local has no GraphRoute k, so it gets its own row labelled with None.
-    assert "feddes k=5" in rows
-    assert "local k=None" in rows
+    rows = _rows(by_algorithm, ["algorithm.mu"])
+    # Local has no FedProx mu, so it gets its own row labelled with None.
+    assert "fedprox mu=5" in rows
+    assert "local mu=None" in rows
 
 
 def _cond_rec(algorithm, seed, *, dataset="cifar10", partition_id="partition-a",
@@ -174,19 +174,19 @@ def _cond_rec(algorithm, seed, *, dataset="cifar10", partition_id="partition-a",
 
 
 def test_algorithms_with_different_configs_share_an_experiment():
-    """Local and FedDES configure differently by nature; that must not separate
+    """Local and FedProx configure differently by nature; that must not separate
     them, or Local-relative reporting has nothing to pair against."""
     from rigfl.experiment.collect import experiment_condition
-    assert experiment_condition(_cond_rec("local", 0)) == experiment_condition(_cond_rec("feddes", 0))
+    assert experiment_condition(_cond_rec("local", 0)) == experiment_condition(_cond_rec("fedprox", 0))
 
 
 def test_negative_transfer_is_computed_across_algorithms():
     rows = _rows({
         "local":  [_cond_rec("local", 0, accs=(0.9, 0.9))],
-        "feddes": [_cond_rec("feddes", 0, accs=(0.5, 0.5))],
+        "fedprox": [_cond_rec("fedprox", 0, accs=(0.5, 0.5))],
     })
-    feddes = next(k for k in rows if k.startswith("feddes"))
-    transfer = rows[feddes]["negative_transfer"]
+    fedprox = next(k for k in rows if k.startswith("fedprox"))
+    transfer = rows[fedprox]["negative_transfer"]
     assert transfer["negative_transfer_rate"]["estimate"] == 1.0
     assert transfer["negative_transfer_magnitude"]["estimate"] == pytest.approx(0.4)
 
@@ -195,15 +195,15 @@ def test_client_model_pool_is_part_of_the_experiment_condition():
     from rigfl.experiment.collect import experiment_condition
 
     local = _cond_rec("local", 0)
-    feddes = _cond_rec("feddes", 0)
+    fedprox = _cond_rec("fedprox", 0)
     local["config"]["experiment"]["model"] = "fedavg_cnn"
-    feddes["config"]["experiment"]["model"] = "cifar_resnet18"
+    fedprox["config"]["experiment"]["model"] = "cifar_resnet18"
 
-    assert experiment_condition(local) != experiment_condition(feddes)
-    rows = _rows({"local": [local], "feddes": [feddes]})
-    feddes_row = next(value for key, value in rows.items()
-                       if key.startswith("feddes"))
-    assert "negative_transfer" not in feddes_row
+    assert experiment_condition(local) != experiment_condition(fedprox)
+    rows = _rows({"local": [local], "fedprox": [fedprox]})
+    fedprox_row = next(value for key, value in rows.items()
+                       if key.startswith("fedprox"))
+    assert "negative_transfer" not in fedprox_row
 
 
 def test_mixed_model_capabilities_share_the_requested_experiment_condition():
@@ -214,15 +214,15 @@ def test_mixed_model_capabilities_share_the_requested_experiment_condition():
         model="fedavg_cnn", model_family="image_heterogeneous_3"
     )
     homogeneous = resolve_algorithm_models("fedavg", exp)
-    heterogeneous = resolve_algorithm_models("feddes", exp)
+    heterogeneous = resolve_algorithm_models("fedproto", exp)
     a = _cond_rec("local", 0)
-    b = _cond_rec("feddes", 0)
+    b = _cond_rec("fedproto", 0)
     a["config"]["experiment"] = homogeneous.model_dump(mode="json")
     b["config"]["experiment"] = heterogeneous.model_dump(mode="json")
 
     assert experiment_condition(a) == experiment_condition(b)
-    rows = _rows({"local": [a], "feddes": [b]})
-    comparison = rows["feddes"]["negative_transfer"]
+    rows = _rows({"local": [a], "fedproto": [b]})
+    comparison = rows["fedproto"]["negative_transfer"]
     assert comparison["available"] is False
     assert "resolved client-model assignment" in comparison["reason"]
 
@@ -231,7 +231,7 @@ def test_experiments_are_not_averaged_together():
     """Two datasets in one directory are two experiments, not extra seeds."""
     from rigfl.experiment.collect import experiment_condition
     recs = {"local": [_cond_rec("local", 0), _cond_rec("local", 0, dataset="mnist")],
-            "feddes": [_cond_rec("feddes", 0), _cond_rec("feddes", 0, dataset="mnist")]}
+            "fedprox": [_cond_rec("fedprox", 0), _cond_rec("fedprox", 0, dataset="mnist")]}
     assert len({experiment_condition(r) for rs in recs.values() for r in rs}) == 2
     rows = _rows(recs)
     assert len(rows) == 4
@@ -241,23 +241,23 @@ def test_experiments_are_not_averaged_together():
 def test_local_is_paired_within_its_own_experiment():
     rows = _rows({
         "local":  [_cond_rec("local", 0, accs=(0.9, 0.9))],                  # cifar only
-        "feddes": [_cond_rec("feddes", 0, accs=(0.5, 0.5)),
-                   _cond_rec("feddes", 0, dataset="mnist", accs=(0.5, 0.5))],
+        "fedprox": [_cond_rec("fedprox", 0, accs=(0.5, 0.5)),
+                   _cond_rec("fedprox", 0, dataset="mnist", accs=(0.5, 0.5))],
     })
-    cifar = next(k for k in rows if k.startswith("feddes") and "cifar10" in k)
-    mnist = next(k for k in rows if k.startswith("feddes") and "mnist" in k)
+    cifar = next(k for k in rows if k.startswith("fedprox") and "cifar10" in k)
+    mnist = next(k for k in rows if k.startswith("fedprox") and "mnist" in k)
     assert rows[cifar]["negative_transfer"]["negative_transfer_rate"]["estimate"] == 1.0
     assert "negative_transfer" not in rows[mnist]  # no Local run in that experiment
 
 
 def test_one_algorithm_swept_over_its_own_settings_gets_separate_rows():
-    rows = _rows({"feddes": [
-        _cond_rec("feddes", 0, algorithm_cfg=_feddes_config(3)),
-        _cond_rec("feddes", 0, algorithm_cfg=_feddes_config(9)),
+    rows = _rows({"fedprox": [
+        _cond_rec("fedprox", 0, algorithm_cfg=_fedprox_config(3)),
+        _cond_rec("fedprox", 0, algorithm_cfg=_fedprox_config(9)),
     ]})
     assert set(rows) == {
-        "feddes graphroute.graph.k=3",
-        "feddes graphroute.graph.k=9",
+        "fedprox mu=3",
+        "fedprox mu=9",
     }
 
 
@@ -275,12 +275,12 @@ def test_default_labels_show_each_varying_algorithm_setting():
 
 
 def test_default_rows_order_by_validation_within_a_data_configuration():
-    lower = _cond_rec("feddes", 0, accs=(0.6, 0.6), algorithm_cfg=_feddes_config(3))
-    higher = _cond_rec("feddes", 0, accs=(0.8, 0.8), algorithm_cfg=_feddes_config(9))
+    lower = _cond_rec("fedprox", 0, accs=(0.6, 0.6), algorithm_cfg=_fedprox_config(3))
+    higher = _cond_rec("fedprox", 0, accs=(0.8, 0.8), algorithm_cfg=_fedprox_config(9))
     lower["config"]["experiment"]["rounds"] = 50
     higher["config"]["experiment"]["rounds"] = 100
 
-    rows = _rows({"feddes": [lower, higher]})
+    rows = _rows({"fedprox": [lower, higher]})
 
     assert "rounds=100" in next(iter(rows))
     assert [row["val_mean"] for row in rows.values()] == [0.8, 0.6]
@@ -313,17 +313,17 @@ def test_validation_order_respects_metric_direction_and_data_setup():
 def test_saved_grid_shows_completed_and_missing_seed_combinations():
     from rigfl.eval.report import format_replicate_details, format_table
 
-    record = _cond_rec("feddes", 0, algorithm_cfg=_feddes_config(3))
+    record = _cond_rec("fedprox", 0, algorithm_cfg=_fedprox_config(3))
     tasks = [
-        {"algorithm": "feddes",
+        {"algorithm": "fedprox",
          "experiment": {"dataset": "cifar10", "partition_seed": 0,
                         "split_seed": 0, "seed": seed},
-         "algorithm_config": _feddes_config(3)}
+         "algorithm_config": _fedprox_config(3)}
         for seed in range(3)
     ]
 
     rows = _rows_by_algorithm(
-        {"feddes": [record]}, "accuracy", view="global", aggregation="mean",
+        {"fedprox": [record]}, "accuracy", view="global", aggregation="mean",
         tie_break="earliest", grid_tasks=tasks,
     )
 
@@ -373,7 +373,7 @@ def test_collect_reports_invalid_files_and_keeps_valid_runs(tmp_path, monkeypatc
     def load(_directory, _dataset, *, ignore_invalid, invalid):
         assert ignore_invalid is True
         invalid.append(("broken.json", "missing evaluation history"))
-        return {"feddes": [_cond_rec("feddes", 0)]}
+        return {"fedprox": [_cond_rec("fedprox", 0)]}
 
     monkeypatch.setattr(collect_module, "load_results", load)
     report = tmp_path / "summary.md"
@@ -470,27 +470,27 @@ def test_sweep_task_rejects_an_unknown_setting(tmp_path):
     grid = tmp_path / "grid.jsonl"
 
     def write(algorithm_config):
-        grid.write_text(json.dumps({"algorithm": "feddes",
+        grid.write_text(json.dumps({"algorithm": "fedprox",
                                     "experiment": {"dataset": "cifar10", "seed": 0},
                                     "algorithm_config": algorithm_config}) + "\n")
 
-    write({"graphroute": {"graph": {"kk": 7}}})
-    with pytest.raises(SystemExit, match="graphroute.graph.kk"):
+    write({"muu": 7})
+    with pytest.raises(SystemExit, match="muu"):
         run_task(str(grid), 1, tmp_path, dry_run=True)
 
-    write(_feddes_config(7))
+    write(_fedprox_config(7))
     run_task(str(grid), 1, tmp_path, dry_run=True)
 
 
 def test_group_by_still_separates_experiments():
     """--group-by says how to label rows, not that different datasets may be
     averaged together as extra seeds."""
-    recs = {"feddes": [
-        _cond_rec("feddes", 0, partition_id="partition-a", algorithm_cfg=_feddes_config(5)),
-        _cond_rec("feddes", 1, partition_id="partition-a", algorithm_cfg=_feddes_config(5)),
-        _cond_rec("feddes", 0, partition_id="partition-b", algorithm_cfg=_feddes_config(5)),
+    recs = {"fedprox": [
+        _cond_rec("fedprox", 0, partition_id="partition-a", algorithm_cfg=_fedprox_config(5)),
+        _cond_rec("fedprox", 1, partition_id="partition-a", algorithm_cfg=_fedprox_config(5)),
+        _cond_rec("fedprox", 0, partition_id="partition-b", algorithm_cfg=_fedprox_config(5)),
     ]}
-    rows = _rows(recs, ["algorithm.graphroute.graph.k"])
+    rows = _rows(recs, ["algorithm.mu"])
     assert len(rows) == 2, rows                  # distinct partitions stay apart
     assert sorted(s["seeds"] for s in rows.values()) == [1, 2]
 
@@ -499,10 +499,10 @@ def test_zipped_data_and_training_replicates_form_one_result_row():
     records = []
     for seed in range(3):
         record = _cond_rec(
-            "feddes",
+            "fedprox",
             seed,
             partition_id=f"partition-{seed}",
-            algorithm_cfg=_feddes_config(5),
+            algorithm_cfg=_fedprox_config(5),
         )
         experiment = record["config"]["experiment"]
         experiment["partition_seed"] = seed
@@ -513,7 +513,7 @@ def test_zipped_data_and_training_replicates_form_one_result_row():
         settings.pop("configuration")
         records.append(record)
 
-    rows = _rows({"feddes": records}, ["algorithm.graphroute.graph.k"])
+    rows = _rows({"fedprox": records}, ["algorithm.mu"])
 
     assert len(rows) == 1
     summary = next(iter(rows.values()))
@@ -524,14 +524,14 @@ def test_zipped_data_and_training_replicates_form_one_result_row():
 
 @pytest.mark.parametrize("drop_one", [False, True])
 def test_crossed_collection_omits_performance_and_transfer_intervals(drop_one):
-    by_algorithm = {"local": [], "feddes": []}
+    by_algorithm = {"local": [], "fedprox": []}
     for partition_seed in range(2):
         for split_seed in range(2):
             for experiment_seed in range(2):
                 partition_id = (
                     f"partition-{partition_seed}-{split_seed}"
                 )
-                for algorithm, accuracy in (("local", 0.5), ("feddes", 0.6)):
+                for algorithm, accuracy in (("local", 0.5), ("fedprox", 0.6)):
                     record = _cond_rec(
                         algorithm,
                         experiment_seed,
@@ -551,7 +551,7 @@ def test_crossed_collection_omits_performance_and_transfer_intervals(drop_one):
 
     if drop_one:
         by_algorithm["local"].pop()
-        by_algorithm["feddes"].pop()
+        by_algorithm["fedprox"].pop()
 
     rows = _rows_by_algorithm(
         by_algorithm,
@@ -561,19 +561,19 @@ def test_crossed_collection_omits_performance_and_transfer_intervals(drop_one):
         tie_break="earliest",
         transfer_profile=(0.05,),
     )
-    feddes = rows["feddes"]
+    fedprox = rows["fedprox"]
 
-    assert feddes["runs"] == (7 if drop_one else 8)
-    assert feddes["seeds"] == 2
-    assert feddes["test_ci"] is None
-    transfer = feddes["negative_transfer"]
+    assert fedprox["runs"] == (7 if drop_one else 8)
+    assert fedprox["seeds"] == 2
+    assert fedprox["test_ci"] is None
+    transfer = fedprox["negative_transfer"]
     assert transfer["negative_transfer_rate"]["estimate"] == 0.0
     assert transfer["negative_transfer_rate"]["ci_low"] is None
     assert transfer["uncertainty"]["reason"] == (
         "experiment seeds are reused across run conditions"
     )
-    assert "feddes §" in format_negative_transfer_table(rows)
-    assert "feddes §" in format_negative_transfer_profile(rows)
+    assert "fedprox §" in format_negative_transfer_table(rows)
+    assert "fedprox §" in format_negative_transfer_profile(rows)
 
 
 def test_zipped_collection_keeps_transfer_intervals():
@@ -581,8 +581,8 @@ def test_zipped_collection_keeps_transfer_intervals():
         "local": [
             _cond_rec("local", seed, accs=(0.5, 0.5)) for seed in range(3)
         ],
-        "feddes": [
-            _cond_rec("feddes", seed, accs=(0.6, 0.4)) for seed in range(3)
+        "fedprox": [
+            _cond_rec("fedprox", seed, accs=(0.6, 0.4)) for seed in range(3)
         ],
     }
     rows = _rows_by_algorithm(
@@ -593,7 +593,7 @@ def test_zipped_collection_keeps_transfer_intervals():
         tie_break="earliest",
         transfer_profile=(0.05,),
     )
-    transfer = rows["feddes"]["negative_transfer"]
+    transfer = rows["fedprox"]["negative_transfer"]
 
     assert transfer["uncertainty"]["available"] is True
     assert transfer["negative_transfer_rate"]["ci_low"] is not None
@@ -606,18 +606,18 @@ def test_experiments_differing_only_in_an_unlabelled_field_stay_apart():
     """Every configuration difference produces a distinct result row."""
 
     def rec(seed, batch):
-        return {"algorithm": "feddes",
+        return {"algorithm": "fedprox",
                 "config": {"experiment": {
                     "dataset": "cifar10", "partition_id": "partition-a",
                     "data_backend": "flower", "partition_scheme": "dirichlet",
                     "num_clients": 20, "num_classes": 10,
                     "validation_fraction": 0.2, "input_kind": "image",
                     "seed": seed, "batch": batch},
-                           "algorithm": _feddes_config(5)},
+                           "algorithm": _fedprox_config(5)},
                 "result": _history(.7, .6)}
 
-    recs = {"feddes": [rec(0, 32), rec(1, 32), rec(0, 64)]}
-    for rows in (_rows(recs), _rows(recs, ["algorithm.graphroute.graph.k"])):
+    recs = {"fedprox": [rec(0, 32), rec(1, 32), rec(0, 64)]}
+    for rows in (_rows(recs), _rows(recs, ["algorithm.mu"])):
         assert len(rows) == 2, rows
         assert sorted(s["seeds"] for s in rows.values()) == [1, 2]
         assert any("batch=64" in k for k in rows)      # labelled by what differs

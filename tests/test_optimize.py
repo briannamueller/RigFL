@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from rigfl.experiment.collect import _resolve_selection
-from rigfl.experiment.intensification import finalize_intensification
 from rigfl.experiment.launch import expand
 from rigfl.experiment.optimize import (
     _manifest,
@@ -20,16 +18,15 @@ from rigfl.experiment.optimize import (
     run_study,
     write_study_selection,
 )
-from rigfl.experiment.tuning import rank, write_ranking
 
 
 def _spec():
     return {
         "name": "adaptive",
-        "algorithms": ["feddes"],
+        "algorithms": ["fedtgp"],
         "base": {
             "experiment": {"dataset": "cifar10", "rounds": 1},
-            "algorithm": {"graphroute": {"base": {"epochs": 1}}},
+            "algorithm": {"local_epochs": 1},
         },
         "replicates": [
             {
@@ -47,23 +44,23 @@ def _spec():
             },
             "metric": "accuracy",
             "search_space": {
-                "algorithm.graphroute.base.lr": {
+                "algorithm.lr": {
                     "type": "float",
                     "low": 0.0001,
                     "high": 0.1,
                     "log": True,
                 },
-                "algorithm.graphroute.graph.k": {
+                "algorithm.server_epochs": {
                     "type": "int",
                     "low": 3,
                     "high": 15,
                     "step": 2,
                 },
-                "algorithm.graphroute.gnn.arch": {
+                "algorithm.lamda": {
                     "type": "categorical",
-                    "values": ["gat", "graph_gps"],
+                    "values": [0.1, 0.5],
                 },
-                "algorithm.graphroute.gnn.hidden_dim": {
+                "algorithm.margin_cap": {
                     "type": "categorical",
                     "values": [64, 128],
                 },
@@ -88,47 +85,36 @@ def _with_zipped_replicates(raw: dict) -> dict:
     return raw
 
 
-def _intensification_replicates() -> list[dict[str, int]]:
-    return [
-        {
-            "partition_seed": seed,
-            "split_seed": seed,
-            "experiment_seed": seed,
-        }
-        for seed in (10, 11, 12, 13, 14)
-    ]
-
-
 def test_optimization_parses_a_joint_mixed_search_space():
     raw = _with_zipped_replicates(_spec())
-    raw["tuning"]["search_space"]["algorithm.graphroute.graph.k"] = {
+    raw["tuning"]["search_space"]["algorithm.server_epochs"] = {
         "type": "int",
         "low": 3,
         "high": 15,
         "step": 2,
     }
     spec = parse_optimization(raw)
-    assert spec.algorithm == "feddes"
+    assert spec.algorithm == "fedtgp"
     assert spec.replicates == [0, 1, 2]
     assert spec.trials == 20
     assert set(spec.search_space) == {
-        "algorithm.graphroute.base.lr",
-        "algorithm.graphroute.graph.k",
-        "algorithm.graphroute.gnn.arch",
-        "algorithm.graphroute.gnn.hidden_dim",
+        "algorithm.lr",
+        "algorithm.server_epochs",
+        "algorithm.lamda",
+        "algorithm.margin_cap",
     }
     tasks = _tasks(
         spec,
         {
-            "algorithm.graphroute.base.lr": 0.01,
-            "algorithm.graphroute.graph.k": 7,
-            "algorithm.graphroute.gnn.arch": "gat",
-            "algorithm.graphroute.gnn.hidden_dim": 64,
+            "algorithm.lr": 0.01,
+            "algorithm.server_epochs": 7,
+            "algorithm.lamda": 0.1,
+            "algorithm.margin_cap": 64,
         },
     )
     assert [task["experiment"]["seed"] for task in tasks] == [0, 1, 2]
     assert all(
-        task["algorithm_config"]["graphroute"]["graph"]["k"] == 7 for task in tasks
+        task["algorithm_config"]["server_epochs"] == 7 for task in tasks
     )
 
 
@@ -140,7 +126,7 @@ def test_optuna_uses_paired_data_and_training_seed_conditions():
     ]
 
     spec = parse_optimization(raw)
-    tasks = _tasks(spec, {"algorithm.graphroute.graph.k": 7})
+    tasks = _tasks(spec, {"algorithm.server_epochs": 7})
 
     assert spec.replicates == [3, 6]
     assert [
@@ -155,7 +141,7 @@ def test_optuna_uses_paired_data_and_training_seed_conditions():
 
 def test_optuna_parameters_are_not_cartesian_sweep_axes():
     raw = _spec()
-    raw["tuning"]["search_space"]["algorithm.graphroute.graph.k"] = {
+    raw["tuning"]["search_space"]["algorithm.server_epochs"] = {
         "type": "int",
         "low": 3,
         "high": 15,
@@ -184,7 +170,7 @@ def test_optuna_cannot_optimize_data_or_replicate_identity(field):
 )
 def test_optimization_rejects_ambiguous_study_scopes(change, message):
     raw = _spec()
-    raw["tuning"]["search_space"]["algorithm.graphroute.graph.k"] = {
+    raw["tuning"]["search_space"]["algorithm.server_epochs"] = {
         "type": "int",
         "low": 3,
         "high": 15,
@@ -199,12 +185,12 @@ def test_distribution_validation_rejects_unknown_paths_and_invalid_ranges():
     raw["tuning"]["search_space"] = {
         "algorithm.not_a_field": {"type": "int", "low": 1, "high": 2}
     }
-    with pytest.raises(SystemExit, match="unknown feddes search parameter"):
+    with pytest.raises(SystemExit, match="unknown fedtgp search parameter"):
         parse_optimization(raw)
 
     raw = _spec()
     raw["tuning"]["search_space"] = {
-        "algorithm.graphroute.gnn.lr": {
+        "algorithm.server_lr": {
             "type": "float",
             "low": 0.1,
             "high": 0.01,
@@ -255,7 +241,7 @@ def test_default_sampler_options_do_not_leak_into_an_explicit_sampler():
 def test_manifest_deduplicates_repeated_optuna_suggestions():
     raw = _spec()
     raw["tuning"]["search_space"] = {
-        "algorithm.graphroute.graph.k": {"type": "int", "low": 3, "high": 9}
+        "algorithm.server_epochs": {"type": "int", "low": 3, "high": 9}
     }
     spec = parse_optimization(raw)
     complete = SimpleNamespace(name="COMPLETE")
@@ -264,18 +250,18 @@ def test_manifest_deduplicates_repeated_optuna_suggestions():
         study_name="adaptive",
         trials=[
             SimpleNamespace(
-                number=0, state=complete, params={"algorithm.graphroute.graph.k": 5}
+                number=0, state=complete, params={"algorithm.server_epochs": 5}
             ),
             SimpleNamespace(
-                number=1, state=complete, params={"algorithm.graphroute.graph.k": 5}
+                number=1, state=complete, params={"algorithm.server_epochs": 5}
             ),
             SimpleNamespace(
-                number=2, state=complete, params={"algorithm.graphroute.graph.k": 7}
+                number=2, state=complete, params={"algorithm.server_epochs": 7}
             ),
             SimpleNamespace(
                 number=3,
                 state=failed,
-                params={"algorithm.graphroute.graph.k": 9},
+                params={"algorithm.server_epochs": 9},
                 user_attrs={
                     "validation_scores": [0.5],
                     "source_results": ["seed0.json"],
@@ -304,12 +290,12 @@ def test_study_resumes_to_a_target_total_without_adding_trials(tmp_path, monkeyp
     pytest.importorskip("optuna")
     raw = _with_zipped_replicates(_spec())
     raw["tuning"]["search_space"] = {
-        "algorithm.graphroute.graph.k": {"type": "int", "low": 3, "high": 9}
+        "algorithm.server_epochs": {"type": "int", "low": 3, "high": 9}
     }
     spec = parse_optimization(raw)
 
     def fake_objective(_spec, _results_dir, _force):
-        return lambda trial: trial.suggest_int("algorithm.graphroute.graph.k", 3, 9)
+        return lambda trial: trial.suggest_int("algorithm.server_epochs", 3, 9)
 
     monkeypatch.setattr("rigfl.experiment.optimize._objective", fake_objective)
     first, _ = run_study(spec, tmp_path, storage=None, study_name=None, target_trials=3)
@@ -338,7 +324,7 @@ def test_resuming_a_seeded_sampler_does_not_replay_its_initial_suggestions(
         "options": sampler_options,
     }
     raw["tuning"]["search_space"] = {
-        "algorithm.graphroute.graph.k": {
+        "algorithm.server_epochs": {
             "type": "int",
             "low": 3,
             "high": 1_000_003,
@@ -348,7 +334,7 @@ def test_resuming_a_seeded_sampler_does_not_replay_its_initial_suggestions(
 
     def fake_objective(_spec, _results_dir, _force):
         return lambda trial: trial.suggest_int(
-            "algorithm.graphroute.graph.k", 3, 1_000_003
+            "algorithm.server_epochs", 3, 1_000_003
         )
 
     monkeypatch.setattr("rigfl.experiment.optimize._objective", fake_objective)
@@ -360,10 +346,10 @@ def test_resuming_a_seeded_sampler_does_not_replay_its_initial_suggestions(
     )
 
     first_values = [
-        trial.params["algorithm.graphroute.graph.k"] for trial in first.trials
+        trial.params["algorithm.server_epochs"] for trial in first.trials
     ]
     resumed_values = [
-        trial.params["algorithm.graphroute.graph.k"] for trial in resumed.trials[3:]
+        trial.params["algorithm.server_epochs"] for trial in resumed.trials[3:]
     ]
     assert resumed_values != first_values
 
@@ -380,54 +366,20 @@ def test_study_refuses_to_mix_trials_from_a_changed_configuration(
     pytest.importorskip("optuna")
     raw = _spec()
     raw["tuning"]["search_space"] = {
-        "algorithm.graphroute.graph.k": {"type": "int", "low": 3, "high": 9}
+        "algorithm.server_epochs": {"type": "int", "low": 3, "high": 9}
     }
     original = parse_optimization(raw)
 
     def fake_objective(_spec, _results_dir, _force):
-        return lambda trial: trial.suggest_int("algorithm.graphroute.graph.k", 3, 9)
+        return lambda trial: trial.suggest_int("algorithm.server_epochs", 3, 9)
 
     monkeypatch.setattr("rigfl.experiment.optimize._objective", fake_objective)
     run_study(original, tmp_path, storage=None, study_name=None, target_trials=1)
 
-    raw["tuning"]["search_space"]["algorithm.graphroute.graph.k"]["high"] = 11
+    raw["tuning"]["search_space"]["algorithm.server_epochs"]["high"] = 11
     changed = parse_optimization(raw)
     with pytest.raises(SystemExit, match="different RigFL configuration"):
         run_study(changed, tmp_path, storage=None, study_name=None, target_trials=2)
-
-
-def test_intensification_policy_can_change_without_repeating_the_search(
-    tmp_path, monkeypatch
-):
-    pytest.importorskip("optuna")
-    raw = _with_zipped_replicates(_spec())
-    raw["tuning"]["search_space"] = {
-        "algorithm.graphroute.graph.k": {"type": "int", "low": 3, "high": 9}
-    }
-    original = parse_optimization(raw)
-
-    def fake_objective(_spec, _results_dir, _force):
-        return lambda trial: trial.suggest_int("algorithm.graphroute.graph.k", 3, 9)
-
-    monkeypatch.setattr("rigfl.experiment.optimize._objective", fake_objective)
-    run_study(original, tmp_path, storage=None, study_name=None, target_trials=1)
-
-    raw["tuning"]["intensification"] = {
-        "top_k": 2,
-        "replicates": _intensification_replicates()[:2],
-        "practical_threshold": 0.01,
-    }
-    changed_intensification = parse_optimization(raw)
-    study, _ = run_study(
-        changed_intensification,
-        tmp_path,
-        storage=None,
-        study_name=None,
-        target_trials=1,
-        export_only=True,
-    )
-
-    assert len(study.trials) == 1
 
 
 def test_sampler_options_reproduce_suggestions(tmp_path, monkeypatch):
@@ -438,12 +390,12 @@ def test_sampler_options_reproduce_suggestions(tmp_path, monkeypatch):
         "options": {"seed": 9},
     }
     raw["tuning"]["search_space"] = {
-        "algorithm.graphroute.graph.k": {"type": "int", "low": 3, "high": 99}
+        "algorithm.server_epochs": {"type": "int", "low": 3, "high": 99}
     }
     spec = parse_optimization(raw)
 
     def fake_objective(_spec, _results_dir, _force):
-        return lambda trial: trial.suggest_int("algorithm.graphroute.graph.k", 3, 99)
+        return lambda trial: trial.suggest_int("algorithm.server_epochs", 3, 99)
 
     monkeypatch.setattr("rigfl.experiment.optimize._objective", fake_objective)
     first, _ = run_study(
@@ -496,11 +448,11 @@ def test_grid_sampler_derives_its_grid_from_the_search_space():
         "options": {"seed": 7},
     }
     raw["tuning"]["search_space"] = {
-        "algorithm.graphroute.graph.k": {
+        "algorithm.server_epochs": {
             "type": "categorical",
             "values": [3, 5, 7],
         },
-        "algorithm.graphroute.gnn.hidden_dim": {
+        "algorithm.margin_cap": {
             "type": "categorical",
             "values": [64, 128],
         },
@@ -515,18 +467,18 @@ def test_grid_sampler_derives_its_grid_from_the_search_space():
 
     def objective(trial):
         k = trial.suggest_categorical(
-            "algorithm.graphroute.graph.k", [3, 5, 7]
+            "algorithm.server_epochs", [3, 5, 7]
         )
         hidden = trial.suggest_categorical(
-            "algorithm.graphroute.gnn.hidden_dim", [64, 128]
+            "algorithm.margin_cap", [64, 128]
         )
         return float(k + hidden)
 
     study.optimize(objective, n_trials=spec.trials)
     assert {
         (
-            trial.params["algorithm.graphroute.graph.k"],
-            trial.params["algorithm.graphroute.gnn.hidden_dim"],
+            trial.params["algorithm.server_epochs"],
+            trial.params["algorithm.margin_cap"],
         )
         for trial in study.trials
     } == {
@@ -542,7 +494,7 @@ def test_grid_sampler_rejects_a_second_grid_declaration():
         "options": {"search_space": {"x": [1, 2]}},
     }
     raw["tuning"]["search_space"] = {
-        "algorithm.graphroute.graph.k": {
+        "algorithm.server_epochs": {
             "type": "categorical",
             "values": [3, 5],
         }
@@ -564,11 +516,6 @@ def test_grid_sampler_requires_finite_categorical_values():
 def test_replicate_counts_expand_to_matched_seeds():
     raw = _spec()
     raw["replicates"] = 3
-    raw["tuning"]["intensification"] = {
-        "top_k": 2,
-        "replicates": 2,
-        "practical_threshold": 0.01,
-    }
 
     spec = parse_optimization(raw)
 
@@ -576,291 +523,6 @@ def test_replicate_counts_expand_to_matched_seeds():
         {"partition_seed": seed, "split_seed": seed, "experiment_seed": seed}
         for seed in (0, 1, 2)
     ]
-    # An intensification count continues the screening seeds, so its data
-    # conditions are new without being written out.
-    assert [
-        condition.model_dump() for condition in spec.intensification.replicates
-    ] == [
-        {"partition_seed": seed, "split_seed": seed, "experiment_seed": seed}
-        for seed in (3, 4)
-    ]
-
-
-def test_intensification_requires_new_seeds_and_a_practical_threshold():
-    raw = _with_zipped_replicates(_spec())
-    raw["tuning"]["intensification"] = {
-        "top_k": 3,
-        "replicates": [
-            {"partition_seed": 0, "split_seed": 0, "experiment_seed": 10},
-            {"partition_seed": 10, "split_seed": 10, "experiment_seed": 11},
-        ],
-        "practical_threshold": 0.01,
-    }
-    with pytest.raises(SystemExit, match="data-seed pairs"):
-        parse_optimization(raw)
-
-    raw["tuning"]["intensification"]["replicates"] = (
-        _intensification_replicates()[:2]
-    )
-    del raw["tuning"]["intensification"]["practical_threshold"]
-    with pytest.raises(SystemExit, match="practical_threshold"):
-        parse_optimization(raw)
-
-
-def _run_record(
-    task: dict, *, value: float, test_value: float, communication: int = 100
-) -> dict:
-    """One completed run, as the launcher would have recorded it."""
-    k = task["algorithm_config"]["graphroute"]["graph"]["k"]
-    seed = task["experiment"]["seed"]
-    clients = {
-        str(client): {
-            "validation": {"accuracy": [value]},
-            "test": {"accuracy": [test_value]},
-        }
-        for client in range(2)
-    }
-    counts = {
-        split: {str(client): [10] for client in range(2)}
-        for split in ("validation", "test")
-    }
-    return {
-        "algorithm": "feddes",
-        "config": {
-            "experiment": {
-                "dataset": "cifar10",
-                "partition_id": "partition-a",
-                "partition_scheme": "dirichlet",
-                "data_backend": "flower",
-                "num_clients": 2,
-                "num_classes": 10,
-                "validation_fraction": 0.2,
-                "input_kind": "image",
-                "input_spec": {"shape": [3, 32, 32]},
-                "resolved_models": ["cnn", "cnn"],
-                "rounds": 1,
-                "partition_seed": task["experiment"].get("partition_seed", 0),
-                "split_seed": task["experiment"].get("split_seed", 0),
-                "seed": seed,
-            },
-            "algorithm": task["algorithm_config"],
-        },
-        "result": {
-            "selection_views_supported": ["global", "per-client"],
-            "evaluation_history": {
-                "evaluation_rounds": [0],
-                "clients": clients,
-                "client_sample_counts": counts,
-            },
-        },
-        "resources": {
-            "observed": {"communication_bytes": {"total": communication}},
-            "attributed_training": {
-                "flops": 1000,
-                "wall_seconds": 1.0,
-                "wall_seconds_comparable": True,
-            },
-            "measurement": {"timing": {"hardware": {"device": "cpu"}}},
-        },
-        "_source_file": f"k{k}_seed{seed}.json",
-    }
-
-
-def _write_run_store(root: Path, records: list[dict]) -> Path:
-    """Put screening results where a study's run store would hold them."""
-    runs = root / "runs"
-    runs.mkdir(parents=True, exist_ok=True)
-    for record in records:
-        (runs / Path(record["_source_file"]).name).write_text(json.dumps(record))
-    return runs
-
-
-def test_intensification_shortlists_compares_and_selects_on_validation(
-    tmp_path, monkeypatch
-):
-    raw = _with_zipped_replicates(_spec())
-    raw["tuning"]["search_space"] = {
-        "algorithm.graphroute.graph.k": {
-            "type": "categorical",
-            "values": [3, 5, 7],
-        }
-    }
-    raw["tuning"]["intensification"] = {
-        "top_k": 3,
-        "replicates": _intensification_replicates(),
-        "practical_threshold": 0.01,
-        "prefer": "communication",
-    }
-    spec = parse_optimization(raw)
-    complete = SimpleNamespace(name="COMPLETE")
-    study = SimpleNamespace(
-        study_name="adaptive",
-        trials=[
-            SimpleNamespace(
-                number=0,
-                state=complete,
-                params={"algorithm.graphroute.graph.k": 3},
-                value=0.80,
-                user_attrs={},
-            ),
-            SimpleNamespace(
-                number=1,
-                state=complete,
-                params={"algorithm.graphroute.graph.k": 5},
-                value=0.79,
-                user_attrs={},
-            ),
-            SimpleNamespace(
-                number=2,
-                state=complete,
-                params={"algorithm.graphroute.graph.k": 7},
-                value=0.70,
-                user_attrs={},
-            ),
-        ],
-    )
-
-    def fake_run(task, out_dir, **_):
-        k = task["algorithm_config"]["graphroute"]["graph"]["k"]
-        return _run_record(
-            task,
-            value={3: 0.80, 5: 0.80, 7: 0.70}[k],
-            test_value=0.99 if k == 7 else 0.01,
-            communication={3: 300, 5: 200, 7: 100}[k],
-        )
-
-    manifest = _manifest(spec, study)
-    screening_records = [
-        fake_run(task, tmp_path)
-        for trial in study.trials
-        for task in _tasks(spec, trial.params)
-    ]
-    _write_run_store(tmp_path, screening_records)
-    screening = rank(
-        screening_records,
-        manifest,
-        metric="accuracy",
-        views=["global"],
-    )
-    study_dir = tmp_path / "study"
-    write_ranking(screening, screening_records, manifest, study_dir)
-
-    monkeypatch.setattr("rigfl.experiment.intensification.run_config", fake_run)
-    artifact = finalize_intensification(
-        study_dir / "ranking.json", run_missing=True
-    )
-    group = artifact["groups"][0]
-
-    assert group["validation_leader"] == 0
-    assert group["practically_equivalent_candidates"] == [0, 1]
-    assert group["selected_candidate"] == 1
-    for candidate in group["candidates"]:
-        per_replicate = candidate["intensification_validation"]["per_replicate"]
-        assert len(per_replicate) == 5
-        assert {
-            (
-                item["partition_seed"],
-                item["split_seed"],
-                item["experiment_seed"],
-            )
-            for item in per_replicate
-        } == {(seed, seed, seed) for seed in [10, 11, 12, 13, 14]}
-    assert artifact["selection_protocol"]["intensification_replicates"] == (
-        _intensification_replicates()
-    )
-    assert all(
-        comparison["protocol"]["evaluation_split"] == "validation"
-        for comparison in group["comparisons_to_validation_leader"]
-    )
-    assert (study_dir / "intensification" / "evaluation.json").exists()
-    assert group["selected_result_files"] == [
-        f"../../runs/k5_seed{seed}.json" for seed in [10, 11, 12, 13, 14]
-    ]
-
-    import yaml
-
-    selected = yaml.safe_load(
-        (study_dir / "selected.yaml").read_text()
-    )
-    assert selected["replicates"] == _intensification_replicates()
-    assert selected["base"]["algorithm"]["graphroute"]["graph"]["k"] == 5
-    expanded, manifest = expand(selected)
-    assert len(expanded) == 5
-    assert manifest is None
-
-
-@pytest.mark.parametrize(
-    "ranking, winning_k", [("intensification", 5), ("pooled", 3)]
-)
-def test_ranking_basis_decides_the_shortlist_winner(
-    tmp_path, monkeypatch, ranking, winning_k
-):
-    raw = _with_zipped_replicates(_spec())
-    raw["tuning"]["search_space"] = {
-        "algorithm.graphroute.graph.k": {"type": "categorical", "values": [3, 5]}
-    }
-    raw["tuning"]["intensification"] = {
-        "top_k": 2,
-        "replicates": _intensification_replicates(),
-        "practical_threshold": 0.01,
-        "ranking": ranking,
-    }
-    spec = parse_optimization(raw)
-    complete = SimpleNamespace(name="COMPLETE")
-    study = SimpleNamespace(
-        study_name="adaptive",
-        trials=[
-            SimpleNamespace(
-                number=index,
-                state=complete,
-                params={"algorithm.graphroute.graph.k": k},
-                value=value,
-                user_attrs={},
-            )
-            for index, (k, value) in enumerate(((3, 0.90), (5, 0.80)))
-        ],
-    )
-
-    # k=3 screens better and intensifies worse, so the two bases disagree.
-    screened = {3: 0.90, 5: 0.80}
-    intensified = {3: 0.70, 5: 0.75}
-
-    def fake_run(task, out_dir, **_):
-        k = task["algorithm_config"]["graphroute"]["graph"]["k"]
-        seed = task["experiment"]["seed"]
-        return _run_record(
-            task,
-            value=intensified[k] if seed >= 10 else screened[k],
-            test_value=0.5,
-        )
-
-    manifest = _manifest(spec, study)
-    screening_records = [
-        fake_run(task, tmp_path)
-        for trial in study.trials
-        for task in _tasks(spec, trial.params)
-    ]
-    _write_run_store(tmp_path, screening_records)
-    ranked = rank(screening_records, manifest, metric="accuracy", views=["global"])
-    study_dir = tmp_path / "study"
-    write_ranking(ranked, screening_records, manifest, study_dir)
-
-    monkeypatch.setattr("rigfl.experiment.intensification.run_config", fake_run)
-    artifact = finalize_intensification(study_dir / "ranking.json", run_missing=True)
-    group = artifact["groups"][0]
-    selected = next(
-        candidate
-        for candidate in group["candidates"]
-        if candidate["candidate_id"] == group["selected_candidate"]
-    )
-
-    assert artifact["selection_protocol"]["ranking_basis"] == ranking
-    assert selected["candidate_parameters"]["algorithm.graphroute.graph.k"] == winning_k
-    for candidate in group["candidates"]:
-        if ranking == "pooled":
-            assert len(candidate["pooled_validation"]["per_replicate"]) == 8
-        else:
-            assert "pooled_validation" not in candidate
 
 
 def test_collection_uses_and_enforces_the_adaptive_objective_protocol():

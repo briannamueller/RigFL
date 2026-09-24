@@ -1,22 +1,12 @@
 """Operation contracts implemented by RigFL algorithms.
 
-The runner named in the algorithm registry determines which contract applies:
-
-``IterativeAlgorithm``
-    Repeats client training followed by server aggregation for numbered rounds.
-
-``P2POneShotAlgorithm``
-    Performs local preparation, one peer-to-peer communication event, then one
-    complete local computation per client. Its local computations may contain
-    internally selected optimization steps, but they are not federated rounds.
-
-These are structural protocols: inheritance is optional. ``shared`` and the
-one-shot payloads are deliberately algorithm-defined objects.
+The registered algorithms implement the structural ``IterativeAlgorithm``
+protocol: inheritance is optional and ``shared`` is deliberately an
+algorithm-defined object.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, Protocol
 
 import torch
@@ -26,35 +16,10 @@ from rigfl.prediction import (PROB_SUM_ATOL, PredictionError, Predictions,
                               as_predictions, check_probabilities)
 
 __all__ = [
-    "OneShotContext", "LocalSelection",
-    "IterativeAlgorithm", "P2POneShotAlgorithm", "Algorithm",
+    "IterativeAlgorithm", "Algorithm",
     "Predictions", "PredictionError", "as_predictions",
     "check_probabilities", "PROB_SUM_ATOL",
 ]
-
-
-@dataclass
-class OneShotContext:
-    """Context for one client's non-iterative one-shot operations."""
-
-    device: torch.device
-    client_id: int
-    client_state: dict
-    validation_loader: Any = None
-    resource_monitor: Any = None
-
-
-@dataclass(frozen=True)
-class LocalSelection:
-    """How a one-shot local computation selected the model it retained.
-
-    ``selected_step`` intentionally does not prescribe epochs: an algorithm may
-    internally select an epoch, iteration, tree count, or another local step.
-    """
-
-    selected_step: int
-    metric: str
-    validation_value: float
 
 
 class IterativeAlgorithm(Protocol):
@@ -73,28 +38,9 @@ class IterativeAlgorithm(Protocol):
     def predict(self, client, x, shared) -> Predictions: ...
 
 
-class P2POneShotAlgorithm(Protocol):
-    """Operations required by the all-to-all ``p2p_one_shot`` runner.
-
-    Each payload returned by ``prepare`` is delivered once to every other
-    client. An algorithm with another communication topology needs a different
-    runner.
-    """
-
-    def prepare(self, model, train_loader, ctx: OneShotContext) -> Any: ...
-
-    def one_shot_communication(self, outgoing: list[Any]) -> list[Any]: ...
-
-    def local_computation(self, model, incoming, train_loader,
-                          ctx: OneShotContext) -> LocalSelection: ...
-
-    def predict(self, client, x, shared) -> Predictions: ...
-
-
 class Algorithm:
     """Optional common base; runners rely on the protocols above.
 
-    Prediction is the only operation common to both current runner contracts.
     The iterative runner sets ``device`` and ``total_rounds`` before
     ``init_globals()``, then updates ``round_idx`` at the start of every
     communication round. Algorithms only read these attributes when needed.

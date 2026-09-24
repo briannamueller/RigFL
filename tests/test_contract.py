@@ -9,7 +9,6 @@ import pytest
 from rigfl.algorithms.apple import APPLE
 from rigfl.algorithms.fedamp import FedAMP
 from rigfl.algorithms.fedavg import FedAvg
-from rigfl.algorithms.feddes import FedDES
 from rigfl.algorithms.fedgh import FedGH
 from rigfl.algorithms.fedkd import FedKD
 from rigfl.algorithms.fedpac import FedPAC
@@ -79,8 +78,7 @@ def test_iterative_operations_share_the_standard_signatures(cls):
     assert len(server) == 3 and server[:2] == ["self", "uploads"]
 
 
-@pytest.mark.parametrize("cls", BASELINES + [FedDES],
-                         ids=[c.__name__ for c in BASELINES + [FedDES]])
+@pytest.mark.parametrize("cls", BASELINES, ids=[c.__name__ for c in BASELINES])
 def test_predict_receives_client_inputs_and_shared_state(cls):
     params = list(inspect.signature(cls.predict).parameters)
     assert len(params) == 4 and params[:3] == ["self", "client", "x"]
