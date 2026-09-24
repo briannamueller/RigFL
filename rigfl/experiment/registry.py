@@ -28,6 +28,7 @@ from rigfl.algorithms.fml import FML, FMLConfig
 from rigfl.algorithms.global_ensemble import GlobalEnsemble, GlobalEnsembleConfig
 from rigfl.algorithms.lgfedavg import LGFedAvg, LGFedAvgConfig
 from rigfl.algorithms.local import Local, LocalConfig
+from rigfl.algorithms.pfedmoe import PFedMoE, PFedMoEConfig, ProxyExtractor
 from rigfl.core import ClientModel, LearnedProjection, iterative
 from rigfl.core.adapters import AdaptivePool
 from rigfl.core.config import AlgorithmConfig
@@ -104,6 +105,7 @@ REGISTRY = {
     "fml":      AlgorithmSpec(FML, FMLConfig),
     "fedkd":    AlgorithmSpec(FedKD, FedKDConfig),
     "fedtgp":   AlgorithmSpec(FedTGP, FedTGPConfig),
+    "pfedmoe":  AlgorithmSpec(PFedMoE, PFedMoEConfig),
 }
 
 _RUNNER_IGNORED_EXPERIMENT_FIELDS = {}
@@ -112,7 +114,8 @@ _RUNNER_IGNORED_EXPERIMENT_FIELDS = {}
 # Global Ensemble remains callable explicitly and through ``all``.
 BASELINES = ["local", "fedproto", "fedgh", "lgfedavg", "fml", "fedkd", "fedtgp"]
 ALL_ALGORITHMS = BASELINES + [
-    "fedavg", "fedprox", "fedcac", "fedapa", "fedamp", "apple", "fedpac", "global",
+    "fedavg", "fedprox", "fedcac", "fedapa", "fedamp", "apple", "fedpac",
+    "pfedmoe", "global",
 ]
 
 
@@ -201,6 +204,12 @@ def resolve_algorithm_config(name: str, exp: ExperimentConfig,
         )
         validate_model(selected, input_kind)
         cfg = cfg.model_copy(update={"aux_model": selected})
+    elif name == "pfedmoe":
+        selected = cfg.proxy_model or (
+            names[0] if exp.model_family is not None else exp.model
+        )
+        validate_model(selected, input_kind)
+        cfg = cfg.model_copy(update={"proxy_model": selected})
     return cfg
 
 
@@ -249,23 +258,38 @@ def _aux_model(backbone, shared_dim: int, num_classes: int):
     return make
 
 
-def build_algorithm(name: str, exp: ResolvedExperimentConfig, cfg: AlgorithmConfig,
-                    aux_backbone=None, base_pool=None, model_input_spec=None,
+def _proxy_extractor(backbone, shared_dim: int):
+    """Construct pFedMoE's selected backbone as a headless proxy extractor."""
+    def make() -> ProxyExtractor:
+        b = backbone()
+        return ProxyExtractor(b, LearnedProjection(b.out_dim, shared_dim))
+    return make
+
+
+def build_algorithm(name: str, exp: ResolvedExperimentConfig,
+                    cfg: AlgorithmConfig, aux_backbone=None,
+                    proxy_backbone=None, base_pool=None, model_input_spec=None,
                     model_template=None, initial_client_models=None,
                     client_sample_counts=None):
     """Construct a registered algorithm through its standard factory hook.
 
-    ``aux_backbone`` is the backbone factory for the shared meme or mentee model
-    used by FML and FedKD. ``initial_client_models`` and
-    ``client_sample_counts`` describe the clients after model and data
-    construction; algorithms that require round-zero client state consume and
-    copy them in their own ``from_config`` implementation."""
+    ``aux_backbone`` builds the complete shared model used by FML and FedKD;
+    ``proxy_backbone`` builds pFedMoE's headless proxy extractor.
+    ``initial_client_models`` and ``client_sample_counts`` describe clients
+    after model and data construction; algorithms that require round-zero
+    client state copy them in their own ``from_config`` implementation.
+    """
     exp = resolve_algorithm_experiment(name, exp)
     cfg = resolve_algorithm_config(name, exp, cfg)
     sd, nc = exp.shared_dim, exp.num_classes
     if name in {"fml", "fedkd"} and aux_backbone is None:
         aux_backbone = instantiate_backbones(
             [cfg.aux_model],
+            input_spec=model_input_spec or exp.input_spec,
+        )[0]
+    if name == "pfedmoe" and proxy_backbone is None:
+        proxy_backbone = instantiate_backbones(
+            [cfg.proxy_model],
             input_spec=model_input_spec or exp.input_spec,
         )[0]
     aux_factory = (
@@ -275,6 +299,10 @@ def build_algorithm(name: str, exp: ResolvedExperimentConfig, cfg: AlgorithmConf
         cfg,
         experiment=exp,
         aux_model_factory=aux_factory,
+        proxy_extractor_factory=(
+            _proxy_extractor(proxy_backbone, sd)
+            if proxy_backbone is not None else None
+        ),
         base_pool=base_pool,
         model_input_spec=model_input_spec,
         model_template=model_template,

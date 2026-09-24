@@ -21,11 +21,13 @@ from rigfl.algorithms.fml import FML
 from rigfl.algorithms.global_ensemble import GlobalEnsemble
 from rigfl.algorithms.lgfedavg import LGFedAvg
 from rigfl.algorithms.local import Local
+from rigfl.algorithms.pfedmoe import PFedMoE
 from rigfl.core.config import AlgorithmConfig
 from rigfl.core.interfaces import Algorithm
 
 BASELINES = [Local, GlobalEnsemble, FedAvg, FedProx, FedProto, FedGH,
-             LGFedAvg, FML, FedKD, FedTGP, FedCAC, FedAPA, FedAMP, APPLE, FedPAC]
+             LGFedAvg, FML, FedKD, FedTGP, FedCAC, FedAPA, PFedMoE,
+             FedAMP, APPLE, FedPAC]
 CONTRACT = ("init_globals", "local_train", "aggregate", "predict")
 
 

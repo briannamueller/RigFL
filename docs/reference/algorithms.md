@@ -19,6 +19,7 @@
 | `fml` | yes |
 | `fedkd` | yes |
 | `fedtgp` | yes |
+| `pfedmoe` | yes |
 
 ## `local`
 
@@ -159,3 +160,14 @@
 | `algorithm.server_epochs` | integer | `1` | ≥ 1 | Server prototype-training epochs per round. |
 | `algorithm.server_lr` | number | `0.01` | > 0 | Server optimizer learning rate. |
 | `algorithm.margin_cap` | number | `100.0` | > 0 | Maximum adaptive contrastive margin. |
+
+## `pfedmoe`
+
+| Setting | Type | Default | Allowed | Description |
+|---|---|---|---|---|
+| `algorithm.local_epochs` | integer | `1` | ≥ 1 | Client training epochs per round. |
+| `algorithm.lr` | number | `0.01` | > 0 | Private-model learning rate. |
+| `algorithm.proxy_lr` | number | `0.01` | > 0 | Proxy-extractor learning rate. |
+| `algorithm.gate_lr` | number | `0.01` | > 0 | Private gating-network learning rate. |
+| `algorithm.gate_hidden_dim` | integer | `32` | ≥ 1 | Width of the private two-layer gating network. |
+| `algorithm.proxy_model` | string \| null | `null` | — | Architecture used for the shared homogeneous proxy extractor. |
