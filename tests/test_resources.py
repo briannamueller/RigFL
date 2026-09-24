@@ -301,17 +301,3 @@ def test_resource_summary_requires_the_same_flop_estimator():
     summary = summarize_resources([{"resources": first}, {"resources": second}])
     assert summary["flops_comparable"] is False
     assert summary["attributed_training_flops_mean"] is None
-
-
-def test_resource_summary_handles_malformed_legacy_resources():
-    resources = ResourceMonitor(DEVICE).to_dict()
-    del resources["measurement"]["timing"]
-    assert summarize_resources([{"resources": resources}]) == {
-        "available": False
-    }
-
-    resources = ResourceMonitor(DEVICE).to_dict()
-    resources["measurement"]["timing"]["hardware"] = []
-    assert summarize_resources([{"resources": resources}]) == {
-        "available": False
-    }

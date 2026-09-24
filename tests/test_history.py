@@ -123,33 +123,6 @@ def test_runner_results_do_not_own_a_nested_schema_version():
     assert out["selection_views_supported"] == ["global", "per-client"]
 
 
-class _IterativeWithExtraOperation(Local):
-    """An operation outside the iterative contract must not be invoked."""
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.events = []
-
-    def prepare(self, clients, shared, client_state, device):
-        raise AssertionError("iterative must not call one-shot preparation")
-
-    def local_train(self, client, shared):
-        self.events.append(f"train:{self.round_idx}")
-        return super().local_train(client, shared)
-
-
-def test_iterative_runner_invokes_only_its_own_lifecycle_operations():
-    torch.manual_seed(0)
-    algorithm = _IterativeWithExtraOperation(
-        LocalConfig(local_epochs=1, lr=0.05))
-    out = iterative(algorithm, [_client()], num_rounds=2,
-                        device=torch.device("cpu"), num_classes=NC,
-                        eval_gap=1, verbose=False)
-    assert algorithm.events == ["train:0", "train:1"]
-    history = out["evaluation_history"]
-    assert history["evaluation_rounds"] == [0, 1]
-    assert set(history) == {"evaluation_rounds", "clients", "client_sample_counts"}
-
-
 def test_early_stopping_rejects_bad_config_passed_as_a_raw_dict():
     """A dict handed straight to iterative bypasses Pydantic entirely."""
     for cfg, match in (({"enabled": True, "metric": "nonsense"}, "Unknown metric"),

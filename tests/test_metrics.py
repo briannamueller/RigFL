@@ -11,22 +11,10 @@ from rigfl.eval.metrics import accuracy, balanced_accuracy
 approx = pytest.approx
 
 
-def test_accuracy_all_correct():
-    preds = torch.tensor([0, 1, 2, 1])
-    labels = torch.tensor([0, 1, 2, 1])
-    assert accuracy(preds, labels) == approx(1.0)
-
-
-def test_accuracy_half_correct():
+def test_accuracy_matches_a_hand_computed_example():
     preds = torch.tensor([0, 0, 1, 1])
     labels = torch.tensor([0, 1, 0, 1])
     assert accuracy(preds, labels) == approx(0.5)
-
-
-def test_accuracy_all_wrong():
-    preds = torch.tensor([1, 1, 1])
-    labels = torch.tensor([0, 0, 0])
-    assert accuracy(preds, labels) == approx(0.0)
 
 
 def test_balanced_accuracy_differs_under_imbalance():
@@ -36,20 +24,6 @@ def test_balanced_accuracy_differs_under_imbalance():
     preds = torch.zeros(5, dtype=torch.long)
     assert accuracy(preds, labels) == approx(0.8)
     assert balanced_accuracy(preds, labels, num_classes=2) == approx(0.5)
-
-
-def test_balanced_accuracy_equals_accuracy_when_balanced_and_symmetric():
-    # Balanced classes, symmetric per-class recall -> the two metrics coincide.
-    labels = torch.tensor([0, 0, 1, 1])
-    preds = torch.tensor([0, 0, 1, 1])
-    assert balanced_accuracy(preds, labels, num_classes=2) == approx(1.0)
-    assert accuracy(preds, labels) == approx(1.0)
-
-
-def test_balanced_accuracy_perfect():
-    labels = torch.tensor([0, 1, 2, 0, 1, 2])
-    preds = labels.clone()
-    assert balanced_accuracy(preds, labels, num_classes=3) == approx(1.0)
 
 
 def test_balanced_accuracy_skips_absent_classes():

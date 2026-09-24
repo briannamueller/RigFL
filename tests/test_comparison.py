@@ -282,7 +282,7 @@ def test_unmatched_mixed_seed_values_produce_the_intended_error():
         )
 
 
-def test_legacy_results_without_partition_metadata_keep_partition_identity():
+def test_partition_id_preserves_data_identity_without_an_optional_summary():
     left = _record("a", 0, [[0.6]], setting=1)
     right = _record("a", 0, [[0.6]], setting=1)
     left.pop("partition")

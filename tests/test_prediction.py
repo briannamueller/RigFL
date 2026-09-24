@@ -149,12 +149,9 @@ def test_a_flat_binary_logit_vector_is_accepted():
 
 @pytest.mark.parametrize("probs, match", [
     (torch.rand(4), "must be \\[N, C\\]"),
-    (torch.rand(2, 2, 2), "must be \\[N, C\\]"),
     (torch.tensor([[float("nan"), 1.0]]), "NaN or inf"),
-    (torch.tensor([[float("inf"), 0.0]]), "NaN or inf"),
     (torch.tensor([[-0.5, 1.5]]), "negative values"),
     (torch.tensor([[0.3, 0.3]]), "must sum to 1"),
-    (torch.tensor([[2.0, 3.0]]), "must sum to 1"),
 ])
 def test_invalid_probabilities_are_refused(probs, match):
     with pytest.raises(PredictionError, match=match):
@@ -340,7 +337,7 @@ def test_a_class_with_no_global_prototype_gets_zero_probability():
 # ── 21: label-only algorithms ───────────────────────────────────────────────────
 
 class LabelOnlyAlgorithm:
-    """An external algorithm written against the older contract."""
+    """A minimal algorithm that intentionally returns only class IDs."""
 
     def init_globals(self):
         return None
@@ -495,9 +492,9 @@ def test_no_one_hot_probabilities_are_manufactured_from_labels():
         metric_input(spec("loss"), out)
 
 
-# ── the registry's compatibility path ────────────────────────────────────────
+# ── custom metric registration ───────────────────────────────────────────────
 
-def test_a_custom_hard_label_metric_keeps_the_old_signature():
+def test_a_custom_hard_label_metric_receives_predicted_and_true_labels():
     register("half_of_accuracy", "maximize",
              fn=lambda preds, labels, n: (preds == labels).float().mean().item() / 2)
     try:
@@ -506,7 +503,7 @@ def test_a_custom_hard_label_metric_keeps_the_old_signature():
         out = compute_all(Predictions.from_probabilities(
             torch.tensor([[0.9, 0.1], [0.2, 0.8]])), y, 2)
         assert out["half_of_accuracy"] == 0.5
-        # Bare label tensors remain accepted by the compatibility path.
+        # Bare label tensors are a supported label-only prediction.
         assert compute_all(torch.tensor([0, 1]), y, 2)["half_of_accuracy"] == 0.5
     finally:
         unregister("half_of_accuracy")

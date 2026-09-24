@@ -1,35 +1,12 @@
-"""Every core algorithm fulfils the four-function Algorithm contract."""
+"""The public construction and runner contract for registered algorithms."""
 
 from __future__ import annotations
 
 import inspect
 
-import pytest
-
-from rigfl.algorithms.apple import APPLE
-from rigfl.algorithms.fedamp import FedAMP
-from rigfl.algorithms.fedapa import FedAPA
-from rigfl.algorithms.fedapen import FedAPEN
-from rigfl.algorithms.fedavg import FedAvg
-from rigfl.algorithms.fedcac import FedCAC
-from rigfl.algorithms.fedgh import FedGH
-from rigfl.algorithms.fedkd import FedKD
-from rigfl.algorithms.fedpac import FedPAC
-from rigfl.algorithms.fedproto import FedProto
-from rigfl.algorithms.fedprox import FedProx
-from rigfl.algorithms.fedtgp import FedTGP
-from rigfl.algorithms.fml import FML
-from rigfl.algorithms.global_ensemble import GlobalEnsemble
-from rigfl.algorithms.lgfedavg import LGFedAvg
-from rigfl.algorithms.local import Local
-from rigfl.algorithms.pfedmoe import PFedMoE
 from rigfl.core.config import AlgorithmConfig
 from rigfl.core.interfaces import Algorithm
-
-BASELINES = [Local, GlobalEnsemble, FedAvg, FedProx, FedProto, FedGH,
-             LGFedAvg, FML, FedKD, FedTGP, FedCAC, FedAPA, FedAPEN, PFedMoE,
-             FedAMP, APPLE, FedPAC]
-CONTRACT = ("init_globals", "local_train", "aggregate", "predict")
+from rigfl.experiment.registry import REGISTRY, AlgorithmSpec, build_algorithm
 
 
 def test_default_construction_hook_stores_the_validated_configuration():
@@ -48,7 +25,6 @@ def test_default_construction_hook_stores_the_validated_configuration():
 def test_one_registry_entry_is_enough_to_construct_an_ordinary_algorithm(
     monkeypatch,
 ):
-    from rigfl.experiment.registry import REGISTRY, AlgorithmSpec, build_algorithm
     from tests.helpers import resolved_experiment
 
     class ExampleConfig(AlgorithmConfig):
@@ -67,23 +43,23 @@ def test_one_registry_entry_is_enough_to_construct_an_ordinary_algorithm(
     assert algorithm.config is config
 
 
-@pytest.mark.parametrize("cls", BASELINES, ids=[c.__name__ for c in BASELINES])
-def test_algorithm_exposes_contract(cls):
-    for name in CONTRACT:
-        attr = getattr(cls, name, None)
-        assert attr is not None, f"{cls.__name__} is missing {name}"
-        assert callable(attr), f"{cls.__name__}.{name} is not callable"
-
-
-@pytest.mark.parametrize("cls", BASELINES, ids=[c.__name__ for c in BASELINES])
-def test_iterative_operations_share_the_standard_signatures(cls):
-    local = list(inspect.signature(cls.local_train).parameters)
-    server = list(inspect.signature(cls.aggregate).parameters)
-    assert len(local) == 3 and local[:2] == ["self", "client"]
-    assert len(server) == 3 and server[:2] == ["self", "uploads"]
-
-
-@pytest.mark.parametrize("cls", BASELINES, ids=[c.__name__ for c in BASELINES])
-def test_predict_receives_client_inputs_and_shared_state(cls):
-    params = list(inspect.signature(cls.predict).parameters)
-    assert len(params) == 4 and params[:3] == ["self", "client", "x"]
+def test_registered_algorithms_accept_the_standard_runner_calls():
+    """The runner calls positionally; local parameter names are not a contract."""
+    argument_counts = {
+        "init_globals": 0,
+        "local_train": 2,
+        "aggregate": 2,
+        "predict": 3,
+    }
+    for algorithm_name, spec in REGISTRY.items():
+        for operation, argument_count in argument_counts.items():
+            method = getattr(spec.algorithm, operation, None)
+            assert callable(method), f"{algorithm_name} is missing {operation}"
+            arguments = [object()] * (argument_count + 1)  # unbound self + runner args
+            try:
+                inspect.signature(method).bind(*arguments)
+            except TypeError as exc:
+                raise AssertionError(
+                    f"{algorithm_name}.{operation} cannot accept the standard "
+                    "runner arguments"
+                ) from exc

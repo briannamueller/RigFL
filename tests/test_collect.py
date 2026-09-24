@@ -37,7 +37,7 @@ _SEL = {
 
 
 def _history(*client_values):
-    """A one-round schema-2 result whose clients hold the given values.
+    """A one-round result whose clients hold the given values.
 
     These fixtures are about grouping and pairing, so one round is enough.
     """
