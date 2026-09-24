@@ -7,7 +7,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from rigfl.experiment.collect import _resolve_selection
 from rigfl.experiment.launch import expand
 from rigfl.experiment.optimize import (
     _manifest,
@@ -523,34 +522,3 @@ def test_replicate_counts_expand_to_matched_seeds():
         {"partition_seed": seed, "split_seed": seed, "experiment_seed": seed}
         for seed in (0, 1, 2)
     ]
-
-
-def test_collection_uses_and_enforces_the_adaptive_objective_protocol():
-    manifest = {
-        "optimization": {
-            "metric": "balanced_accuracy",
-            "selection_view": "per-client",
-            "selection_aggregation": "weighted_mean",
-            "round_tie_break": "latest",
-        }
-    }
-    defaults = SimpleNamespace(
-        selection_metric=None,
-        selection_view=None,
-        selection_aggregation=None,
-        tie_break=None,
-    )
-    assert _resolve_selection(defaults, [], manifest) == (
-        "balanced_accuracy",
-        "per-client",
-        "weighted_mean",
-        "latest",
-    )
-    changed = SimpleNamespace(
-        selection_metric="accuracy",
-        selection_view=None,
-        selection_aggregation=None,
-        tie_break=None,
-    )
-    with pytest.raises(SystemExit, match="objective protocol"):
-        _resolve_selection(changed, [], manifest)

@@ -4,46 +4,42 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections import Counter
-from itertools import combinations
+import math
 from pathlib import Path
 
 from rigfl.eval.comparison import (
     ConfigurationComparisonError,
     compare_configurations,
-    comparison_context,
     format_comparisons,
     frozen_configuration,
 )
+from rigfl.eval.metrics import direction_of
+from rigfl.eval.report import summarize
 from rigfl.eval.selection import resolve_metric
 from rigfl.experiment.artifacts import (
     ResultValidationError,
-    atomic_write_json,
-    atomic_write_text,
     is_run_result,
     read_json,
     validate_run_record,
 )
-from rigfl.experiment.config import fingerprint
-from rigfl.experiment.storage import run_store
-from rigfl.experiment.tuning import (
-    SELECTION_KIND,
-    TuningError,
-    load_manifest,
-    load_selection,
+from rigfl.experiment.reporting_config import (
+    ReportingConfigError,
+    apply_named_filter,
+    human_configuration,
+    load_reporting_config,
+    record_value,
+    selection_defaults,
+    write_csv,
 )
 
 
-def _contrast(value: str) -> tuple[str, str]:
-    if ":" not in value:
-        raise argparse.ArgumentTypeError("use LEFT:RIGHT")
-    left, right = value.split(":", 1)
-    if not left.strip() or not right.strip() or left == right:
-        raise argparse.ArgumentTypeError("contrast labels must be distinct")
-    return left.strip(), right.strip()
-
-
-def _load_results(path: Path, *, required: bool = True) -> list[dict]:
+def _load_results(
+    path: Path,
+    *,
+    required: bool = True,
+    ignore_invalid: bool = False,
+    invalid: list[str] | None = None,
+) -> list[dict]:
     paths = sorted(path.glob("*.json")) if path.is_dir() else [path]
     records = []
     problems = []
@@ -58,332 +54,279 @@ def _load_results(path: Path, *, required: bool = True) -> list[dict]:
             continue
         record["_source_file"] = str(candidate)
         records.append(record)
-    if problems:
+    if problems and not ignore_invalid:
         raise ConfigurationComparisonError(
             "invalid result files:\n  " + "\n  ".join(problems)
         )
+    if invalid is not None:
+        invalid.extend(problems)
     if required and not records:
         raise ConfigurationComparisonError(f"no completed run results found at {path}")
     return records
 
 
-def _selection_result_paths(selection_path: Path) -> set[Path]:
-    try:
-        artifact = load_selection(selection_path)
-    except TuningError as error:
-        raise ConfigurationComparisonError(str(error)) from error
-    selected = {
-        (selection_path.parent / source).resolve()
-        for group in artifact.get("groups", [])
-        for source in group.get("selected_result_files", [])
-    }
-    if not selected:
-        raise ConfigurationComparisonError(
-            f"selection contains no selected result files: {selection_path}"
-        )
-    return selected
-
-
-def _load_selected_results(path: Path) -> list[dict] | None:
-    if path.is_file():
-        artifact = read_json(path)
-        if not isinstance(artifact, dict) or artifact.get("kind") != SELECTION_KIND:
-            return None
-        artifact_paths = [path]
-    elif path.is_dir():
-        artifact_paths = sorted(path.rglob("selection.json"))
-    else:
-        artifact_paths = []
-
-    selected_paths: set[Path] = set()
-    found = False
-    for artifact_path in artifact_paths:
-        found = True
-        selected_paths.update(_selection_result_paths(artifact_path))
-
-    if not found:
-        return None
-    if not selected_paths:
-        raise ConfigurationComparisonError(
-            f"selection artifacts contain no selected result files below {path}"
-        )
-    records = []
-    for result_path in sorted(selected_paths):
-        records.extend(_load_results(result_path))
-    return records
-
-
-def _tuning_result_names(path: Path) -> set[str]:
-    if not path.is_dir():
-        return set()
-    names = set()
-    for manifest_path in path.rglob("study.json"):
-        try:
-            artifact = load_manifest(manifest_path.parent)
-        except TuningError as error:
-            raise ConfigurationComparisonError(str(error)) from error
-        if artifact is None:
-            continue
-        for evaluation in artifact.get("evaluations", []):
-            names.update(
-                Path(source).name
-                for source in evaluation.get("source_results", [])
-                if source
-            )
-        for trial in artifact.get("optimization", {}).get("trials", []):
-            names.update(
-                Path(source).name
-                for source in trial.get("source_results", [])
-                if source
-            )
-    return names
-
-
-def _comparison_results(path: Path) -> list[dict]:
-    scope = (
-        path.parent
-        if path.is_dir() and path.name == "runs"
-        else path
-    )
-    selected = _load_selected_results(scope)
-    raw_tuning = path.is_dir() and (path / "study.json").exists()
-    if raw_tuning and selected is None:
-        raise ConfigurationComparisonError(
-            "a raw tuning directory cannot be used for final test comparison; "
-            "complete selection first"
-        )
-    ordinary = []
-    if not raw_tuning:
-        locations = [path]
-        shared_runs = run_store(path)
-        if path.is_dir() and shared_runs != path and shared_runs.is_dir():
-            locations.append(shared_runs)
-        for location in locations:
-            ordinary.extend(_load_results(location, required=False))
-        tuned = _tuning_result_names(scope)
-        ordinary = [
-            record
-            for record in ordinary
-            if Path(record.get("_source_file", "")).name not in tuned
-        ]
-    records = (selected or []) + ordinary
-    unique = {}
-    for record in records:
-        source = str(Path(record["_source_file"]).resolve())
-        unique[source] = record
-    if not unique:
-        raise ConfigurationComparisonError(
-            f"no selected or ordinary run results found at {path}"
-        )
-    return list(unique.values())
-
-
-def _group_results(records: list[dict]) -> dict[tuple[str, str], dict[str, list[dict]]]:
-    by_context = {}
-    for record in records:
-        by_context.setdefault(comparison_context(record), []).append(record)
-
-    return {
-        context: _group_context(context_records)
-        for context, context_records in sorted(by_context.items())
-    }
-
-
-def _group_context(records: list[dict]) -> dict[str, list[dict]]:
-    grouped = {}
-    identities = {}
-    for record in records:
-        identity = frozen_configuration(record)
-        key = json.dumps(identity, sort_keys=True)
-        grouped.setdefault(key, []).append(record)
-        identities[key] = identity
-    algorithm_counts = Counter(
-        identity.get("algorithm") for identity in identities.values()
-    )
-    labelled = {}
-    for key in sorted(grouped):
-        identity = identities[key]
-        algorithm = str(identity.get("algorithm"))
-        label = algorithm
-        if algorithm_counts[identity.get("algorithm")] > 1:
-            label = f"{algorithm}@{fingerprint(_variant_identity(identity))}"
-        if label in labelled:
-            raise ConfigurationComparisonError(
-                f"configuration label collision for {label}"
-            )
-        labelled[label] = grouped[key]
-    return labelled
-
-
-def _variant_identity(identity: dict) -> dict:
-    experiment = dict(identity.get("experiment", {}))
-    for field in (
-        "data_backend",
-        "dataset",
-        "input_kind",
-        "input_spec",
-        "num_classes",
-        "num_clients",
-        "partition_id",
-        "partition_scheme",
-        "validation_fraction",
-    ):
-        experiment.pop(field, None)
-    return {
-        "algorithm": identity.get("algorithm"),
-        "experiment": experiment,
-        "algorithm_config": identity.get("algorithm_config", {}),
-    }
-
-
-def _contrasts(
-    records: dict[str, list[dict]],
-    *,
-    reference: str | None,
-    declared: list[tuple[str, str]],
-    all_pairs: bool,
-) -> list[tuple[str, str]]:
-    if reference:
-        if reference not in records:
-            raise ConfigurationComparisonError(
-                f"unknown reference {reference!r}; available labels: "
-                + ", ".join(records)
-            )
-        contrasts = [(label, reference) for label in records if label != reference]
-    elif all_pairs:
-        contrasts = list(combinations(records, 2))
-    elif declared:
-        contrasts = declared
-    elif len(records) == 2:
-        contrasts = list(combinations(records, 2))
-    else:
-        raise ConfigurationComparisonError(
-            "more than two configurations were found; use --reference, "
-            "--contrast, or --all-pairs. Available labels: " + ", ".join(records)
-        )
-    unknown = sorted({label for pair in contrasts for label in pair} - set(records))
-    if unknown:
-        raise ConfigurationComparisonError(
-            "unknown contrast label(s): " + ", ".join(unknown)
-        )
-    if len({tuple(sorted(pair)) for pair in contrasts}) != len(contrasts):
-        raise ConfigurationComparisonError("each contrast must be declared once")
-    return contrasts
-
-
 def main(argv: list[str] | None = None, *, prog: str | None = None) -> None:
     parser = argparse.ArgumentParser(
-        prog=prog,
-        description="Compare frozen configurations on matched test results."
+        prog=prog, description="Run one named matched configuration comparison."
     )
+    parser.add_argument("results", nargs="?", default="results/runs")
+    parser.add_argument("--config", required=True, help="reporting YAML")
+    parser.add_argument("--comparison", required=True, help="named YAML comparison")
     parser.add_argument(
-        "--results-dir",
-        default="results",
-        help="results or selection artifacts (default: results)",
-    )
-    parser.add_argument(
-        "--contrast",
-        action="append",
-        default=[],
-        type=_contrast,
-        metavar="LEFT:RIGHT",
-        help=(
-            "predeclared comparison; required when more than two "
-            "configurations are given"
-        ),
-    )
-    parser.add_argument("--metric", default="accuracy")
-    parser.add_argument(
-        "--reference",
-        help="compare every other discovered configuration with this label",
-    )
-    parser.add_argument(
-        "--all-pairs",
-        action="store_true",
-        help="compare every pair of discovered configurations",
-    )
-    parser.add_argument(
-        "--selection-view", choices=["global", "per-client"], default="global"
-    )
-    parser.add_argument(
-        "--selection-aggregation",
-        choices=["mean", "weighted_mean"],
-        default="mean",
-    )
-    parser.add_argument(
-        "--tie-break", choices=["earliest", "latest"], default="earliest"
-    )
-    parser.add_argument("--practical-threshold", type=float, required=True)
-    parser.add_argument("--out", help="write the Markdown table")
-    parser.add_argument(
-        "--out-json",
-        help="output path (default: comparison.json inside the results directory)",
+        "--save", nargs="?", const="", metavar="PATH",
+        help="save the comparison CSV; optionally set its path",
     )
     args = parser.parse_args(argv)
 
     try:
-        results_dir = Path(args.results_dir)
-        loaded = _comparison_results(results_dir)
-        contexts = _group_results(loaded)
-        comparison_modes = sum(
-            bool(value) for value in (args.reference, args.contrast, args.all_pairs)
+        results_dir = Path(args.results)
+        reporting = load_reporting_config(args.config)
+        defaults = selection_defaults(reporting)
+        definition = _comparison_definition(reporting, args.comparison)
+        metric = resolve_metric(defaults["metric"], source="defaults.metric")
+        invalid = []
+        loaded = _load_results(
+            results_dir, ignore_invalid=True, invalid=invalid
         )
-        if comparison_modes > 1:
-            raise ConfigurationComparisonError(
-                "choose one of --reference, --contrast, or --all-pairs"
+        filtered, resolved_filter = apply_named_filter(
+            loaded, reporting, definition["filter"]
+        )
+        selected = []
+        selection_details = []
+        for value in definition["values"]:
+            candidates = [
+                record
+                for record in filtered
+                if record_value(record, definition["field"], object()) == value
+            ]
+            records, details = _select_configuration(
+                candidates,
+                definition["select"],
+                metric,
+                view=defaults["view"],
+                aggregation=defaults["aggregation"],
+                tie_break=defaults["tie_break"],
+                side=f"{definition['field']}={value}",
             )
-        metric = resolve_metric(args.metric, source="--metric")
-        comparisons = []
-        labels_by_context = {}
-        for context, records in contexts.items():
-            if len(records) < 2:
-                raise ConfigurationComparisonError(
-                    f"dataset={context[0]}, data_configuration={context[1]} "
-                    "contains fewer than two frozen configurations"
-                )
-            labels_by_context[f"{context[0]}:{context[1]}"] = list(records)
-            for left, right in _contrasts(
-                records,
-                reference=args.reference,
-                declared=args.contrast,
-                all_pairs=args.all_pairs,
-            ):
-                comparisons.append(
-                    compare_configurations(
-                        records[left],
-                        records[right],
-                        metric,
-                        left_label=left,
-                        right_label=right,
-                        view=args.selection_view,
-                        aggregation=args.selection_aggregation,
-                        tie_break=args.tie_break,
-                        practical_threshold=args.practical_threshold,
-                    )
-                )
-    except (ConfigurationComparisonError, ValueError) as error:
+            selected.append(records)
+            selection_details.append(details)
+        if definition["select"] == "exact":
+            _check_exact_confounding(
+                selected[0][0], selected[1][0], definition["field"]
+            )
+        labels = [f"{definition['field']}={value}" for value in definition["values"]]
+        comparison = compare_configurations(
+            selected[0],
+            selected[1],
+            metric,
+            left_label=labels[0],
+            right_label=labels[1],
+            view=defaults["view"],
+            aggregation=defaults["aggregation"],
+            tie_break=defaults["tie_break"],
+            practical_threshold=definition["practical_margin"],
+        )
+    except (ConfigurationComparisonError, ReportingConfigError, ValueError) as error:
         raise SystemExit(f"cannot compare configurations: {error}") from error
 
-    table = format_comparisons(comparisons)
-    print(table)
-    if args.out:
-        atomic_write_text(Path(args.out), table + "\n")
-        print(f"wrote {args.out}")
-    out_json = Path(args.out_json) if args.out_json else (
-        results_dir / "comparison.json"
-        if results_dir.is_dir()
-        else results_dir.parent / "comparison.json"
+    print(
+        f"Comparison {args.comparison!r}; filter {definition['filter']!r}: "
+        f"{resolved_filter}; {len(filtered)} completed replicate(s)."
     )
-    atomic_write_json(
-        out_json,
-        {
-            "kind": "rigfl.comparison_collection",
-            "results_dir": str(results_dir),
-            "configuration_labels": labels_by_context,
-            "comparisons": comparisons,
-        },
+    if invalid:
+        print(
+            f"Warning: excluded {len(invalid)} invalid result file(s): "
+            + "; ".join(invalid)
+        )
+    for label, details in zip(labels, selection_details):
+        print(
+            f"{label}: {details['candidate_count']} candidate configuration(s); "
+            f"selected {details['selected_label']}; validation "
+            f"{metric}={details['validation_score']:.6g}; "
+            f"replicates={details['replicate_count']}"
+            + ("; deterministic tie-break applied" if details["tie"] else "")
+            + "."
+        )
+    print(format_comparisons([comparison]))
+    if args.save is not None:
+        path = (
+            Path(args.save)
+            if args.save
+            else _default_comparison_path(results_dir, definition)
+        )
+        write_csv(
+            path,
+            [_comparison_csv_row(args.comparison, definition, comparison)],
+        )
+        print(f"wrote {path}")
+
+
+def _comparison_definition(config: dict, name: str) -> dict:
+    comparisons = config.get("comparisons", {})
+    if name not in comparisons:
+        raise ReportingConfigError(
+            f"unknown comparison {name!r}; available comparisons: "
+            + (", ".join(sorted(comparisons)) or "none")
+        )
+    definition = comparisons[name]
+    if not isinstance(definition, dict):
+        raise ReportingConfigError(f"comparison {name!r} must be a mapping")
+    required = {"filter", "field", "values", "select", "practical_margin"}
+    missing = sorted(required - set(definition))
+    unknown = sorted(set(definition) - required)
+    if missing or unknown:
+        details = []
+        if missing:
+            details.append("missing: " + ", ".join(missing))
+        if unknown:
+            details.append("unknown: " + ", ".join(unknown))
+        raise ReportingConfigError(
+            f"comparison {name!r} is invalid ({'; '.join(details)})"
+        )
+    values = definition["values"]
+    if not isinstance(values, list) or len(values) != 2 or values[0] == values[1]:
+        raise ReportingConfigError(
+            f"comparison {name!r} values must contain exactly two distinct entries"
+        )
+    if definition["select"] not in {"exact", "best_validation"}:
+        raise ReportingConfigError(
+            f"comparison {name!r} select must be exact or best_validation"
+        )
+    margin = definition["practical_margin"]
+    if not isinstance(margin, (int, float)) or not math.isfinite(margin) or margin < 0:
+        raise ReportingConfigError(
+            f"comparison {name!r} practical_margin must be finite and nonnegative"
+        )
+    return definition
+
+
+def _configuration_groups(records: list[dict]) -> list[list[dict]]:
+    grouped = {}
+    for record in records:
+        key = json.dumps(frozen_configuration(record), sort_keys=True)
+        grouped.setdefault(key, []).append(record)
+    return [grouped[key] for key in sorted(grouped)]
+
+
+def _select_configuration(
+    records: list[dict],
+    mode: str,
+    metric: str,
+    *,
+    view: str,
+    aggregation: str,
+    tie_break: str,
+    side: str,
+) -> tuple[list[dict], dict]:
+    groups = _configuration_groups(records)
+    if not groups:
+        raise ReportingConfigError(f"comparison side {side!r} has no candidates")
+    scored = []
+    for group in groups:
+        summary = summarize(
+            group,
+            metric,
+            view=view,
+            aggregation=aggregation,
+            tie_break=tie_break,
+        )
+        if summary["val_mean"] is None:
+            raise ReportingConfigError(
+                f"comparison side {side!r} has a candidate without validation {metric}"
+            )
+        label = _human_label(group[0])
+        scored.append((summary["val_mean"], label, group))
+    if mode == "exact" and len(scored) != 1:
+        raise ReportingConfigError(
+            f"comparison side {side!r} with select=exact has {len(scored)} "
+            "complete configurations: " + "; ".join(item[1] for item in scored)
+        )
+    sign = -1 if direction_of(metric) == "maximize" else 1
+    scored.sort(key=lambda item: (sign * item[0], item[1]))
+    score, label, selected = scored[0]
+    tied = sum(item[0] == score for item in scored) > 1
+    return selected, {
+        "candidate_count": len(scored),
+        "selected_label": label,
+        "validation_score": score,
+        "replicate_count": len(selected),
+        "tie": tied,
+    }
+
+
+def _human_label(record: dict) -> str:
+    fields = human_configuration(record)
+    return ", ".join(f"{path}={fields[path]}" for path in sorted(fields))
+
+
+def _check_exact_confounding(left: dict, right: dict, field: str) -> None:
+    if field == "algorithm":
+        return
+    left_fields = human_configuration(left)
+    right_fields = human_configuration(right)
+    left_fields.pop(field, None)
+    right_fields.pop(field, None)
+    differences = sorted(
+        path
+        for path in set(left_fields) | set(right_fields)
+        if left_fields.get(path, object()) != right_fields.get(path, object())
     )
-    print(f"wrote {out_json}")
+    if differences:
+        raise ReportingConfigError(
+            "select=exact comparison is confounded by other scientific settings: "
+            + ", ".join(differences)
+        )
+
+
+def _default_comparison_path(results: Path, definition: dict) -> Path:
+    base = results.parent / "comparisons"
+    parts = [definition["field"], *(str(value) for value in definition["values"])]
+    filename = "_".join(part.replace("/", "_") for part in parts) + ".csv"
+    return base / filename
+
+
+def _comparison_csv_row(name: str, definition: dict, comparison: dict) -> dict:
+    effect = comparison["effects"]["mean_gain"]
+    replicates = comparison["run_level_differences"]
+    seed_values = {
+        component: sorted(
+            {
+                item["replicate_condition"][field]
+                for item in replicates
+            },
+            key=repr,
+        )
+        for component, field in (
+            ("partition", "partition_seed"),
+            ("split", "split_seed"),
+            ("training", "experiment_seed"),
+        )
+    }
+    varied = [name for name, values in seed_values.items() if len(values) > 1]
+    return {
+        "comparison": name,
+        "filter": definition["filter"],
+        "field": definition["field"],
+        "left_value": definition["values"][0],
+        "right_value": definition["values"][1],
+        "select": definition["select"],
+        "metric": comparison["protocol"]["metric"],
+        "practical_margin": definition["practical_margin"],
+        "mean_difference": effect["estimate"],
+        "replicate_sd": effect["sd"],
+        "ci_low": effect["ci_low"],
+        "ci_high": effect["ci_high"],
+        "replicate_count": effect["n"],
+        "df": effect["df"],
+        "pooled_within_replicate_client_difference_sd": effect[
+            "pooled_within_replicate_client_sd"
+        ],
+        "practical_conclusion": comparison["practical_conclusion"],
+        "partition_seed_values": seed_values["partition"],
+        "split_seed_values": seed_values["split"],
+        "training_seed_values": seed_values["training"],
+        "varied_seed_components": varied,
+    }
 
 
 if __name__ == "__main__":

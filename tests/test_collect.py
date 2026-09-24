@@ -1,4 +1,4 @@
-"""Grouping for the results table: automatic labels and --group-by overrides.
+"""Grouping for named result reports.
 
 The property that matters: on a sweep of an algorithm-specific field, each setting gets
 its OWN row (its own mean ± CI), rather than being averaged together as extra seeds.
@@ -16,12 +16,8 @@ from rigfl.eval.transfer import (
 )
 from rigfl.experiment import collect as collect_module
 from rigfl.experiment.collect import (
-    _field,
-    _records_supporting,
     _rows_by_algorithm,
-    _rows_by_group,
     _sort_rows_by_validation,
-    load_submission_results,
 )
 from rigfl.experiment.collect import main as collect_main
 from tests.helpers import resolved_experiment
@@ -53,11 +49,7 @@ def _history(*client_values):
                                    "client_sample_counts": counts}}
 
 
-def _rows(by_algorithm, group_by=None):
-    if group_by:
-        return _rows_by_group(by_algorithm, group_by, _SEL["metric"],
-                              view=_SEL["view"], aggregation=_SEL["aggregation"],
-                              tie_break=_SEL["tie_break"])
+def _rows(by_algorithm):
     return _rows_by_algorithm(by_algorithm, _SEL["metric"], view=_SEL["view"],
                            aggregation=_SEL["aggregation"], tie_break=_SEL["tie_break"])
 
@@ -75,13 +67,6 @@ def _fedprox_config(mu):
     return {"mu": mu}
 
 
-def test_field_reads_algorithm_and_experiment_and_name():
-    rec = _rec("fedprox", 0, 0.7, **_fedprox_config(5))
-    assert _field(rec, "algorithm") == "fedprox"
-    assert _field(rec, "algorithm.mu") == 5
-    assert _field(rec, "experiment.batch") == 32
-
-
 def test_missing_flop_setting_matches_the_disabled_default():
     from rigfl.experiment.collect import experiment_condition
 
@@ -91,51 +76,18 @@ def test_missing_flop_setting_matches_the_disabled_default():
     assert experiment_condition(old) == experiment_condition(current)
 
 
-def test_both_omits_an_unsupported_view_instead_of_duplicating_fallback():
-    fedprox = _rec("fedprox", 0, 0.7)
-    fedprox["result"]["selection_views_supported"] = ["per-client"]
-    local = _rec("local", 0, 0.5)
-    by_algorithm = {"fedprox": [fedprox], "local": [local]}
-
-    assert set(_records_supporting(by_algorithm, "global")) == {"local"}
-    assert set(_records_supporting(by_algorithm, "per-client")) == {
-        "fedprox", "local"
-    }
-
-
-def test_group_by_hyperparameter_makes_one_row_per_setting():
+def test_hyperparameter_sweep_makes_one_row_per_setting():
     by_algorithm = {"fedprox": [
         _rec("fedprox", 0, 0.60, **_fedprox_config(3)),
         _rec("fedprox", 1, 0.62, **_fedprox_config(3)),
         _rec("fedprox", 0, 0.80, **_fedprox_config(5)),
         _rec("fedprox", 1, 0.82, **_fedprox_config(5)),
     ]}
-    rows = _rows(by_algorithm, ["algorithm.mu"])
+    rows = _rows(by_algorithm)
     assert set(rows) == {"fedprox mu=3", "fedprox mu=5"}
     assert rows["fedprox mu=3"]["seeds"] == 2
     assert abs(rows["fedprox mu=3"]["test_mean"] - 0.61) < 1e-9
     assert abs(rows["fedprox mu=5"]["test_mean"] - 0.81) < 1e-9
-
-
-def test_group_by_rejects_unlabelled_algorithm_variants():
-    records = {"fedprox": [
-        _rec("fedprox", 0, 0.60, **_fedprox_config(3)),
-        _rec("fedprox", 1, 0.80, **_fedprox_config(5)),
-    ]}
-
-    with pytest.raises(ValueError, match="multiple algorithm configurations"):
-        _rows(records, ["algorithm"])
-
-
-def test_group_by_keeps_algorithms_separate():
-    by_algorithm = {
-        "fedprox": [_rec("fedprox", 0, 0.8, **_fedprox_config(5))],
-        "local": [_rec("local", 0, 0.5)],
-    }
-    rows = _rows(by_algorithm, ["algorithm.mu"])
-    # Local has no FedProx mu, so it gets its own row labelled with None.
-    assert "fedprox mu=5" in rows
-    assert "local mu=None" in rows
 
 
 def _cond_rec(algorithm, seed, *, dataset="cifar10", partition_id="partition-a",
@@ -309,63 +261,16 @@ def test_validation_order_respects_metric_direction_and_data_setup():
     ]
 
 
-def test_saved_grid_shows_completed_and_missing_seed_combinations():
-    from rigfl.eval.report import format_replicate_details, format_table
-
-    record = _cond_rec("fedprox", 0, algorithm_cfg=_fedprox_config(3))
-    tasks = [
-        {"algorithm": "fedprox",
-         "experiment": {"dataset": "cifar10", "partition_seed": 0,
-                        "split_seed": 0, "seed": seed},
-         "algorithm_config": _fedprox_config(3)}
-        for seed in range(3)
-    ]
-
-    rows = _rows_by_algorithm(
-        {"fedprox": [record]}, "accuracy", view="global", aggregation="mean",
-        tie_break="earliest", grid_tasks=tasks,
-    )
-
-    summary = next(iter(rows.values()))
-    assert summary["runs"] == 1
-    assert summary["expected_runs"] == 3
-    assert summary["replicate_conditions"] == [
-        {"partition_seed": 0, "split_seed": 0, "experiment_seed": 0}
-    ]
-    assert [item["experiment_seed"] for item in summary["missing_replicates"]] == [1, 2]
-    assert "| 1/3 |" in format_table(rows, "accuracy")
-    assert "missing: (0, 0, 1), (0, 0, 2)" in format_replicate_details(rows)
-
-
-def test_saved_grid_counts_each_configuration_separately():
-    records = [
-        _rec("fedavg", 0, 0.6, lr=0.01),
-        _rec("fedavg", 0, 0.8, lr=0.03),
-        _rec("fedavg", 1, 0.8, lr=0.03),
-    ]
-    tasks = [
-        {"algorithm": "fedavg", "experiment": {"seed": seed},
-         "algorithm_config": {"lr": lr}}
-        for lr in (0.01, 0.03) for seed in range(3)
-    ]
-    rows = _rows_by_algorithm(
-        {"fedavg": records}, "accuracy", view="global", aggregation="mean",
-        tie_break="earliest", grid_tasks=tasks,
-    )
-    assert rows["fedavg lr=0.01"]["expected_runs"] == 3
-    assert rows["fedavg lr=0.01"]["runs"] == 1
-    assert rows["fedavg lr=0.03"]["expected_runs"] == 3
-    assert rows["fedavg lr=0.03"]["runs"] == 2
-
-
 def test_collect_help_lists_key_reporting_controls(monkeypatch, capsys):
     monkeypatch.setattr("sys.argv", ["collect", "--help"])
     with pytest.raises(SystemExit) as exit_info:
         collect_main()
     assert exit_info.value.code == 0
     help_text = capsys.readouterr().out
-    assert "--strict-results" in help_text
-    assert "--performance-margin" in help_text
+    assert "--config" in help_text
+    assert "--filter" in help_text
+    assert "--per-client" in help_text
+    assert "--save" in help_text
 
 
 def test_collect_reports_invalid_files_and_keeps_valid_runs(tmp_path, monkeypatch, capsys):
@@ -375,20 +280,22 @@ def test_collect_reports_invalid_files_and_keeps_valid_runs(tmp_path, monkeypatc
         return {"fedprox": [_cond_rec("fedprox", 0)]}
 
     monkeypatch.setattr(collect_module, "load_results", load)
-    report = tmp_path / "summary.md"
-    artifact = tmp_path / "summary.json"
-    monkeypatch.setattr("sys.argv", [
-        "collect", "--out", str(report), "--out-json", str(artifact)
+    config = tmp_path / "reporting.yaml"
+    config.write_text(
+        "version: 1\nfilters:\n  main_results:\n    algorithm: [fedprox]\n"
+    )
+    report = tmp_path / "main.csv"
+
+    collect_main([
+        str(tmp_path / "runs"), "--config", str(config),
+        "--filter", "main_results", "--save", str(report), "--per-client",
     ])
 
-    collect_main()
-
-    assert "WARNING: excluded 1 invalid result file" in capsys.readouterr().out
-    assert report.read_text().startswith("**Warning:** Excluded 1 invalid result file")
-    assert "broken.json" in report.read_text()
-    assert json.loads(artifact.read_text())["ignored_invalid_results"] == [
-        {"file": "broken.json", "reason": "missing evaluation history"}
-    ]
+    output = capsys.readouterr().out
+    assert "excluded 1 invalid result file" in output
+    assert report.exists()
+    assert (tmp_path / "main_per_client.csv").exists()
+    assert "partition_seed" in (tmp_path / "main_per_client.csv").read_text()
 
 
 def test_collect_labels_client_level_performance_analysis(tmp_path, monkeypatch, capsys):
@@ -400,24 +307,34 @@ def test_collect_labels_client_level_performance_analysis(tmp_path, monkeypatch,
             "fedavg": [_cond_rec("fedavg", 0)],
         },
     )
-    report = tmp_path / "summary.md"
-    monkeypatch.setattr("sys.argv", ["collect", "--out", str(report)])
+    config = tmp_path / "reporting.yaml"
+    config.write_text(
+        "version: 1\nfilters:\n  main_results:\n"
+        "    algorithm: [local, fedavg]\n"
+    )
 
-    collect_main()
+    collect_main([
+        str(tmp_path / "runs"), "--config", str(config),
+        "--filter", "main_results",
+    ])
 
-    assert "### Client-level performance analysis" in capsys.readouterr().out
-    assert "### Client-level performance analysis: global" in report.read_text()
+    assert "### Local-relative client impact" in capsys.readouterr().out
 
 
-def test_collect_strict_results_stops_on_invalid_file(monkeypatch):
-    def load(_directory, _dataset, *, ignore_invalid, invalid):
-        assert ignore_invalid is False
-        raise SystemExit("invalid result")
+def test_report_requires_a_known_named_filter(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        collect_module,
+        "load_results",
+        lambda *_args, **_kwargs: {"local": [_cond_rec("local", 0)]},
+    )
+    config = tmp_path / "reporting.yaml"
+    config.write_text("version: 1\nfilters:\n  main_results:\n    algorithm: [local]\n")
 
-    monkeypatch.setattr(collect_module, "load_results", load)
-    monkeypatch.setattr("sys.argv", ["collect", "--strict-results"])
-    with pytest.raises(SystemExit, match="invalid result"):
-        collect_main()
+    with pytest.raises(SystemExit, match="unknown filter 'missing'"):
+        collect_main([
+            str(tmp_path / "runs"), "--config", str(config),
+            "--filter", "missing",
+        ])
 
 
 def test_loader_can_skip_invalid_file_without_losing_valid_runs(tmp_path, monkeypatch):
@@ -435,30 +352,6 @@ def test_loader_can_skip_invalid_file_without_losing_valid_runs(tmp_path, monkey
     rows = collect_module.load_results(tmp_path, None, ignore_invalid=True, invalid=invalid)
     assert len(rows["fedavg"]) == 1
     assert invalid[0][0] == "broken.json"
-
-
-def test_submission_collection_is_not_affected_by_an_unrelated_bad_result(
-    tmp_path, monkeypatch
-):
-    wanted = {
-        "algorithm": "local",
-        "config": {"experiment": {"dataset": "cifar10"}},
-    }
-    (tmp_path / "wanted.json").write_text(json.dumps(wanted))
-    (tmp_path / "unrelated-broken.json").write_text("{")
-    monkeypatch.setattr(collect_module, "validate_run_record", lambda *args, **kwargs: None)
-
-    rows = load_submission_results(
-        tmp_path,
-        [{
-            "algorithm": "local",
-            "run_fingerprint": "abc123",
-            "result_file": "wanted.json",
-        }],
-        None,
-    )
-
-    assert rows["local"] == [{**wanted, "_source_file": "wanted.json"}]
 
 
 def test_sweep_task_rejects_an_unknown_setting(tmp_path):
@@ -485,15 +378,14 @@ def test_sweep_task_rejects_an_unknown_setting(tmp_path):
     run_task(str(grid), 1, tmp_path, dry_run=True)
 
 
-def test_group_by_still_separates_experiments():
-    """--group-by says how to label rows, not that different datasets may be
-    averaged together as extra seeds."""
+def test_named_report_still_separates_experiments():
+    """A named filter does not turn distinct partitions into extra seeds."""
     recs = {"fedprox": [
         _cond_rec("fedprox", 0, partition_id="partition-a", algorithm_cfg=_fedprox_config(5)),
         _cond_rec("fedprox", 1, partition_id="partition-a", algorithm_cfg=_fedprox_config(5)),
         _cond_rec("fedprox", 0, partition_id="partition-b", algorithm_cfg=_fedprox_config(5)),
     ]}
-    rows = _rows(recs, ["algorithm.mu"])
+    rows = _rows(recs)
     assert len(rows) == 2, rows                  # distinct partitions stay apart
     assert sorted(s["seeds"] for s in rows.values()) == [1, 2]
 
@@ -516,7 +408,7 @@ def test_zipped_data_and_training_replicates_form_one_result_row():
         settings.pop("configuration")
         records.append(record)
 
-    rows = _rows({"fedprox": records}, ["algorithm.mu"])
+    rows = _rows({"fedprox": records})
 
     assert len(rows) == 1
     summary = next(iter(rows.values()))
@@ -620,10 +512,10 @@ def test_experiments_differing_only_in_an_unlabelled_field_stay_apart():
                 "result": _history(.7, .6)}
 
     recs = {"fedprox": [rec(0, 32), rec(1, 32), rec(0, 64)]}
-    for rows in (_rows(recs), _rows(recs, ["algorithm.mu"])):
-        assert len(rows) == 2, rows
-        assert sorted(s["seeds"] for s in rows.values()) == [1, 2]
-        assert any("batch=64" in k for k in rows)      # labelled by what differs
+    rows = _rows(recs)
+    assert len(rows) == 2, rows
+    assert sorted(s["seeds"] for s in rows.values()) == [1, 2]
+    assert any("batch=64" in k for k in rows)      # labelled by what differs
 
 
 def test_early_stopping_settings_separate_experiments():
@@ -652,11 +544,11 @@ def test_rows_are_uniquely_labelled_when_only_early_stopping_differs():
     """Early-stopping differences appear in unique result-row labels."""
     recs = {"local": [_es_rec(0, enabled=True, metric="accuracy", patience=5),
                       _es_rec(0, enabled=True, metric="accuracy", patience=20)]}
-    for rows in (_rows(recs), _rows(recs, ["algorithm"])):
-        assert len(rows) == 2, rows
-        assert len(set(rows)) == 2, "row labels must be unique"
-        assert any("patience=5" in k for k in rows)
-        assert any("patience=20" in k for k in rows)
+    rows = _rows(recs)
+    assert len(rows) == 2, rows
+    assert len(set(rows)) == 2, "row labels must be unique"
+    assert any("patience=5" in k for k in rows)
+    assert any("patience=20" in k for k in rows)
 
 
 def test_the_three_condition_helpers_agree_on_their_fields():
