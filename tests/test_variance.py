@@ -1,4 +1,4 @@
-"""Crossed seed variance-pilot analysis."""
+"""Crossed seed sensitivity analysis."""
 
 from __future__ import annotations
 
@@ -108,7 +108,7 @@ def _crossed_records() -> list[dict]:
 def test_variance_pilot_reports_marginal_seed_spreads():
     artifact = analyze_variance_pilot(_crossed_records())
 
-    assert artifact["kind"] == "rigfl.variance_pilot"
+    assert artifact["kind"] == "rigfl.seed_sensitivity"
     assert artifact["selection"]["split"] == "validation"
     assert artifact["selection"]["direction"] == "maximize"
     group = artifact["groups"][0]
@@ -128,6 +128,13 @@ def test_variance_pilot_reports_marginal_seed_spreads():
         "marginal_spread"
     ] == pytest.approx(0.01)
     assert group["cells"][0]["selected_round"] == 0
+    from rigfl.experiment.variance import format_variance_pilot
+
+    rendered = format_variance_pilot(artifact)
+    assert "partition=[0, 1]" in rendered
+    assert "split=[0, 1]" in rendered
+    assert "training=[0, 1]" in rendered
+    assert "causal attributions" in rendered
 
 
 def test_variance_pilot_labels_different_datasets_and_configurations():

@@ -1,4 +1,4 @@
-"""Describe performance variation across a crossed seed sweep."""
+"""Describe performance sensitivity across a fully crossed seed sweep."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ SEED_LABELS = {
 
 
 class VariancePilotError(ValueError):
-    """Raised when results do not form an analyzable crossed seed grid."""
+    """Raised when results do not form an analyzable crossed seed design."""
 
 
 def _seed_condition(record: dict) -> tuple[int, int, int]:
@@ -134,7 +134,7 @@ def _analyze_group(
     ]
     if insufficient:
         raise VariancePilotError(
-            "a crossed variance pilot needs at least two values for each seed; "
+            "crossed seed sensitivity needs at least two values for each seed; "
             "insufficient: " + ", ".join(insufficient)
         )
 
@@ -176,7 +176,7 @@ def _analyze_group(
         cells.append(cell)
     if len(actual_views) != 1:
         raise VariancePilotError(
-            "records in one variance-pilot group resolved to different selection views"
+            "records in one seed-sensitivity group resolved to different selection views"
         )
 
     sources = {}
@@ -295,7 +295,7 @@ def analyze_variance_pilot(
     ]
     _add_group_labels(groups, records)
     return {
-        "kind": "rigfl.variance_pilot",
+        "kind": "rigfl.seed_sensitivity",
         "selection": {
             "metric": name,
             "direction": direction_of(name),
@@ -306,15 +306,15 @@ def analyze_variance_pilot(
         },
         "interpretation": (
             "Marginal spreads are descriptive diagnostics, not variance-component "
-            "estimates or significance tests, and do not measure interactions "
-            "between seed sources."
+            "estimates, significance tests, or causal attributions, and do not "
+            "measure interactions between seed sources."
         ),
         "groups": groups,
     }
 
 
 def format_variance_pilot(artifact: dict) -> str:
-    lines = ["# Crossed seed variance pilot", "", artifact["interpretation"]]
+    lines = ["# Crossed seed sensitivity", "", artifact["interpretation"]]
     metric = artifact["selection"]["metric"]
     direction = artifact["selection"]["direction"]
     lines.extend(["", f"Metric direction: {direction}."])
@@ -331,6 +331,12 @@ def format_variance_pilot(artifact: dict) -> str:
                     f"{len(group['levels']['split_seed'])} split, and "
                     f"{len(group['levels']['experiment_seed'])} experiment seed "
                     "values)."
+                ),
+                (
+                    "Seed values: "
+                    f"partition={group['levels']['partition_seed']}; "
+                    f"split={group['levels']['split_seed']}; "
+                    f"training={group['levels']['experiment_seed']}."
                 ),
                 "",
                 "| rank | seed source | marginal means | spread |",
@@ -402,7 +408,7 @@ def main(argv: list[str] | None = None, *, prog: str | None = None) -> None:
     try:
         records = records_for_grid(records, args.grid)
     except ValueError as error:
-        raise SystemExit(f"[variance] {error}") from error
+        raise SystemExit(f"[seed-sensitivity] {error}") from error
     try:
         artifact = analyze_variance_pilot(
             records,
@@ -412,7 +418,7 @@ def main(argv: list[str] | None = None, *, prog: str | None = None) -> None:
             tie_break=args.tie_break,
         )
     except VariancePilotError as error:
-        raise SystemExit(f"[variance] {error}") from error
+        raise SystemExit(f"[seed-sensitivity] {error}") from error
 
     rendered = format_variance_pilot(artifact)
     print(rendered)
