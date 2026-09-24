@@ -89,11 +89,14 @@ def test_profile_separates_frequency_magnitude_and_burden():
     assert _estimate(summary, "negative_transfer_rate") == 0.25
     assert _estimate(summary, "negative_transfer_magnitude") == pytest.approx(0.2)
     assert _estimate(summary, "negative_transfer_burden") == pytest.approx(0.05)
-    assert _estimate(summary, "worst_tail_gain") == pytest.approx(-0.2)
+    assert _estimate(summary, "worst_tail_gain") == pytest.approx(-0.1)
     assert _estimate(summary, "negative_transfer_burden") == pytest.approx(
         _estimate(summary, "negative_transfer_rate")
         * _estimate(summary, "negative_transfer_magnitude")
     )
+    assert summary["negative_transfer_magnitude"]["harmed_client_count"] == 1
+    assert summary["negative_transfer_magnitude"]["affected_replicate_count"] == 1
+    assert summary["negative_transfer_magnitude"]["ci_low"] is None
     rates = [
         item["negative_transfer_rate"]["estimate"]
         for item in summary["threshold_profile"]
@@ -190,7 +193,7 @@ def test_one_shot_fallback_uses_per_client_selection_for_local():
     assert [pair["local_value"] for pair in summary["paired_gains"]] == [0.5, 0.5]
 
 
-def test_hierarchical_intervals_are_reproducible_and_require_both_dimensions():
+def test_replicate_t_intervals_require_two_independent_replicates():
     algorithm = [
         _record("fedavg", 0, [[0.7], [0.6]]),
         _record("fedavg", 1, [[0.3], [0.4]]),
@@ -218,7 +221,8 @@ def test_hierarchical_intervals_are_reproducible_and_require_both_dimensions():
         "accuracy",
         **_SEL,
     )
-    assert one_client["uncertainty"]["available"] is False
+    assert one_client["uncertainty"]["available"] is True
+    assert one_client["mean_gain"]["pooled_within_replicate_client_sd"] is None
 
 
 

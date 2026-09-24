@@ -314,7 +314,6 @@ def main(argv: list[str] | None = None, *, prog: str | None = None) -> None:
         "--tie-break", choices=["earliest", "latest"], default="earliest"
     )
     parser.add_argument("--practical-threshold", type=float, required=True)
-    parser.add_argument("--tail-fraction", type=float, default=0.10)
     parser.add_argument("--out", help="write the Markdown table")
     parser.add_argument(
         "--out-json",
@@ -360,7 +359,6 @@ def main(argv: list[str] | None = None, *, prog: str | None = None) -> None:
                         aggregation=args.selection_aggregation,
                         tie_break=args.tie_break,
                         practical_threshold=args.practical_threshold,
-                        tail_fraction=args.tail_fraction,
                     )
                 )
     except (ConfigurationComparisonError, ValueError) as error:

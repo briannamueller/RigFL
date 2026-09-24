@@ -8,9 +8,11 @@ import math
 from rigfl.eval.comparison import (
     ConfigurationComparisonError,
     comparison_context,
+    matched_difference_summary,
     paired_client_differences,
-    summarize_paired_effects,
+    pairs_by_replicate,
 )
+from rigfl.eval.report import replicate_statistics
 from rigfl.experiment.config import algorithm_identity
 
 
@@ -168,25 +170,20 @@ def negative_transfer_summary(
         tie_break=tie_break,
     )
     pairs = paired.pop("pairs")
-    effects, uncertainty = summarize_paired_effects(
+    effects, uncertainty = _local_relative_effects(
         pairs,
-        threshold,
-        tail_fraction,
-        aggregation,
+        threshold=threshold,
+        tail_fraction=tail_fraction,
+        aggregation=aggregation,
         include_uncertainty=include_uncertainty,
     )
-    replicate_count = len(
-        {
-            tuple(pair["replicate_condition"].values())
-            for pair in pairs
-        }
-    )
+    replicate_count = effects["mean_gain"]["n"]
 
     summary = {
         "available": True,
         "baseline": "local",
-        "comparison_unit": "client_replicate_pair",
-        "weighting": "equal_client_replicate_pairs",
+        "comparison_unit": "replicate",
+        "weighting": "equal_replicates_after_within_replicate_client_summary",
         "gain_definition": (
             "algorithm_value - local_value"
             if paired["direction"] == "maximize"
@@ -199,6 +196,7 @@ def negative_transfer_summary(
         "replicate_count": replicate_count,
         "uncertainty": uncertainty,
         "paired_gains": pairs,
+        "mean_gain": effects["mean_gain"],
         "benefit_rate": effects["benefit_rate"],
         "negative_transfer_rate": effects["harm_rate"],
         "negative_transfer_magnitude": effects["harm_magnitude"],
@@ -207,20 +205,101 @@ def negative_transfer_summary(
     }
     summary["threshold_profile"] = []
     for value in thresholds:
-        threshold_effects, _ = summarize_paired_effects(
-            pairs,
-            value,
-            tail_fraction,
-            aggregation,
-            include_uncertainty=include_uncertainty,
+        harm_rates = _replicate_harm_rates(pairs, value)
+        harm_rate = _effect_summary(
+            harm_rates, include_uncertainty=include_uncertainty
         )
         summary["threshold_profile"].append(
             {
                 "threshold": value,
-                "negative_transfer_rate": threshold_effects["harm_rate"],
+                "negative_transfer_rate": harm_rate,
             }
         )
     return summary
+
+
+def _effect_summary(values: list[float], *, include_uncertainty: bool) -> dict:
+    stats = replicate_statistics(
+        values, confidence_interval=include_uncertainty
+    )
+    return {
+        "estimate": stats["mean"],
+        "sd": stats["sd"],
+        "ci_half_width": stats["ci_half_width"],
+        "ci_low": stats["ci_low"],
+        "ci_high": stats["ci_high"],
+        "n": stats["n"],
+        "df": stats["df"],
+    }
+
+
+def _replicate_harm_rates(pairs: list[dict], threshold: float) -> list[float]:
+    rates = []
+    for run_pairs in pairs_by_replicate(pairs).values():
+        gains = [pair["gain"] for pair in run_pairs]
+        rates.append(sum(gain < -threshold for gain in gains) / len(gains))
+    return rates
+
+
+def _local_relative_effects(
+    pairs: list[dict],
+    *,
+    threshold: float,
+    tail_fraction: float,
+    aggregation: str,
+    include_uncertainty: bool,
+) -> tuple[dict, dict]:
+    """Compute neutral client-impact quantities within, then across, replicates."""
+    mean_gain, uncertainty = matched_difference_summary(
+        pairs, aggregation, include_uncertainty=include_uncertainty
+    )
+    by_replicate = pairs_by_replicate(pairs)
+    benefit_rates = []
+    harm_rates = []
+    harm_burdens = []
+    harm_magnitudes = []
+    worst_tail_gains = []
+    harmed_client_count = 0
+    affected_replicate_count = 0
+    for key in sorted(by_replicate, key=repr):
+        gains = [pair["gain"] for pair in by_replicate[key]]
+        harms = [-gain for gain in gains if gain < -threshold]
+        benefit_rates.append(sum(gain > threshold for gain in gains) / len(gains))
+        harm_rates.append(len(harms) / len(gains))
+        harm_burdens.append(sum(harms) / len(gains))
+        tail_count = max(1, math.ceil(tail_fraction * len(gains)))
+        worst_tail_gains.append(sum(sorted(gains)[:tail_count]) / tail_count)
+        if harms:
+            harm_magnitudes.append(sum(harms) / len(harms))
+            harmed_client_count += len(harms)
+            affected_replicate_count += 1
+
+    conditional_magnitude = _effect_summary(
+        harm_magnitudes, include_uncertainty=False
+    )
+    conditional_magnitude.update(
+        {
+            "harmed_client_count": harmed_client_count,
+            "affected_replicate_count": affected_replicate_count,
+            "conditional_on_harm": True,
+        }
+    )
+    return {
+        "mean_gain": mean_gain,
+        "benefit_rate": _effect_summary(
+            benefit_rates, include_uncertainty=include_uncertainty
+        ),
+        "harm_rate": _effect_summary(
+            harm_rates, include_uncertainty=include_uncertainty
+        ),
+        "harm_magnitude": conditional_magnitude,
+        "harm_burden": _effect_summary(
+            harm_burdens, include_uncertainty=include_uncertainty
+        ),
+        "worst_tail_gain": _effect_summary(
+            worst_tail_gains, include_uncertainty=include_uncertainty
+        ),
+    }, uncertainty
 
 
 def _interval(value: dict, *, percent: bool = False) -> str:
@@ -256,12 +335,12 @@ def format_negative_transfer_table(rows: dict) -> str:
         else "worst-tail gain"
     )
     out = [
-        f"| algorithm | selection | pairs | benefit rate | NTR | NTM | NTB | {tail_label} |",
-        "|---|---|---:|---:|---:|---:|---:|---:|",
+        f"| algorithm | selection | pairs | mean gain | benefit rate | NTR | NTM | NTB | {tail_label} |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for label, summary in available:
         if not summary.get("available", True):
-            out.append(f"| {label} | — | — | — | — | — | — | — |")
+            out.append(f"| {label} | — | — | — | — | — | — | — | — |")
             continue
         marker = " §" if summary.get("uncertainty", {}).get("reason") == (
             "experiment seeds are reused across run conditions"
@@ -273,6 +352,7 @@ def format_negative_transfer_table(rows: dict) -> str:
                     label + marker,
                     summary["selection_view"],
                     str(summary["pair_count"]),
+                    _interval(summary["mean_gain"]),
                     _interval(summary["benefit_rate"], percent=True),
                     _interval(summary["negative_transfer_rate"], percent=True),
                     _interval(summary["negative_transfer_magnitude"]),
@@ -292,8 +372,9 @@ def format_negative_transfer_table(rows: dict) -> str:
         note = f"Performance margin: {threshold:g} metric units."
         if not suppressed:
             note += (
-                " Intervals resample replicate conditions and clients; they "
-                "require more than one of each."
+                " Intervals are two-sided replicate-level t intervals and require "
+                "at least two independent replicate estimates. NTM is conditional "
+                "on observed harm and is reported without an ordinary replicate CI."
             )
         out.extend(["", note])
     if suppressed:

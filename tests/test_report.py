@@ -51,7 +51,30 @@ def test_summarize_reports_the_selected_rounds_test_value():
 def test_summarize_single_seed_omits_a_confidence_interval():
     record = _record("local", 0, [.1, .5], [.2, .4], rounds=(0, 1))
     s = summarize([record], "accuracy", **_SEL)
-    assert s["seeds"] == 1 and s["test_std"] == 0.0 and s["test_ci"] is None
+    assert s["seeds"] == 1
+    assert s["test_n"] == 1 and s["test_df"] == 0
+    assert s["test_std"] is None and s["test_ci"] is None
+
+
+def test_summary_separates_replicate_uncertainty_from_client_heterogeneity():
+    first = _record("local", 0, [0.5], [0.5], rounds=(0,), n_clients=2)
+    second = _record("local", 1, [0.5], [0.5], rounds=(0,), n_clients=2)
+    first_history = first["result"]["evaluation_history"]
+    second_history = second["result"]["evaluation_history"]
+    first_history["clients"]["0"]["test"]["accuracy"] = [0.2]
+    first_history["clients"]["1"]["test"]["accuracy"] = [0.8]
+    second_history["clients"]["0"]["test"]["accuracy"] = [0.4]
+    second_history["clients"]["1"]["test"]["accuracy"] = [1.0]
+
+    summary = summarize([first, second], "accuracy", **_SEL)
+
+    assert summary["test_mean"] == pytest.approx(0.6)
+    assert summary["test_std"] == pytest.approx(2 ** 0.5 / 10)
+    assert summary["test_n"] == 2 and summary["test_df"] == 1
+    assert summary["test_ci"] is not None
+    assert summary["pooled_within_replicate_client_sd"] == pytest.approx(
+        (0.18) ** 0.5
+    )
 
 
 def _one_shot_record():

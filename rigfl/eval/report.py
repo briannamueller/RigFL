@@ -78,6 +78,64 @@ def mean_ci(xs: list[float]) -> tuple[float, float | None]:
     return mean, _T95.get(n - 1, 1.96) * sd / math.sqrt(n)
 
 
+def replicate_statistics(
+    values: list[float], *, confidence_interval: bool = True
+) -> dict:
+    """Mean and replicate-level uncertainty for independent run estimates."""
+    n = len(values)
+    if n == 0:
+        return {
+            "mean": None,
+            "sd": None,
+            "ci_half_width": None,
+            "ci_low": None,
+            "ci_high": None,
+            "n": 0,
+            "df": 0,
+        }
+    mean = statistics.mean(values)
+    if n == 1:
+        return {
+            "mean": mean,
+            "sd": None,
+            "ci_half_width": None,
+            "ci_low": None,
+            "ci_high": None,
+            "n": 1,
+            "df": 0,
+        }
+    sd = statistics.stdev(values)
+    half_width = (
+        _T95.get(n - 1, 1.96) * sd / math.sqrt(n)
+        if confidence_interval
+        else None
+    )
+    return {
+        "mean": mean,
+        "sd": sd,
+        "ci_half_width": half_width,
+        "ci_low": mean - half_width if half_width is not None else None,
+        "ci_high": mean + half_width if half_width is not None else None,
+        "n": n,
+        "df": n - 1,
+    }
+
+
+def pooled_within_replicate_sd(values: list[list[float]]) -> float | None:
+    """Pool client deviations around each replicate's own client mean."""
+    residual_sum_squares = 0.0
+    degrees_of_freedom = 0
+    for replicate in values:
+        if len(replicate) < 2:
+            continue
+        mean = statistics.mean(replicate)
+        residual_sum_squares += sum((value - mean) ** 2 for value in replicate)
+        degrees_of_freedom += len(replicate) - 1
+    if degrees_of_freedom == 0:
+        return None
+    return math.sqrt(residual_sum_squares / degrees_of_freedom)
+
+
 def selection_for(record: dict, metric: str | None, *, view: str = "global",
                   aggregation: str = "mean", tie_break: str = "earliest",
                   include_test: bool = True) -> dict:
@@ -198,6 +256,7 @@ def summarize(records: list[dict], metric: str, *, view: str = "global",
                           tie_break=tie_break) for r in records]
 
     test_scores, val_scores, rounds, steps = [], [], [], []
+    test_client_values: list[list[float]] = []
     dists: list[dict] = []
     for sel in sels:
         tv, tw = _values_and_weights(sel, name, "test")
@@ -209,6 +268,7 @@ def summarize(records: list[dict], metric: str, *, view: str = "global",
             test_scores.append(test_value)
         if tv:
             dists.append(client_distribution(tv, name, weights=tw))
+            test_client_values.append(tv)
         if validation_value is not None:
             val_scores.append(validation_value)
         if sel.get("selected_round") is not None:
@@ -219,12 +279,13 @@ def summarize(records: list[dict], metric: str, *, view: str = "global",
             steps.extend(sel["selected_steps"].values())
 
     replicate_independence = independent_replicates(records)
-    intervals_available = replicate_independence and len(records) > 1
-    t_m, t_ci = mean_ci(test_scores)
-    v_m, v_ci = mean_ci(val_scores)
-    if not intervals_available:
-        t_ci = None
-        v_ci = None
+    intervals_available = replicate_independence and len(test_scores) > 1
+    test_stats = replicate_statistics(
+        test_scores, confidence_interval=intervals_available
+    )
+    validation_stats = replicate_statistics(
+        val_scores, confidence_interval=intervals_available
+    )
     experiment_seeds = {
         record.get("config", {}).get("experiment", {}).get("seed")
         for record in records
@@ -244,9 +305,23 @@ def summarize(records: list[dict], metric: str, *, view: str = "global",
         "mixed_rounds": any(s.get("mixed_rounds") for s in sels),
         "mixed_local_selections": any(
             s.get("mixed_local_selections") for s in sels),
-        "test_mean": t_m, "test_ci": t_ci,
-        "test_std": statistics.stdev(test_scores) if len(test_scores) > 1 else 0.0,
-        "val_mean": v_m, "val_ci": v_ci,
+        "test_mean": test_stats["mean"],
+        "test_std": test_stats["sd"],
+        "test_ci": test_stats["ci_half_width"],
+        "test_ci_low": test_stats["ci_low"],
+        "test_ci_high": test_stats["ci_high"],
+        "test_n": test_stats["n"],
+        "test_df": test_stats["df"],
+        "val_mean": validation_stats["mean"],
+        "val_std": validation_stats["sd"],
+        "val_ci": validation_stats["ci_half_width"],
+        "val_ci_low": validation_stats["ci_low"],
+        "val_ci_high": validation_stats["ci_high"],
+        "val_n": validation_stats["n"],
+        "val_df": validation_stats["df"],
+        "pooled_within_replicate_client_sd": pooled_within_replicate_sd(
+            test_client_values
+        ),
         "selected_rounds": rounds,
         "selected_steps": steps,
         "seeds": len(experiment_seeds),
@@ -262,8 +337,8 @@ def summarize(records: list[dict], metric: str, *, view: str = "global",
             None
             if intervals_available
             else (
-                "fewer than two runs"
-                if len(records) < 2
+                "fewer than two replicate estimates"
+                if len(test_scores) < 2
                 else "experiment seeds are reused across run conditions"
             )
         ),
@@ -475,7 +550,9 @@ def format_replicate_details(rows: dict) -> str:
     return "\n".join(lines)
 
 
-def _format_interval(mean: float, interval: float | None) -> str:
+def _format_interval(mean: float | None, interval: float | None) -> str:
+    if mean is None:
+        return "—"
     if interval is None:
         return f"{mean:.3f}"
     return f"{mean:.3f} ± {interval:.3f}"

@@ -159,9 +159,14 @@ def test_comparison_pairs_clients_and_orients_gain():
         [0.2, -0.1, 0.1, 0.0]
     )
     assert _estimate(result, "mean_gain") == pytest.approx(0.05)
-    assert _estimate(result, "benefit_rate") == 0.5
-    assert _estimate(result, "harm_rate") == 0.25
+    assert set(result["effects"]) == {"mean_gain"}
+    assert result["effects"]["mean_gain"]["n"] == 2
+    assert result["effects"]["mean_gain"]["df"] == 1
+    assert result["effects"]["mean_gain"][
+        "pooled_within_replicate_client_sd"
+    ] == pytest.approx(0.025 ** 0.5)
     assert result["uncertainty"]["available"] is True
+    assert result["uncertainty"]["method"] == "replicate_level_t_interval"
     assert result["effects"]["mean_gain"]["ci_low"] is not None
 
 
@@ -421,7 +426,7 @@ def test_result_discovery_labels_multiple_variants_of_one_algorithm():
         (-0.02, 0.01, "right_better"),
     ],
 )
-def test_cluster_bootstrap_recovers_constant_effects(gain, threshold, conclusion):
+def test_replicate_t_interval_recovers_constant_effects(gain, threshold, conclusion):
     left = [
         _record("left", seed, [[0.5 + gain], [0.6 + gain]], setting=1)
         for seed in range(5)

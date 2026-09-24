@@ -4,20 +4,22 @@ from __future__ import annotations
 
 import json
 import math
-import random
 import statistics
 
 from rigfl.eval.metrics import canonical, direction_of
-from rigfl.eval.report import independent_replicates, mean_ci, selection_for
+from rigfl.eval.report import (
+    independent_replicates,
+    mean_ci,
+    pooled_within_replicate_sd,
+    replicate_statistics,
+    selection_for,
+)
 from rigfl.experiment.config import (
     algorithm_identity,
     fingerprint,
     result_data_configuration,
     result_data_configuration_id,
 )
-
-BOOTSTRAP_REPLICATES = 2000
-RANDOM_SEED = 0
 
 
 class ConfigurationComparisonError(ValueError):
@@ -309,129 +311,58 @@ def _pair_replicate_key(pair: dict) -> tuple:
     )
 
 
-def _point_metrics(
-    pairs: list[dict], threshold: float, tail_fraction: float, aggregation: str
-) -> dict:
-    gains = [pair["gain"] for pair in pairs]
+def pairs_by_replicate(pairs: list[dict]) -> dict[tuple, list[dict]]:
+    """Group matched client differences by their complete replicate condition."""
     by_run: dict[tuple, list[dict]] = {}
     for pair in pairs:
         key = _pair_replicate_key(pair)
         by_run.setdefault(key, []).append(pair)
-    run_gains = [
-        _run_gain(by_run[key], aggregation) for key in sorted(by_run, key=repr)
-    ]
-    harm = [-gain for gain in gains if gain < -threshold]
-    benefit_count = sum(gain > threshold for gain in gains)
-    count = len(gains)
-    tail_count = max(1, math.ceil(tail_fraction * count))
-    return {
-        "mean_gain": statistics.mean(run_gains),
-        "median_gain": statistics.median(run_gains),
-        "benefit_rate": benefit_count / count,
-        "harm_rate": len(harm) / count,
-        "harm_magnitude": statistics.mean(harm) if harm else None,
-        "harm_burden": sum(harm) / count,
-        "worst_tail_gain": statistics.mean(sorted(gains)[:tail_count]),
-    }
+    return by_run
 
 
-def _percentile(values: list[float], probability: float) -> float | None:
-    if not values:
-        return None
-    ordered = sorted(values)
-    position = probability * (len(ordered) - 1)
-    lower, upper = math.floor(position), math.ceil(position)
-    if lower == upper:
-        return ordered[lower]
-    fraction = position - lower
-    return ordered[lower] + fraction * (ordered[upper] - ordered[lower])
-
-
-def _estimate(value, bootstrap: list[float | None], available: bool) -> dict:
-    usable = [item for item in bootstrap if item is not None]
-    return {
-        "estimate": value,
-        "ci_low": _percentile(usable, 0.025) if available else None,
-        "ci_high": _percentile(usable, 0.975) if available else None,
-        "ci_replicates": len(usable) if available else 0,
-    }
-
-
-def _hierarchical_bootstrap(
-    pairs: list[dict], threshold: float, tail_fraction: float, aggregation: str
-) -> tuple[dict, dict]:
-    by_replicate: dict[tuple, list[dict]] = {}
-    for pair in pairs:
-        by_replicate.setdefault(_pair_replicate_key(pair), []).append(pair)
-    replicates = sorted(by_replicate, key=repr)
-    available = len(replicates) > 1 and all(
-        len(by_replicate[replicate]) > 1 for replicate in replicates
-    )
-    sampled = {
-        key: [] for key in _point_metrics(pairs, threshold, tail_fraction, aggregation)
-    }
-    if available:
-        rng = random.Random(RANDOM_SEED)
-        for _ in range(BOOTSTRAP_REPLICATES):
-            replicate_sample = [rng.choice(replicates) for _ in replicates]
-            resampled = []
-            for replicate_index, replicate in enumerate(replicate_sample):
-                source_pairs = by_replicate[replicate]
-                client_sample = [
-                    rng.choice(source_pairs) for _ in range(len(source_pairs))
-                ]
-                for client_index, sampled_pair in enumerate(client_sample):
-                    pair = dict(sampled_pair)
-                    pair["replicate_condition"] = {
-                        "partition_seed": replicate_index,
-                        "split_seed": replicate_index,
-                        "experiment_seed": replicate_index,
-                    }
-                    pair["client_id"] = str(client_index)
-                    resampled.append(pair)
-            values = _point_metrics(resampled, threshold, tail_fraction, aggregation)
-            for key, value in values.items():
-                sampled[key].append(value)
-    return sampled, {
-        "method": "hierarchical_cluster_percentile_bootstrap",
-        "clusters": ["replicate_condition", "client_within_replicate"],
-        "confidence_level": 0.95,
-        "replicates": BOOTSTRAP_REPLICATES,
-        "random_seed": RANDOM_SEED,
-        "available": available,
-    }
-
-
-def summarize_paired_effects(
+def matched_difference_summary(
     pairs: list[dict],
-    practical_threshold: float,
-    tail_fraction: float,
     aggregation: str = "mean",
     *,
     include_uncertainty: bool = True,
 ) -> tuple[dict, dict]:
-    """Summarize paired gains across replicate conditions and clients."""
-    point = _point_metrics(pairs, practical_threshold, tail_fraction, aggregation)
-    if include_uncertainty:
-        bootstrap, uncertainty = _hierarchical_bootstrap(
-            pairs, practical_threshold, tail_fraction, aggregation
-        )
-    else:
-        bootstrap = {key: [] for key in point}
-        uncertainty = {
-            "method": "hierarchical_cluster_percentile_bootstrap",
-            "clusters": ["replicate_condition", "client_within_replicate"],
-            "confidence_level": 0.95,
-            "replicates": 0,
-            "random_seed": RANDOM_SEED,
-            "available": False,
-            "reason": "experiment seeds are reused across run conditions",
-        }
-    effects = {
-        key: _estimate(value, bootstrap[key], uncertainty["available"])
-        for key, value in point.items()
+    """Summarize client-paired differences after reducing within each replicate."""
+    by_run = pairs_by_replicate(pairs)
+    ordered = [by_run[key] for key in sorted(by_run, key=repr)]
+    run_gains = [_run_gain(run_pairs, aggregation) for run_pairs in ordered]
+    stats = replicate_statistics(
+        run_gains, confidence_interval=include_uncertainty
+    )
+    effect = {
+        "estimate": stats["mean"],
+        "sd": stats["sd"],
+        "ci_half_width": stats["ci_half_width"],
+        "ci_low": stats["ci_low"],
+        "ci_high": stats["ci_high"],
+        "n": stats["n"],
+        "df": stats["df"],
+        "pooled_within_replicate_client_sd": pooled_within_replicate_sd(
+            [[pair["gain"] for pair in run_pairs] for run_pairs in ordered]
+        ),
     }
-    return effects, uncertainty
+    available = include_uncertainty and stats["n"] > 1
+    uncertainty = {
+        "method": "replicate_level_t_interval",
+        "confidence_level": 0.95,
+        "available": available,
+        "replicate_count": stats["n"],
+        "df": stats["df"],
+        "reason": (
+            None
+            if available
+            else (
+                "fewer than two replicate estimates"
+                if stats["n"] < 2
+                else "experiment seeds are reused across run conditions"
+            )
+        ),
+    }
+    return effect, uncertainty
 
 
 def _run_gain(pairs: list[dict], aggregation: str) -> float:
@@ -521,14 +452,11 @@ def compare_configurations(
     aggregation: str = "mean",
     tie_break: str = "earliest",
     practical_threshold: float = 0.0,
-    tail_fraction: float = 0.10,
     evaluation_split: str = "test",
 ) -> dict:
     """Compare two named, frozen configurations on matched results."""
     if not math.isfinite(practical_threshold) or practical_threshold < 0:
         raise ValueError("practical threshold must be finite and nonnegative")
-    if not 0 < tail_fraction <= 1:
-        raise ValueError("tail fraction must be greater than 0 and at most 1")
     if not independent_replicates(left_records) or not independent_replicates(
         right_records
     ):
@@ -559,10 +487,8 @@ def compare_configurations(
         evaluation_split=evaluation_split,
     )
     pairs = paired.pop("pairs")
-    estimates, uncertainty = summarize_paired_effects(
-        pairs, practical_threshold, tail_fraction, aggregation
-    )
-    interval = estimates["mean_gain"]
+    mean_gain, uncertainty = matched_difference_summary(pairs, aggregation)
+    interval = mean_gain
     decision = "inconclusive"
     if interval["ci_low"] is not None:
         if interval["ci_low"] > practical_threshold:
@@ -617,7 +543,6 @@ def compare_configurations(
             "client_aggregation": aggregation,
             "round_tie_break": tie_break,
             "practical_threshold": practical_threshold,
-            "tail_fraction": tail_fraction,
         },
         "coverage": {
             "pair_count": len(pairs),
@@ -625,7 +550,7 @@ def compare_configurations(
             "replicate_count": len({_pair_replicate_key(pair) for pair in pairs}),
             "client_count": len({pair["client_id"] for pair in pairs}),
         },
-        "effects": estimates,
+        "effects": {"mean_gain": mean_gain},
         "uncertainty": uncertainty,
         "practical_conclusion": decision,
         "resources": _resource_differences(left_index, right_index),
