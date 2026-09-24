@@ -7,6 +7,7 @@
 | `local` | yes |
 | `fedavg` | no |
 | `fedcac` | no |
+| `fedapa` | no |
 | `fedprox` | no |
 | `fedamp` | no |
 | `apple` | no |
@@ -41,6 +42,15 @@
 | `algorithm.lr` | number | `0.1` | > 0 | Client optimizer learning rate. |
 | `algorithm.tau` | number | `0.5` | ≥ 0; ≤ 1 | Fraction of parameters selected as critical within each tensor. |
 | `algorithm.beta` | integer | `100` | ≥ 1 | Round at which critical-parameter collaboration ends. |
+
+## `fedapa`
+
+| Setting | Type | Default | Allowed | Description |
+|---|---|---|---|---|
+| `algorithm.local_epochs` | integer | `5` | ≥ 1 | Client training epochs per round. |
+| `algorithm.lr` | number | `0.01` | > 0 | Client optimizer learning rate. |
+| `algorithm.aggregation_lr` | number | `0.01` | > 0 | Server learning rate for client aggregation-weight vectors. |
+| `algorithm.mu` | number | `0.5` | > 0; ≤ 1 | Self-weight assigned before each aggregation-vector normalization. |
 
 ## `fedprox`
 

@@ -20,6 +20,7 @@ from rigfl.algorithms.fedcac import FedCAC, FedCACConfig
 from rigfl.algorithms.fedgh import FedGH, FedGHConfig
 from rigfl.algorithms.fedkd import FedKD, FedKDConfig
 from rigfl.algorithms.fedpac import FedPAC, FedPACConfig
+from rigfl.algorithms.fedapa import FedAPA, FedAPAConfig
 from rigfl.algorithms.fedproto import FedProto, FedProtoConfig
 from rigfl.algorithms.fedprox import FedProx, FedProxConfig
 from rigfl.algorithms.fedtgp import FedTGP, FedTGPConfig
@@ -66,6 +67,12 @@ REGISTRY = {
         supports_model_heterogeneity=False,
         ignored_experiment_fields=("model_family",),
     ),
+    "fedapa":   AlgorithmSpec(
+        FedAPA,
+        FedAPAConfig,
+        supports_model_heterogeneity=False,
+        ignored_experiment_fields=("model_family",),
+    ),
     "fedprox":  AlgorithmSpec(
         FedProx,
         FedProxConfig,
@@ -105,7 +112,7 @@ _RUNNER_IGNORED_EXPERIMENT_FIELDS = {}
 # Global Ensemble remains callable explicitly and through ``all``.
 BASELINES = ["local", "fedproto", "fedgh", "lgfedavg", "fml", "fedkd", "fedtgp"]
 ALL_ALGORITHMS = BASELINES + [
-    "fedavg", "fedprox", "fedcac", "fedamp", "apple", "fedpac", "global",
+    "fedavg", "fedprox", "fedcac", "fedapa", "fedamp", "apple", "fedpac", "global",
 ]
 
 
