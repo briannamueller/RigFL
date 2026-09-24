@@ -59,8 +59,11 @@ class GatingNetwork(nn.Module):
         self.normalization = nn.LayerNorm(hidden_dim)
         self.output = nn.Linear(hidden_dim, 2)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        flattened = x.flatten(1).float()
+    def forward(self, x) -> torch.Tensor:
+        parts = x if isinstance(x, (tuple, list)) else (x,)
+        flattened = torch.cat(
+            [part.flatten(1).float() for part in parts], dim=1
+        )
         hidden = torch.sigmoid(self.normalization(self.input(flattened)))
         return torch.softmax(self.output(hidden), dim=1)
 

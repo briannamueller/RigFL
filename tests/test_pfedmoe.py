@@ -54,6 +54,17 @@ def test_gate_produces_two_sample_specific_convex_weights():
     assert torch.allclose(weights.sum(dim=1), torch.ones(2))
 
 
+def test_gate_flattens_and_combines_multi_input_samples():
+    gate = GatingNetwork(hidden_dim=4)
+    temporal = torch.ones(2, 3, 2)
+    static = torch.zeros(2, 5)
+
+    weights = gate((temporal, static))
+
+    assert weights.shape == (2, 2)
+    assert torch.allclose(weights.sum(dim=1), torch.ones(2))
+
+
 def test_mixture_combines_proxy_and_private_representations():
     proxy = _proxy()
     private = _model(1.0)
