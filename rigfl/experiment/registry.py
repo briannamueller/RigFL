@@ -16,6 +16,7 @@ from torch import nn
 from rigfl.algorithms.apple import APPLE, APPLEConfig
 from rigfl.algorithms.fedamp import FedAMP, FedAMPConfig
 from rigfl.algorithms.fedavg import FedAvg, FedAvgConfig
+from rigfl.algorithms.fedcac import FedCAC, FedCACConfig
 from rigfl.algorithms.fedgh import FedGH, FedGHConfig
 from rigfl.algorithms.fedkd import FedKD, FedKDConfig
 from rigfl.algorithms.fedpac import FedPAC, FedPACConfig
@@ -59,6 +60,12 @@ REGISTRY = {
         supports_model_heterogeneity=False,
         ignored_experiment_fields=("model_family",),
     ),
+    "fedcac":   AlgorithmSpec(
+        FedCAC,
+        FedCACConfig,
+        supports_model_heterogeneity=False,
+        ignored_experiment_fields=("model_family",),
+    ),
     "fedprox":  AlgorithmSpec(
         FedProx,
         FedProxConfig,
@@ -98,7 +105,7 @@ _RUNNER_IGNORED_EXPERIMENT_FIELDS = {}
 # Global Ensemble remains callable explicitly and through ``all``.
 BASELINES = ["local", "fedproto", "fedgh", "lgfedavg", "fml", "fedkd", "fedtgp"]
 ALL_ALGORITHMS = BASELINES + [
-    "fedavg", "fedprox", "fedamp", "apple", "fedpac", "global",
+    "fedavg", "fedprox", "fedcac", "fedamp", "apple", "fedpac", "global",
 ]
 
 

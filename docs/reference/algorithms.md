@@ -6,6 +6,7 @@
 |---|---|
 | `local` | yes |
 | `fedavg` | no |
+| `fedcac` | no |
 | `fedprox` | no |
 | `fedamp` | no |
 | `apple` | no |
@@ -31,6 +32,15 @@
 |---|---|---|---|---|
 | `algorithm.local_epochs` | integer | `1` | ≥ 1 | Client training epochs per round. |
 | `algorithm.lr` | number | `0.01` | > 0 | Client optimizer learning rate. |
+
+## `fedcac`
+
+| Setting | Type | Default | Allowed | Description |
+|---|---|---|---|---|
+| `algorithm.local_epochs` | integer | `5` | ≥ 1 | Client training epochs per round. |
+| `algorithm.lr` | number | `0.1` | > 0 | Client optimizer learning rate. |
+| `algorithm.tau` | number | `0.5` | ≥ 0; ≤ 1 | Fraction of parameters selected as critical within each tensor. |
+| `algorithm.beta` | integer | `100` | ≥ 1 | Round at which critical-parameter collaboration ends. |
 
 ## `fedprox`
 

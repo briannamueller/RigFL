@@ -9,6 +9,7 @@ import pytest
 from rigfl.algorithms.apple import APPLE
 from rigfl.algorithms.fedamp import FedAMP
 from rigfl.algorithms.fedavg import FedAvg
+from rigfl.algorithms.fedcac import FedCAC
 from rigfl.algorithms.fedgh import FedGH
 from rigfl.algorithms.fedkd import FedKD
 from rigfl.algorithms.fedpac import FedPAC
@@ -23,7 +24,7 @@ from rigfl.core.config import AlgorithmConfig
 from rigfl.core.interfaces import Algorithm
 
 BASELINES = [Local, GlobalEnsemble, FedAvg, FedProx, FedProto, FedGH,
-             LGFedAvg, FML, FedKD, FedTGP, FedAMP, APPLE, FedPAC]
+             LGFedAvg, FML, FedKD, FedTGP, FedCAC, FedAMP, APPLE, FedPAC]
 CONTRACT = ("init_globals", "local_train", "aggregate", "predict")
 
 
