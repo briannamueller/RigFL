@@ -138,8 +138,13 @@ class EarlyStoppingConfig(BaseModel):
         object.__setattr__(
             self, "metric", require_computable(self.metric or DEFAULT_METRIC)
         )
-        if not self.direction:
-            object.__setattr__(self, "direction", direction_of(self.metric))
+        expected_direction = direction_of(self.metric)
+        if self.direction and self.direction != expected_direction:
+            raise ValueError(
+                f'early_stopping.direction must be "{expected_direction}" for '
+                f'metric "{self.metric}", not "{self.direction}"'
+            )
+        object.__setattr__(self, "direction", expected_direction)
         return self
 
 

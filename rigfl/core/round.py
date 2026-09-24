@@ -241,7 +241,14 @@ class _EarlyStopping:
             return
 
         self.metric = require_computable(raw_metric)
-        self.direction = get("direction", None) or direction_of(self.metric)
+        expected_direction = direction_of(self.metric)
+        requested_direction = get("direction", None)
+        if requested_direction and requested_direction != expected_direction:
+            raise ValueError(
+                f'early stopping direction must be "{expected_direction}" for '
+                f'metric "{self.metric}", not "{requested_direction}"'
+            )
+        self.direction = expected_direction
         self.aggregation = get("aggregation", "mean") or "mean"
         self.patience = int(get("patience", 10) or 10)
         self.min_delta = float(get("min_delta", 0.0) or 0.0)

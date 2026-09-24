@@ -27,3 +27,8 @@
 | `tabular_heterogeneous_3` | `tabular_linear`, `tabular_mlp`, `tabular_residual_mlp` |
 | `phishing_byte_cnn` | `phishing_byte_cnn` |
 | `temporal_heterogeneous_3` | `temporal_gru`, `temporal_cnn`, `temporal_lstm` |
+
+For a model family, RigFL assigns architectures to clients in the listed order,
+round-robin by client ID. The order is therefore part of the resolved experiment
+identity. Algorithms that require homogeneous models use the single architecture
+selected by `experiment.model` instead.

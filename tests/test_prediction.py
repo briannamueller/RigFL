@@ -169,6 +169,23 @@ def test_log_loss_refuses_a_wrong_width_distribution():
         log_loss(torch.tensor([[0.5, 0.5]]), torch.tensor([0]), 3)
 
 
+def test_evaluation_refuses_a_prediction_for_the_wrong_number_of_samples():
+    with pytest.raises(ValueError, match="2 labels for 3 evaluation sample"):
+        compute_all(torch.tensor([0, 1]), torch.tensor([0, 1, 2]), 3)
+
+
+@pytest.mark.parametrize(
+    "predictions, match",
+    [
+        (torch.tensor([0, 3]), r"prediction labels must be in \[0, 3\)"),
+        (torch.tensor([0.0, 1.0]), "prediction labels must contain integer"),
+    ],
+)
+def test_evaluation_refuses_invalid_predicted_class_ids(predictions, match):
+    with pytest.raises(ValueError, match=match):
+        compute_all(predictions, torch.tensor([0, 1]), 3)
+
+
 # ── 7-9: every built-in algorithm ───────────────────────────────────────────────
 
 def _built_in_algorithms():

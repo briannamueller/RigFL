@@ -635,6 +635,7 @@ def test_generated_partition_runs_through_experiment_infrastructure(monkeypatch,
     }
     monkeypatch.setattr("rigfl.experiment.run.capture_env", lambda: provenance)
     record = run_one("local", exp, config_class("local")(), torch.device("cpu"))
+    repeated = run_one("local", exp, config_class("local")(), torch.device("cpu"))
     assert record["config"]["experiment"]["partition_id"] == generated.partition_id
     assert record["config"]["experiment"]["partition_seed"] == 7
     assert record["config"]["experiment"]["split_seed"] == 13
@@ -642,4 +643,5 @@ def test_generated_partition_runs_through_experiment_infrastructure(monkeypatch,
     assert record["config"]["experiment"]["partition_scheme"] == "dirichlet"
     assert record["env"] == provenance
     assert set(record["result"]["evaluation_history"]["clients"]) == {"0", "1"}
+    assert repeated["result"] == record["result"]
     validate_run_record(record)

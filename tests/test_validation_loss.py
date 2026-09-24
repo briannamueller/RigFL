@@ -176,6 +176,25 @@ def test_explicit_accuracy_is_valid_and_resolves_its_direction():
     assert record["metric"] == "macro_f1" and record["direction"] == "maximize"
 
 
+def test_early_stopping_rejects_a_direction_that_contradicts_the_metric():
+    from pydantic import ValidationError
+
+    from rigfl.experiment.config import EarlyStoppingConfig
+
+    with pytest.raises(ValidationError, match='must be "minimize" for metric "loss"'):
+        EarlyStoppingConfig(enabled=True, metric="loss", direction="maximize")
+
+    with pytest.raises(ValueError, match='must be "maximize" for metric "accuracy"'):
+        _run(
+            SAME_ACCURACY,
+            early_stopping={
+                "enabled": True,
+                "metric": "accuracy",
+                "direction": "minimize",
+            },
+        )
+
+
 class Overfitting(Algorithm):
     """Predicts more classes right each round, and is more wrong about the rest.
 

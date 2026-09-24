@@ -110,6 +110,12 @@ The partition seed controls which samples belong to each client. The split seed
 controls validation data derived from client training data. Both are separate
 from the experiment seed used for model training.
 
+Repeating a resolved experiment with the same three seeds reproduces its data
+membership, validation split, model initialization, and training randomness.
+RigFL records the software and hardware environment as provenance because a run
+on a different library version or accelerator is not guaranteed to be bitwise
+identical even when those scientific inputs are unchanged.
+
 For BioSilo, generate any requested data-seed variant before launching the
 experiment. Flower can generate a missing variant automatically.
 

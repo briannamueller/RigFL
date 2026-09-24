@@ -129,6 +129,36 @@ def test_a_complete_matching_result_is_skipped(tmp_path):
     assert "validated complete" in message
 
 
+def test_requested_flop_measurement_reruns_a_matching_result_without_it(tmp_path):
+    _, _, fp, record = _record()
+    monitor = ResourceMonitor(torch.device("cpu"))
+    with monitor:
+        for client_id in range(2):
+            with monitor.measure(
+                "local_train", category="algorithm", client_id=client_id
+            ):
+                pass
+        monitor.checkpoint(0)
+        monitor.checkpoint(1)
+    resources = monitor.to_dict()
+    record.update(
+        wall_seconds=round(resources["observed"]["wall_seconds"]["total"], 1),
+        resources=resources,
+    )
+    path = tmp_path / "run.json"
+    write_run_record(path, record, expected_algorithm="local", expected_fingerprint=fp)
+
+    skip, message = existing_result_decision(
+        path,
+        expected_algorithm="local",
+        expected_fingerprint=fp,
+        require_flops=True,
+    )
+
+    assert skip is False
+    assert "does not contain requested FLOP estimates" in message
+
+
 def test_malformed_existing_result_is_not_skipped(tmp_path):
     _, _, fp, record = _record()
     path = tmp_path / "run.json"
@@ -228,6 +258,16 @@ def test_history_must_cover_every_configured_client():
     _, _, _, record = _record()
     del record["result"]["evaluation_history"]["clients"]["1"]
     with pytest.raises(ResultValidationError, match="client ids"):
+        validate_run_record(record)
+
+
+@pytest.mark.parametrize("bad_count", [-1, 1.5, True, "10"])
+def test_sample_counts_must_be_non_negative_integers(bad_count):
+    _, _, _, record = _record()
+    record["result"]["evaluation_history"]["client_sample_counts"][
+        "validation"
+    ]["0"][0] = bad_count
+    with pytest.raises(ResultValidationError, match="invalid count"):
         validate_run_record(record)
 
 

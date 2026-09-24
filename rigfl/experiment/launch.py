@@ -650,7 +650,7 @@ def run_config(task: dict, out_dir: Path, *, dry_run: bool = False,
     try:
         skip, message = existing_result_decision(
             path, expected_algorithm=name, expected_fingerprint=fp,
-            force=force)
+            force=force, require_flops=exp.estimate_flops)
     except ResultValidationError as e:
         raise SystemExit(f"{task_label}: {e.report()}")
     if message:

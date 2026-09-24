@@ -44,6 +44,7 @@ _ENVIRONMENT_ONLY_EXPERIMENT_FIELDS = (
     "wandb_project",
     "dataset_config",
     "data_dir",
+    "estimate_flops",
 )
 _ENVIRONMENT_ONLY_ALGORITHM_FIELDS = ("cache_dir",)
 
@@ -69,9 +70,6 @@ def run_identity_input(
     exp.pop("model", None)
     exp.pop("model_family", None)
     exp["early_stopping"] = normalize_early_stopping(exp.get("early_stopping"))
-    if not exp.get("estimate_flops"):
-        exp.pop("estimate_flops", None)
-
     for key in _ENVIRONMENT_ONLY_ALGORITHM_FIELDS:
         alg.pop(key, None)
 

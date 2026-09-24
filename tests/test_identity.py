@@ -44,7 +44,8 @@ def test_split_seed_is_part_of_identity():
 def test_environment_flags_do_not_change_identity():
     a = resolved_experiment()
     b = resolved_experiment(
-        wandb=True, device="cpu", out_dir="/tmp/x", quiet=False
+        wandb=True, device="cpu", out_dir="/tmp/x", quiet=False,
+        estimate_flops=True,
     )
     assert run_fingerprint(a, {}) == run_fingerprint(b, {})
 

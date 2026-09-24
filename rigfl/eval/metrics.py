@@ -230,6 +230,28 @@ def compute_all(output: "Predictions | torch.Tensor", labels: torch.Tensor,
     vectors remain aligned.
     """
     output = as_predictions(output)
+    if labels.ndim != 1:
+        raise ValueError(
+            f"evaluation labels must be 1-D [N], got shape {tuple(labels.shape)}"
+        )
+    if output.labels.numel() != labels.numel():
+        raise ValueError(
+            f"prediction has {output.labels.numel()} labels for "
+            f"{labels.numel()} evaluation sample(s)"
+        )
+    integer_dtypes = {
+        torch.uint8, torch.int8, torch.int16, torch.int32, torch.int64,
+    }
+    for name, values in (("prediction", output.labels), ("evaluation", labels)):
+        if values.dtype not in integer_dtypes:
+            raise ValueError(f"{name} labels must contain integer class ids")
+        if values.numel() and (
+            int(values.min()) < 0 or int(values.max()) >= num_classes
+        ):
+            raise ValueError(
+                f"{name} labels must be in [0, {num_classes}); got range "
+                f"[{int(values.min())}, {int(values.max())}]"
+            )
     out: dict[str, float | None] = {}
     for name in COMPUTED_METRICS:
         s = METRICS[name]

@@ -18,6 +18,7 @@ from rigfl.eval.report import summarize_resources
 from rigfl.eval.resources import (
     ResourceDelta,
     ResourceMonitor,
+    _sync,
     load_cached_measurement,
     payload_bytes,
     write_cached_measurement,
@@ -82,7 +83,6 @@ def test_iterative_runner_counts_each_logical_transfer():
     assert resources["observed"]["communication_bytes"] == {
         "client_to_server": 16,
         "server_to_client": 32,
-        "peer_to_peer": 0,
         "total": 48,
     }
     assert resources["operations"]["local_train"]["calls"] == 4
@@ -93,6 +93,16 @@ def test_iterative_runner_counts_each_logical_transfer():
     }
     assert resources["clients"]["0"]["wall_seconds"]["algorithm_operations"] > 0
     assert resources["clients"]["0"]["wall_seconds"]["evaluation"] > 0
+
+
+def test_cuda_timing_synchronizes_the_measured_device(monkeypatch):
+    synchronized = []
+    monkeypatch.setattr(torch.cuda, "synchronize", synchronized.append)
+
+    device = torch.device("cuda:2")
+    _sync(device)
+
+    assert synchronized == [device]
 
 
 def test_resource_monitoring_preserves_the_existing_tracker_interface():

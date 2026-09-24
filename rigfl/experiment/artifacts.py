@@ -320,7 +320,7 @@ def _validate_resources(saved: Any, wall_seconds, experiment, fail) -> None:
     _validate_hardware_signature(hardware, fail)
 
     communication = observed.get("communication_bytes")
-    expected = {"client_to_server", "server_to_client", "peer_to_peer", "total"}
+    expected = {"client_to_server", "server_to_client", "total"}
     if not isinstance(communication, dict) or set(communication) != expected:
         fail("resources communication totals are invalid")
     if any(not _valid_number(value, integer=True)
@@ -484,10 +484,9 @@ def _validate_resources(saved: Any, wall_seconds, experiment, fail) -> None:
             fail(f"resources client {client_id} communication is invalid")
     sent = sum(client["sent_bytes"] for client in clients.values())
     received = sum(client["received_bytes"] for client in clients.values())
-    if sent != communication["client_to_server"] + communication["peer_to_peer"]:
+    if sent != communication["client_to_server"]:
         fail("resources per-client sent bytes are inconsistent")
-    if (received
-            != communication["server_to_client"] + communication["peer_to_peer"]):
+    if received != communication["server_to_client"]:
         fail("resources per-client received bytes are inconsistent")
     checkpoints = saved.get("checkpoints")
     if (not isinstance(checkpoints, list) or not checkpoints
@@ -633,6 +632,13 @@ def _validate_history(history: Any, experiment, fail) -> None:
         for client_id, values in per_client.items():
             if not isinstance(values, list) or len(values) != n_rounds:
                 fail(f"client_sample_counts.{split}.{client_id} is not round-aligned")
+            if any(
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or value < 0
+                for value in values
+            ):
+                fail(f"client_sample_counts.{split}.{client_id} contains an invalid count")
 
 
 def _validate_local_selection(saved: Any, experiment, fail) -> None:
@@ -718,13 +724,15 @@ def existing_result_decision(
     expected_algorithm: str,
     expected_fingerprint: str,
     force: bool = False,
+    require_flops: bool = False,
 ) -> tuple[bool, str]:
     path = Path(path)
     if not path.exists():
         return False, ""
     try:
+        record = read_json(path)
         validate_run_record(
-            read_json(path),
+            record,
             path=path,
             expected_algorithm=expected_algorithm,
             expected_fingerprint=expected_fingerprint,
@@ -735,6 +743,14 @@ def existing_result_decision(
         raise
     if force:
         return False, f"--force: rerunning over validated result: {path.name}"
+    resources = record.get("resources")
+    flop_settings = (
+        resources.get("measurement", {}).get("flop_estimation", {})
+        if isinstance(resources, dict)
+        else {}
+    )
+    if require_flops and not flop_settings.get("enabled"):
+        return False, f"rerun: {path.name} does not contain requested FLOP estimates"
     return True, f"skip (validated complete): {path.name}"
 
 

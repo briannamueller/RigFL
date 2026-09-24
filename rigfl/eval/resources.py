@@ -21,7 +21,6 @@ from torch import nn
 COMMUNICATION_KINDS = (
     "client_to_server",
     "server_to_client",
-    "peer_to_peer",
 )
 CACHED_MEASUREMENT_KIND = "rigfl.cached_resource"
 CACHED_MEASUREMENT_SCHEMA_VERSION = 1
