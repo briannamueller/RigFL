@@ -1,9 +1,8 @@
 """Run one experiment and save its resolved configuration and results.
 
-    python -m rigfl.experiment.run --algorithm fedproto --config configs/experiments/cifar10_run.yaml
-    python -m rigfl.experiment.run --algorithm fedproto --set algorithm.lamda=10
-    python -m rigfl.experiment.run --algorithm fedtgp \
-        --set experiment.rounds=50 algorithm.server_epochs=100
+    rigfl run configs/experiments/cifar10_run.yaml --algorithm fedproto
+    rigfl run configs/experiments/cifar10_run.yaml --algorithm fedproto \
+        --set algorithm.lamda=10
 
 Use :mod:`rigfl.experiment.launch` for multi-configuration sweeps.
 """
@@ -30,36 +29,27 @@ from rigfl.data.partitions import (
     build_partition_clients,
     generate_partition,
 )
+from rigfl.cli import legacy_config_argv
 from rigfl.eval.resources import ResourceMonitor
 from rigfl.experiment.artifacts import (
     ResultValidationError,
-    existing_result_decision,
     make_run_record,
-    write_run_record,
 )
 from rigfl.experiment.config import (
     ExperimentConfig,
     ResolvedExperimentConfig,
     RunFileConfig,
-    result_filename,
 )
-from rigfl.experiment.device import resolve_device
 from rigfl.experiment.env import capture_env
 from rigfl.experiment.paths import (
-    filter_for_model,
-    flatten_mapping,
-    model_paths,
     nested_set,
 )
 from rigfl.experiment.registry import (
-    BASELINES,
     adapter_factory,
     algorithm_run_fingerprint,
     algorithm_run_identity,
     algorithm_spec,
     build_algorithm,
-    config_class,
-    legacy_algorithm_run_fingerprint,
     resolve_algorithm_config,
     resolve_algorithm_experiment,
 )
@@ -358,7 +348,7 @@ def load_run_config(path: str) -> tuple[dict, dict]:
             f"{path}: unknown top-level section(s): {', '.join(unknown)}"
             f"{_suggest(unknown[0], known)}\n"
             f"Known: {', '.join(known)}. (Sweep files with base/sweep "
-            f"sections go to rigfl.experiment.launch, not here.)")
+            f"sections go to `rigfl sweep`, not `rigfl run`.)")
     try:
         parsed = RunFileConfig.model_validate(loaded)
     except ValidationError as error:
@@ -406,107 +396,63 @@ def build_configs(args) -> tuple[ExperimentConfig, dict]:
     return ExperimentConfig(**exp_over), algorithm_over
 
 
-def _run_resolved_experiment(name: str, exp: ResolvedExperimentConfig, cfg, *,
-                             data: ResolvedData, force: bool = False) -> Path:
-    """Run and save one fully resolved experiment configuration."""
-    device = resolve_device(exp.device)
-    out_dir = run_store(exp.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    fp = algorithm_run_fingerprint(name, exp, cfg.model_dump())
-    path = out_dir / result_filename(exp, name, fp)
-    if not force and not path.exists():
-        legacy_fp = legacy_algorithm_run_fingerprint(name, exp, cfg.model_dump())
-        legacy_path = out_dir / result_filename(exp, name, legacy_fp)
-        if legacy_fp != fp and legacy_path.exists():
-            skip, message = existing_result_decision(
-                legacy_path,
-                expected_algorithm=name,
-                expected_fingerprint=legacy_fp,
-            )
-            if message:
-                print(message)
-            if skip:
-                return legacy_path
-    skip, message = existing_result_decision(
-        path, expected_algorithm=name, expected_fingerprint=fp, force=force
-    )
-    if message:
-        print(message)
-    if skip:
-        return path
-
-    print(f"\n=== {name}  ({exp.dataset}, {exp.num_clients} clients, "
-          f"partition={exp.partition_id}, seed={exp.seed}, device={device}) ===")
-    record = run_one(name, exp, cfg, device, data=data)
-    write_run_record(path, record, expected_algorithm=name, expected_fingerprint=fp)
-    print(f"  wrote {path}  "
-          f"({len(record['result']['evaluation_history']['evaluation_rounds'])} "
-          f"eval rounds, {record['wall_seconds']}s)")
-    return path
-
-
-def run_experiment(algorithm: str, config: str | Path, *,
-                   force: bool = False) -> Path:
+def run_experiment(
+    algorithm: str,
+    config: str | Path,
+    *,
+    overrides: list[str] | None = None,
+    force: bool = False,
+) -> Path:
     """Run one YAML-defined experiment from Python and return its result path."""
-    experiment, algorithm_config = load_run_config(str(config))
-    exp = ExperimentConfig(**experiment)
-    exp, data = resolve_experiment_data(exp)
-    exp = resolve_algorithm_experiment(algorithm, exp)
+    from types import SimpleNamespace
 
-    Cfg = config_class(algorithm)
-    unknown = sorted(
-        set(flatten_mapping(algorithm_config)) - model_paths(Cfg)
+    from rigfl.experiment.launch import run_config
+
+    exp, algorithm_config = build_configs(
+        SimpleNamespace(config=str(config), set=overrides or [])
     )
-    if unknown:
-        raise ValueError(
-            f"unknown {algorithm} algorithm setting(s): {', '.join(unknown)}; "
-            f"known: {', '.join(sorted(model_paths(Cfg)))}"
-        )
-    cfg = resolve_algorithm_config(algorithm, exp, Cfg(**algorithm_config))
-    return _run_resolved_experiment(algorithm, exp, cfg, data=data, force=force)
+    task = {
+        "algorithm": algorithm,
+        "experiment": exp.model_dump(mode="json"),
+        "algorithm_config": algorithm_config,
+    }
+    out_dir = run_store(exp.out_dir)
+    record = run_config(task, out_dir, force=force)
+    if record is None:  # run_config returns None only for dry runs.
+        raise RuntimeError("single-run execution did not produce a result")
+    return out_dir / record["_source_file"]
 
 
-def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Run one RigFL experiment.")
-    p.add_argument("--algorithm", default="baselines",
-                   help="algorithm name, 'baselines', or 'all'")
-    p.add_argument("--config", help="YAML with 'experiment:' and 'algorithm:' sections")
+def parse_args(
+    argv: list[str] | None = None, *, prog: str | None = None
+) -> argparse.Namespace:
+    p = argparse.ArgumentParser(prog=prog, description="Run one RigFL experiment.")
+    p.add_argument(
+        "config",
+        metavar="CONFIG",
+        help="YAML with 'experiment:' and 'algorithm:' sections",
+    )
+    p.add_argument("--algorithm", required=True, help="one registered algorithm name")
     p.add_argument("--set", nargs="*", default=[],
                    help="overrides, e.g. experiment.rounds=50 algorithm.lamda=10")
     p.add_argument("--force", action="store_true",
                    help="re-run even if the result JSON exists")
-    return p.parse_args()
+    return p.parse_args(legacy_config_argv(argv))
 
 
-def main() -> None:
-    args = parse_args()
-    exp, algorithm_over = build_configs(args)
+def main(argv: list[str] | None = None, *, prog: str | None = None) -> None:
+    args = parse_args(argv, prog=prog)
     try:
-        exp, data = resolve_experiment_data(exp)
-    except (FileNotFoundError, KeyError, ValueError) as exc:
+        run_experiment(
+            args.algorithm,
+            args.config,
+            overrides=args.set,
+            force=args.force,
+        )
+    except (FileNotFoundError, KeyError, ValueError, ResultValidationError) as exc:
+        if isinstance(exc, ResultValidationError):
+            raise SystemExit(exc.report()) from exc
         raise SystemExit(exc) from exc
-    from rigfl.experiment.registry import ALL_ALGORITHMS
-    algorithms = (ALL_ALGORITHMS if args.algorithm == "all" else
-                  BASELINES if args.algorithm == "baselines" else [args.algorithm])
-
-    known = set().union(*(model_paths(config_class(n)) for n in algorithms))
-    unknown = sorted(set(flatten_mapping(algorithm_over)) - known)
-    if unknown:
-        raise SystemExit(
-            f"unknown algorithm setting(s): {', '.join(unknown)}\n"
-            f"known for {', '.join(algorithms)}: {', '.join(sorted(known))}")
-
-    for name in algorithms:
-        Cfg = config_class(name)
-        algorithm_exp = resolve_algorithm_experiment(name, exp)
-        # Shared overrides are applied only to algorithms that define the field.
-        cfg = Cfg(**filter_for_model(algorithm_over, Cfg))
-        cfg = resolve_algorithm_config(name, algorithm_exp, cfg)
-        try:
-            _run_resolved_experiment(
-                name, algorithm_exp, cfg, data=data, force=args.force)
-        except ResultValidationError as e:
-            raise SystemExit(e.report())
 
 
 if __name__ == "__main__":

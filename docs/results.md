@@ -5,7 +5,7 @@
 Summarize completed runs under `results/runs` with:
 
 ```bash
-python -m rigfl.experiment.collect
+rigfl report
 ```
 
 Runs that differ only in their replicate seeds are summarized in one row. Rows
@@ -20,7 +20,7 @@ Specify `--selection-metric`, `--selection-view`, and
 is chosen.
 
 ```bash
-python -m rigfl.experiment.collect \
+rigfl report \
   --selection-metric balanced_accuracy \
   --selection-view per-client
 ```
@@ -33,7 +33,7 @@ python -m rigfl.experiment.collect \
 
 ### Client-level performance analysis
 
-When matching Local runs are available, `collect` also prints a client-level
+When matching Local runs are available, `rigfl report` also prints a client-level
 performance analysis below the run summary.
 
 Negative transfer is a failure mode in federated learning in which
@@ -77,7 +77,7 @@ Of the four FedAvg client results, one counts toward each rate. The benefit
 rate and NTR are therefore both 25%.
 
 If these are the only completed runs, this is the output from
-`python -m rigfl.experiment.collect --performance-margin 0.01`:
+`rigfl report --performance-margin 0.01`:
 
 ```text
 ### selection-view: global  (metric=accuracy, split=validation, direction=maximize, aggregation=mean, tie_break=earliest)
@@ -106,7 +106,7 @@ Performance margin: 0.01 metric units. Intervals resample replicate conditions a
 To report only runs from a particular sweep, specify its grid file:
 
 ```bash
-python -m rigfl.experiment.collect \
+rigfl report \
   --grid results/cifar10_sweep/grid.jsonl
 ```
 
@@ -121,7 +121,7 @@ replaceable working grid.
 ### Save the report
 
 ```bash
-python -m rigfl.experiment.collect \
+rigfl report \
   --out results/summary.md \
   --out-json results/summary.json
 ```
@@ -147,7 +147,7 @@ you consider meaningful. For accuracy, `0.01` means one percentage point.
 If `results` contains just two alternatives, run:
 
 ```bash
-python -m rigfl.experiment.compare \
+rigfl compare \
   --results-dir results \
   --practical-threshold 0.01
 ```
@@ -160,7 +160,7 @@ If the directory contains more than two alternatives, specify what to
 compare:
 
 ```bash
-python -m rigfl.experiment.compare \
+rigfl compare \
   --results-dir results \
   --all-pairs \
   --practical-threshold 0.01
@@ -202,7 +202,7 @@ sweep:
 Run every combination, then analyze its saved grid:
 
 ```bash
-python -m rigfl.experiment.variance \
+rigfl seed-sensitivity \
   --grid results/<sweep-name>/grid.jsonl \
   --out results/variance.md \
   --out-json results/variance.json

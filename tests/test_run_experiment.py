@@ -5,20 +5,6 @@ from pathlib import Path
 import pytest
 
 from rigfl.experiment import run as run_module
-from tests.helpers import resolved_experiment
-
-
-def _resolved(exp):
-    values = exp.model_dump()
-    values.update(
-        partition_id="partition_12345678",
-        model_family=None,
-        model="fedavg_cnn",
-        resolved_models=["fedavg_cnn"],
-    )
-    return resolved_experiment(
-        **values,
-    )
 
 
 def test_cifar10_example_configuration_loads():
@@ -37,15 +23,13 @@ def test_cifar10_example_configuration_loads():
 
 def test_run_experiment_loads_the_yaml_configuration(monkeypatch, tmp_path):
     captured = {}
-    monkeypatch.setattr(
-        run_module, "resolve_experiment_data", lambda exp: (_resolved(exp), None)
-    )
+    from rigfl.experiment import launch as launch_module
 
-    def fake_run(name, exp, cfg, *, data, force=False):
-        captured.update(name=name, exp=exp, cfg=cfg, data=data, force=force)
-        return Path(exp.out_dir) / "result.json"
+    def fake_run(task, out_dir, **options):
+        captured.update(task=task, out_dir=out_dir, options=options)
+        return {"_source_file": "result.json"}
 
-    monkeypatch.setattr(run_module, "_run_resolved_experiment", fake_run)
+    monkeypatch.setattr(launch_module, "run_config", fake_run)
 
     config = tmp_path / "experiment.yaml"
     config.write_text(
@@ -60,20 +44,17 @@ def test_run_experiment_loads_the_yaml_configuration(monkeypatch, tmp_path):
 
     path = run_module.run_experiment("fedavg", config, force=True)
 
-    assert path == tmp_path / "result.json"
-    assert captured["name"] == "fedavg"
-    assert captured["exp"].partition_id == "partition_12345678"
-    assert captured["cfg"].local_epochs == 2
-    assert captured["cfg"].lr == pytest.approx(0.02)
-    assert captured["force"] is True
+    assert path == tmp_path / "runs/result.json"
+    assert captured["task"]["algorithm"] == "fedavg"
+    assert captured["task"]["experiment"]["dataset"] == "cifar10"
+    assert captured["task"]["algorithm_config"]["local_epochs"] == 2
+    assert captured["task"]["algorithm_config"]["lr"] == pytest.approx(0.02)
+    assert captured["out_dir"] == tmp_path / "runs"
+    assert captured["options"] == {"force": True}
 
 
 def test_run_experiment_rejects_settings_not_used_by_the_algorithm(monkeypatch,
                                                                 tmp_path):
-    monkeypatch.setattr(
-        run_module, "resolve_experiment_data", lambda exp: (_resolved(exp), None)
-    )
-
     config = tmp_path / "experiment.yaml"
     config.write_text(
         "experiment:\n"
@@ -83,5 +64,5 @@ def test_run_experiment_rejects_settings_not_used_by_the_algorithm(monkeypatch,
         "  mu: 0.1\n"
     )
 
-    with pytest.raises(ValueError, match="unknown fedavg algorithm setting.*mu"):
+    with pytest.raises(SystemExit, match="unknown fedavg algorithm setting.*mu"):
         run_module.run_experiment("fedavg", config)

@@ -262,8 +262,9 @@ def _contrasts(
     return contrasts
 
 
-def main() -> None:
+def main(argv: list[str] | None = None, *, prog: str | None = None) -> None:
     parser = argparse.ArgumentParser(
+        prog=prog,
         description="Compare frozen configurations on matched test results."
     )
     parser.add_argument(
@@ -310,7 +311,7 @@ def main() -> None:
         "--out-json",
         help="output path (default: comparison.json inside the results directory)",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     try:
         results_dir = Path(args.results_dir)

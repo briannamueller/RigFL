@@ -375,8 +375,9 @@ def format_variance_pilot(artifact: dict) -> str:
     return "\n".join(lines)
 
 
-def main() -> None:
+def main(argv: list[str] | None = None, *, prog: str | None = None) -> None:
     parser = argparse.ArgumentParser(
+        prog=prog,
         description="Analyze a complete crossed sweep over RigFL's three seed controls."
     )
     parser.add_argument("--results-dir", default="results/runs")
@@ -396,7 +397,7 @@ def main() -> None:
     )
     parser.add_argument("--out-json")
     parser.add_argument("--out")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     by_algorithm = load_results(Path(args.results_dir), args.dataset)
     records = [record for values in by_algorithm.values() for record in values]

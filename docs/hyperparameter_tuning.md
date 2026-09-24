@@ -80,8 +80,7 @@ distributions.
 Run the study with:
 
 ```bash
-python -m rigfl.experiment.optimize \
-  --config configs/experiments/cifar10_optuna.yaml
+rigfl hpo configs/experiments/cifar10_optuna.yaml
 ```
 
 The study name determines its directory under `results/`. Running the same

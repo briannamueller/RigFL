@@ -15,9 +15,8 @@ Use `--set` to override YAML settings for one run. Paths use the `experiment.`
 or `algorithm.` YAML section name:
 
 ```bash
-python -m rigfl.experiment.run \
+rigfl run configs/experiments/cifar10_run.yaml \
   --algorithm fedprox \
-  --config configs/experiments/cifar10_run.yaml \
   --set experiment.rounds=50 algorithm.mu=0.1
 ```
 

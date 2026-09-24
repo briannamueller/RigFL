@@ -85,6 +85,11 @@ def test_set_overrides_yaml_for_one_run(tmp_path):
 
 # ── the sweep file ───────────────────────────────────────────────────────────
 
+def test_a_sweep_requires_an_explicit_algorithm_list():
+    with pytest.raises(SystemExit, match="must declare 'algorithms' explicitly"):
+        build_grid({"sweep": {"experiment.seed": [0, 1]}})
+
+
 def test_a_misspelt_sweep_key_is_refused():
     with pytest.raises(SystemExit) as e:
         build_grid({"algorithms": ["local"], "swep": {"seed": [0, 1]}})

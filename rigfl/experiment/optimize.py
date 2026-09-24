@@ -12,6 +12,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from rigfl.cli import legacy_config_argv
 from rigfl.eval.metrics import canonical, direction_of
 from rigfl.eval.report import selection_for
 from rigfl.eval.selection import aggregate
@@ -619,17 +620,18 @@ def write_study_selection(
     return write_ranking(artifact, records, manifest, study_dir)
 
 
-def main() -> None:
+def main(argv: list[str] | None = None, *, prog: str | None = None) -> None:
     parser = argparse.ArgumentParser(
+        prog=prog,
         description="Run or resume a validation-based Optuna study."
     )
-    parser.add_argument("--config", required=True)
+    parser.add_argument("config", metavar="CONFIG", help="YAML HPO study file")
     parser.add_argument("--results-root", default="results")
     parser.add_argument("--study-name")
     parser.add_argument("--trials", type=int, help="target total number of trials")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--export-only", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(legacy_config_argv(argv))
 
     import yaml
 

@@ -237,7 +237,7 @@ def load_partition(
     if not path.exists():
         raise FileNotFoundError(
             f"generated partition for dataset {dataset!r} was not found at {path}. "
-            f"Run: python -m rigfl.data.generate --dataset {dataset}"
+            f"Run: rigfl data generate --dataset {dataset}"
         )
     manifest = _read_manifest(path)
     expected = {

@@ -64,11 +64,10 @@ pip install rigfl
 rigfl init my-rigfl-project
 cd my-rigfl-project
 
-python -m rigfl.experiment.run \
-  --algorithm fedavg \
-  --config configs/experiments/cifar10_run.yaml
+rigfl data generate --dataset cifar10
+rigfl run configs/experiments/cifar10_run.yaml --algorithm fedavg
 
-python -m rigfl.experiment.collect
+rigfl report
 ```
 
 `rigfl init` sets up a starter project with example dataset and experiment
@@ -76,7 +75,7 @@ configurations. Dataset configurations are stored in `configs/datasets.yaml`
 (see [Data partitions](#data-partitions)), while run and sweep configurations
 are stored under `configs/experiments/` (see
 [Configure and run experiments](#configure-and-run-experiments)). The results
-summary produced by `collect` is explained in
+summary produced by `rigfl report` is explained in
 [Evaluation and reporting](#evaluation-and-reporting).
 
 The sections below walk through the same CIFAR-10 example in more detail.
@@ -105,7 +104,7 @@ datasets:
 Generate client datasets:
 
 ```bash
-python -m rigfl.data.generate --dataset cifar10
+rigfl data generate --dataset cifar10
 ```
 
 RigFL derives a stable fingerprint from the dataset's configuration, which is used in the storage path:
@@ -182,9 +181,7 @@ document all supported settings, including their defaults and allowed values.
 Run the experiment with:
 
 ```bash
-python -m rigfl.experiment.run \
-  --algorithm fedavg \
-  --config configs/experiments/cifar10_run.yaml
+rigfl run configs/experiments/cifar10_run.yaml --algorithm fedavg
 ```
 
 This trains FedAvg for two communication rounds and writes the result under
@@ -247,7 +244,7 @@ training seeds for one repetition.
 Generate the sweep grid with:
 
 ```bash
-python -m rigfl.experiment.launch --config configs/experiments/cifar10_sweep.yaml
+rigfl sweep configs/experiments/cifar10_sweep.yaml
 ```
 
 This writes `results/cifar10_sweep/grid.jsonl`, where each line is one declared
@@ -278,7 +275,7 @@ RigFL also supports hyperparameter tuning with Optuna. See the
 Summarize results with:
 
 ```bash
-python -m rigfl.experiment.collect
+rigfl report
 ```
 
 Collection uses validation history to choose the reporting round. The same history can be summarized in two ways:
@@ -286,7 +283,7 @@ Collection uses validation history to choose the reporting round. The same histo
 - `global` chooses one round from the validation score aggregated across clients;
 - `per-client` chooses each client's best validation round.
 
-By default, `rigfl.experiment.collect` reports test performance at the round with the highest mean validation accuracy across clients. Use
+By default, `rigfl report` reports test performance at the round with the highest mean validation accuracy across clients. Use
 `--selection-metric`, `--selection-view`, and `--selection-aggregation` to
 change how the reporting round is chosen.
 
@@ -295,7 +292,7 @@ settings apart from their replicate seeds are summarized together: the row
 reports mean validation and test performance, with a 95% confidence interval
 when the replicates have distinct experiment seeds.
 
-When matching Local runs are available, `collect` also prints a client-level
+When matching Local runs are available, `rigfl report` also prints a client-level
 performance analysis below the run summary.
 
 ### Client-level performance analysis
@@ -336,7 +333,7 @@ separately.
 Add resource measurements to the report with:
 
 ```bash
-python -m rigfl.experiment.collect --include-resources
+rigfl report --include-resources
 ```
 
 See the [results guide](https://github.com/briannamueller/RigFL/blob/main/docs/results.md)

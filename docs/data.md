@@ -63,7 +63,7 @@ Then generate the partition to check the source, columns, and partition
 settings:
 
 ```bash
-python -m rigfl.data.generate --dataset my_dataset
+rigfl data generate --dataset my_dataset
 ```
 
 Choose an experiment model that accepts the dataset's input type; the

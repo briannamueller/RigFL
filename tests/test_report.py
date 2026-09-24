@@ -113,7 +113,7 @@ def test_summarize_keys_runs_by_the_full_seed_condition():
     assert summary["test_ci"] is None
     table = format_table({"fedprox": summary}, "accuracy")
     assert "| fedprox § |" in table
-    assert "rigfl.experiment.variance" in table
+    assert "rigfl seed-sensitivity" in table
 
 
 def test_crossed_resource_summary_keeps_means_and_omits_intervals():

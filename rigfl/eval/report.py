@@ -427,7 +427,7 @@ def format_table(rows: dict, metric: str) -> str:
             (
                 "§ experiment seeds are reused across run conditions, so ordinary "
                 "replicate confidence intervals are omitted. Use "
-                "`python -m rigfl.experiment.variance` for a crossed seed sweep."
+                "`rigfl seed-sensitivity` for a crossed seed sweep."
             ),
         ]
     return "\n".join(out)

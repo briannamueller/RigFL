@@ -1,10 +1,10 @@
 """Aggregate completed runs into multi-seed tables.
 
-    python -m rigfl.experiment.collect
+    rigfl report
 
 Use ``--group-by`` to choose explicit labels for hyperparameter variants:
 
-    python -m rigfl.experiment.collect --results-dir results/runs \
+    rigfl report --results-dir results/runs \
         --group-by algorithm.mu
 """
 
@@ -491,8 +491,10 @@ def _negative_transfer(algorithm_records: list[dict], local_records: list[dict],
         }
 
 
-def main() -> None:
-    p = argparse.ArgumentParser(description="Aggregate RigFL result JSONs into a table.")
+def main(argv: list[str] | None = None, *, prog: str | None = None) -> None:
+    p = argparse.ArgumentParser(
+        prog=prog, description="Aggregate RigFL result JSONs into a table."
+    )
     p.add_argument("--results-dir", default="results/runs")
     p.add_argument("--grid", help="include only runs in this saved grid.jsonl")
     p.add_argument("--dataset", default=None)
@@ -529,7 +531,7 @@ def main() -> None:
     p.add_argument("--negative-transfer-tail", type=_tail_fraction, default=0.10,
                    metavar="FRACTION",
                    help="fraction used for worst-tail relative gain (default: 0.10)")
-    args = p.parse_args()
+    args = p.parse_args(argv)
 
     invalid: list[tuple[str, str]] = []
     grid_tasks = None

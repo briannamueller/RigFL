@@ -535,7 +535,7 @@ def compare_configurations(
         raise ConfigurationComparisonError(
             "final statistical comparison requires a distinct experiment_seed "
             "for every replicate condition; analyze crossed seed sweeps with "
-            "python -m rigfl.experiment.variance"
+            "rigfl seed-sensitivity"
         )
     contexts = {
         comparison_context(record) for record in [*left_records, *right_records]

@@ -1,6 +1,6 @@
 """Generate a configured client-data partition before running experiments.
 
-    python -m rigfl.data.generate --dataset cifar10
+    rigfl data generate --dataset cifar10
 """
 
 from __future__ import annotations
@@ -26,8 +26,11 @@ def _nonnegative_seed(value: str) -> int:
     return seed
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(
+    argv: list[str] | None = None, *, prog: str | None = None
+) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
+        prog=prog,
         description="Generate the configured client-data partition for a dataset."
     )
     parser.add_argument("--dataset", required=True)
@@ -35,11 +38,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-dir", default=DEFAULT_DATA_DIR)
     parser.add_argument("--partition-seed", type=_nonnegative_seed)
     parser.add_argument("--split-seed", type=_nonnegative_seed)
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None, *, prog: str | None = None) -> None:
+    args = parse_args(argv, prog=prog)
     settings = dataset_settings(args.dataset, args.dataset_config)
     if isinstance(settings, BioSiloDatasetSettings):
         from rigfl.data.biosilo import generate_biosilo_partition

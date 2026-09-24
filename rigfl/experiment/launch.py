@@ -4,9 +4,7 @@ Sweep axes form a Cartesian product; zipped replicates do not. Fixed settings
 belong under ``base``; ``launch`` writes one configuration per task to
 ``grid.jsonl``.
 
-    python -m rigfl.experiment.launch --config configs/experiments/cifar_baselines.yaml
-    python -m rigfl.experiment.launch --name demo --algorithms local,fedproto \
-        --seeds 0-2 --sweep algorithm.lamda=0.1,1,10
+    rigfl sweep configs/experiments/cifar10_sweep.yaml
 """
 
 from __future__ import annotations
@@ -21,6 +19,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from rigfl.cli import legacy_config_argv
 from rigfl.data.config import (
     BioSiloDatasetSettings,
     dataset_settings,
@@ -53,7 +52,6 @@ from rigfl.experiment.paths import (
 )
 from rigfl.experiment.registry import (
     ALL_ALGORITHMS,
-    BASELINES,
     algorithm_run_fingerprint,
     config_class,
     ignored_experiment_fields,
@@ -286,11 +284,11 @@ def build_grid(spec: dict) -> list[dict]:
     Each task = {algorithm, experiment: {...}, algorithm_config: {...}}. Axis keys
     use 'experiment.x' or 'algorithm.x'.
 
-    An ``algorithm.x`` axis only multiplies the grid for algorithms that actually have
-    field ``x``; for algorithms without it, that axis collapses to a single entry. So
-    ``--algorithms all --sweep algorithm.mu=0.01,0.1`` gives FedProx two
-    variants and every other algorithm exactly one -- no duplicate configs,
-    no manual per-algorithm scoping."""
+    An ``algorithm.x`` axis only multiplies the grid for algorithms that actually
+    have field ``x``; for algorithms without it, that axis collapses to a single
+    entry. A sweep over ``algorithm.mu`` therefore gives FedProx one task per
+    value and every other algorithm exactly one -- no duplicate configurations
+    and no manual per-algorithm scoping."""
     return expand(spec)[0]
 
 
@@ -300,7 +298,7 @@ def expand(spec: dict) -> tuple[list[dict], dict | None]:
         raise SystemExit(
             "ordinary sweeps do not perform hyperparameter tuning; remove the "
             "tuning section or run the configuration with "
-            "python -m rigfl.experiment.optimize"
+            "rigfl hpo"
         )
     parsed = _validate_spec(spec)
     replicate_conditions, _ = _replicate_conditions(parsed)
@@ -311,7 +309,13 @@ def expand(spec: dict) -> tuple[list[dict], dict | None]:
     base_algorithm = dict(base.get("algorithm", {}))
 
     sweep = {k: _values(v) for k, v in (spec.get("sweep") or {}).items()}
-    algorithms = sweep.pop("algorithm", None) or _values(spec.get("algorithms", BASELINES))
+    declared_algorithms = sweep.pop("algorithm", None) or spec.get("algorithms")
+    if not declared_algorithms:
+        raise SystemExit(
+            "sweep config must declare 'algorithms' explicitly; "
+            f"known: {', '.join(ALL_ALGORITHMS)}"
+        )
+    algorithms = _values(declared_algorithms)
 
     if replicate_conditions:
         replicate_paths = set(_REPLICATE_PATHS.values())
@@ -449,6 +453,15 @@ def _resolve_task(task: dict, *, data_cache: dict | None = None):
             if key in ExperimentConfig.model_fields
         }
     )
+    Cfg = config_class(name)
+    unknown = sorted(
+        set(flatten_mapping(task["algorithm_config"])) - model_paths(Cfg)
+    )
+    if unknown:
+        raise ValueError(
+            f"unknown {name} algorithm setting(s): {', '.join(unknown)}; "
+            f"known: {', '.join(sorted(model_paths(Cfg)))}"
+        )
     cache_key = json.dumps(declared.model_dump(mode="json"), sort_keys=True)
     cached = data_cache.get(cache_key) if data_cache is not None else None
     if cached is None:
@@ -469,14 +482,6 @@ def _resolve_task(task: dict, *, data_cache: dict | None = None):
             )
     else:
         exp = actual
-    Cfg = config_class(name)
-    unknown = sorted(
-        set(flatten_mapping(task["algorithm_config"])) - model_paths(Cfg)
-    )
-    if unknown:
-        raise ValueError(
-            f"unknown {name} algorithm setting(s): {', '.join(unknown)}"
-        )
     cfg = resolve_algorithm_config(name, exp, Cfg(**task["algorithm_config"]))
     return name, exp, cfg, data
 
@@ -706,77 +711,24 @@ def run_config(task: dict, out_dir: Path, *, dry_run: bool = False,
     return record
 
 
-def _spec_from_args(args) -> dict:
-    if args.config:
-        import yaml
-        spec = yaml.safe_load(Path(args.config).read_text()) or {}
-        spec.setdefault("name", Path(args.config).stem)
-        return spec
-    sweep = {"experiment.seed": args.seeds}
-    for s in args.sweep:                                     # --sweep algorithm.lamda=0.1,1,10
-        key, vals = s.split("=", 1)
-        sweep[key] = vals
-    return {"name": args.name, "algorithms": args.algorithms, "sweep": sweep}
+def declare_sweep(
+    config: str | Path, *, results_root: str | Path = "results"
+) -> Path:
+    """Expand one YAML sweep and write its working task grid."""
+    import yaml
 
-
-def main() -> None:
-    p = argparse.ArgumentParser(description="Declare a RigFL sweep task grid.")
-    p.add_argument("--config", help="YAML sweep file (overrides the CLI sweep flags)")
-    p.add_argument("--name", default="sweep")
-    p.add_argument("--algorithms", default="baselines", help="'all' | 'baselines' | comma list")
-    p.add_argument("--seeds", default="0-2")
-    p.add_argument("--sweep", nargs="*", default=[], help="extra axes, e.g. algorithm.lamda=0.1,1,10")
-    p.add_argument("--results-root", default="results")
-    p.add_argument("--grid-task", type=int, help="run the Nth config from --grid")
-    p.add_argument(
-        "--grid",
-        help="existing grid.jsonl to inspect, snapshot, or run with --grid-task",
-    )
-    p.add_argument("--dry-run", action="store_true")
-    p.add_argument("--force", action="store_true", help="re-run tasks even if the result exists")
-    p.add_argument(
-        "--snapshot", action="store_true",
-        help="write an immutable resolved task snapshot for external execution",
-    )
-    args = p.parse_args()
-
-    if args.grid_task is not None:                            # ── per-task execution ──
-        if not args.grid:
-            raise SystemExit("--grid-task requires --grid")
-        run_task(args.grid, args.grid_task, run_store(args.results_root),
-                 dry_run=args.dry_run, force=args.force)
-        return
-
-    if args.grid:
-        grid_path = Path(args.grid)
-        try:
-            lines = grid_path.read_text().splitlines()
-            _check_grid("\n".join(lines) + ("\n" if lines else ""), len(lines))
-            grid = [json.loads(line) for line in lines]
-        except (OSError, ValueError, json.JSONDecodeError) as error:
-            raise SystemExit(f"cannot read grid {grid_path}: {error}") from error
-        _validate_biosilo_partitions(grid)
-        n = len(grid)
-        print(f"Grid contains {n} tasks: {grid_path}")
-        if args.snapshot:
-            snapshot = stage_task_snapshot(grid_path, args.results_root)
-            print(f"Wrote immutable task snapshot: {snapshot}")
-            print(
-                "Collect this snapshot when done:\n  python -m "
-                "rigfl.experiment.collect --results-dir "
-                f"{run_store(args.results_root)} --grid {snapshot}"
-            )
-        return
-
-    spec = _spec_from_args(args)
-    if spec.get("algorithms") in ("all", None):
-        spec["algorithms"] = ALL_ALGORITHMS
-    elif spec.get("algorithms") == "baselines":
-        spec["algorithms"] = BASELINES
+    config_path = Path(config)
+    spec = yaml.safe_load(config_path.read_text()) or {}
+    if not isinstance(spec, dict):
+        raise SystemExit(
+            f"{config_path}: the sweep config must be a mapping, "
+            f"got {type(spec).__name__}"
+        )
+    spec.setdefault("name", config_path.stem)
     grid, _ = expand(spec)
     _validate_biosilo_partitions(grid)
 
-    sweep_dir = study_directory(args.results_root, spec.get("name", "sweep"))
+    sweep_dir = study_directory(results_root, spec["name"])
     sweep_dir.mkdir(parents=True, exist_ok=True)
     grid_path = sweep_dir / "grid.jsonl"
     created = _write_grid(grid_path, grid)
@@ -785,15 +737,17 @@ def main() -> None:
     action = "Wrote" if created else "Reused"
     print(f"{action} {n} tasks at {grid_path}")
     print(f"  algorithms: {sorted({c['algorithm'] for c in grid})}")
-    collection_grid = grid_path
-    if args.snapshot:
-        collection_grid = stage_task_snapshot(grid_path, args.results_root)
-        print(f"Wrote immutable task snapshot: {collection_grid}")
-    collect = (
-        "python -m rigfl.experiment.collect --results-dir "
-        f"{run_store(args.results_root)} --grid {collection_grid}"
-    )
+    collect = f"rigfl report --results-dir {run_store(results_root)} --grid {grid_path}"
     print(f"Collect when done:\n  {collect}")
+    return grid_path
+
+
+def main(argv: list[str] | None = None, *, prog: str | None = None) -> None:
+    p = argparse.ArgumentParser(prog=prog, description="Declare a RigFL sweep task grid.")
+    p.add_argument("config", metavar="CONFIG", help="YAML sweep file")
+    p.add_argument("--results-root", default="results")
+    args = p.parse_args(legacy_config_argv(argv))
+    declare_sweep(args.config, results_root=args.results_root)
 
 
 if __name__ == "__main__":
