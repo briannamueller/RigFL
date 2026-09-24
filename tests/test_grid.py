@@ -174,7 +174,11 @@ def test_submitted_grid_stays_fixed_when_working_grid_changes(
         return task["algorithm"], exp, LocalConfig(), None
 
     monkeypatch.setattr(launch_module, "_resolve_task", resolve)
-    monkeypatch.setattr(launch_module, "capture_env", lambda: {"git_commit": "one"})
+    monkeypatch.setattr(
+        launch_module,
+        "capture_env",
+        lambda: {"packages": {"rigfl": {"source_commit": "one"}}},
+    )
 
     assert _write_grid(path, original) is True
     submitted = stage_task_snapshot(path, tmp_path / "results")

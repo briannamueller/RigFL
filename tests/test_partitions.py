@@ -630,15 +630,16 @@ def test_generated_partition_runs_through_experiment_infrastructure(monkeypatch,
         batch=4,
         quiet=True,
     )
-    monkeypatch.setattr(
-        "rigfl.experiment.run.capture_env", lambda: {"git_commit": "at-start"}
-    )
+    provenance = {
+        "packages": {"rigfl": {"source_commit": "at-start"}}
+    }
+    monkeypatch.setattr("rigfl.experiment.run.capture_env", lambda: provenance)
     record = run_one("local", exp, config_class("local")(), torch.device("cpu"))
     assert record["config"]["experiment"]["partition_id"] == generated.partition_id
     assert record["config"]["experiment"]["partition_seed"] == 7
     assert record["config"]["experiment"]["split_seed"] == 13
     assert record["config"]["experiment"]["seed"] == 0
     assert record["config"]["experiment"]["partition_scheme"] == "dirichlet"
-    assert record["env"]["git_commit"] == "at-start"
+    assert record["env"] == provenance
     assert set(record["result"]["evaluation_history"]["clients"]) == {"0", "1"}
     validate_run_record(record)
