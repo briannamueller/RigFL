@@ -1,0 +1,76 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test,hpo]"
+
+      - name: Run tests
+        run: pytest -q
+
+      - name: Lint with Ruff
+        if: matrix.python-version == '3.12'
+        run: ruff check .
+
+      - name: Check generated configuration reference
+        if: matrix.python-version == '3.12'
+        run: python scripts/generate_config_reference.py --check
+
+  package:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # a non-editable install catches packaging gaps, e.g. missing templates
+      - name: Install from source and run rigfl init
+        run: |
+          python -m venv /tmp/rigfl-smoke
+          /tmp/rigfl-smoke/bin/python -m pip install --upgrade pip
+          /tmp/rigfl-smoke/bin/python -m pip install .
+          cd /tmp
+          /tmp/rigfl-smoke/bin/python -c "import rigfl; from rigfl.experiment.registry import REGISTRY"
+          /tmp/rigfl-smoke/bin/rigfl init /tmp/rigfl-smoke-project
+          test -f /tmp/rigfl-smoke-project/configs/datasets.yaml
+          test -f /tmp/rigfl-smoke-project/configs/experiments/mnist_run.yaml
+          test -f /tmp/rigfl-smoke-project/configs/experiments/mnist_hpo.yaml
+          test -f /tmp/rigfl-smoke-project/.gitignore
+
+  biosilo:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install with BioSilo
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test,biosilo]"
+
+      - name: Run BioSilo integration tests
+        run: pytest -q tests/test_biosilo.py

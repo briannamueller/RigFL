@@ -1,0 +1,168 @@
+"""FedTGP -- Trainable Global Prototypes (Zhang et al., AAAI 2024).
+
+Clients upload class prototypes and pull local features toward global prototypes.
+The server trains a persistent prototype generator with a margin-based
+contrastive objective instead of directly averaging the uploads.
+
+The adaptive contrastive margin follows the paper's prose and released code:
+each round it is the largest classwise nearest-other-class prototype distance,
+capped at ``margin_cap`` (the paper's ``τ`` = 100).
+"""
+
+from __future__ import annotations
+
+from collections import defaultdict
+
+import torch
+import torch.nn.functional as F
+from pydantic import Field
+from torch import nn
+from torch.utils.data import DataLoader
+
+from rigfl.algorithms.fedproto import local_prototypes, prototype_prediction
+from rigfl.core.config import AlgorithmConfig
+from rigfl.core.interfaces import Algorithm
+from rigfl.eval.resources import payload_bytes
+from rigfl.prediction import Predictions
+
+Prototypes = dict[int, torch.Tensor]
+
+
+class TrainableGlobalPrototypes(nn.Module):
+    """Maps a class id to a prototype vector, via an embedding + small MLP."""
+
+    def __init__(self, num_classes: int, feature_dim: int):
+        super().__init__()
+        self.embed = nn.Embedding(num_classes, feature_dim)
+        self.mlp = nn.Sequential(
+            nn.Linear(feature_dim, feature_dim), nn.ReLU(), nn.Linear(feature_dim, feature_dim)
+        )
+
+    def forward(self, class_ids: torch.Tensor) -> torch.Tensor:
+        return self.mlp(self.embed(class_ids))
+
+
+class FedTGPConfig(AlgorithmConfig):
+    local_epochs: int = Field(1, ge=1, description="Client training epochs per round.")
+    lr: float = Field(0.01, gt=0, description="Client optimizer learning rate.")
+    lamda: float = Field(0.1, ge=0, description="Weight of the client prototype loss.")
+    server_epochs: int = Field(100, ge=1, description="Server prototype-training epochs per round.")
+    server_lr: float = Field(0.01, gt=0, description="Server optimizer learning rate.")
+    margin_cap: float = Field(100.0, gt=0, description="Maximum adaptive contrastive margin.")
+
+
+class FedTGP(Algorithm):
+    def __init__(
+        self,
+        config: FedTGPConfig,
+        num_classes: int,
+        feature_dim: int,
+        *,
+        batch_size: int = 32,
+        seed: int = 0,
+    ):
+        super().__init__(config)
+        self.num_classes = num_classes
+        self.feature_dim = feature_dim
+        self.batch_size = batch_size
+        self.server_generator = torch.Generator().manual_seed(seed)
+
+    @classmethod
+    def from_config(cls, config, *, experiment, **resources):
+        return cls(
+            config,
+            experiment.num_classes,
+            experiment.shared_dim,
+            batch_size=experiment.batch,
+            seed=experiment.training_seed,
+        )
+
+    def init_globals(self) -> dict:
+        # tgp persists across rounds; protos is its latest output
+        return {"tgp": TrainableGlobalPrototypes(self.num_classes, self.feature_dim), "protos": None}
+
+    def local_train(self, client, shared: dict) -> Prototypes:
+        model, loader = client.model, client.train_loader
+        device = self.device
+        global_protos = shared["protos"]
+        model.to(device)
+        model.train()
+        optimizer = torch.optim.SGD(model.parameters(), lr=self.config.lr)
+
+        for _ in range(self.config.local_epochs):
+            for x, y in loader:
+                x, y = x.to(device), y.to(device)
+                rep = model.rep(x)
+                loss = F.cross_entropy(model.head(rep), y)
+                if global_protos is not None:
+                    target = rep.detach().clone()
+                    for i, label in enumerate(y):
+                        p = global_protos.get(label.item())
+                        if p is not None:
+                            target[i] = p
+                    loss = loss + self.config.lamda * F.mse_loss(rep, target)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+        return local_prototypes(model, loader, device)
+
+    def communication_payload_bytes(self, payload, *, kind: str) -> int:
+        if kind == "server_to_client":
+            return payload_bytes(payload["protos"])
+        return super().communication_payload_bytes(payload, kind=kind)
+
+    def aggregate(self, uploads: list[Prototypes], shared: dict) -> dict:
+        device = self.device
+        tgp = shared["tgp"].to(device)
+        tgp.train()
+        pairs = [(p.to(device), c) for protos in uploads for c, p in protos.items()]
+        margin = self._adaptive_margin(uploads, device)
+        optimizer = torch.optim.SGD(
+            tgp.parameters(), lr=self.config.server_lr)
+        all_ids = torch.arange(self.num_classes, device=device)
+        proto_loader = DataLoader(
+            pairs,
+            batch_size=self.batch_size,
+            shuffle=True,
+            generator=self.server_generator,
+        )
+
+        for _ in range(self.config.server_epochs):
+            for proto, labels in proto_loader:
+                proto = proto.to(device)
+                labels = labels.to(device)
+                gen = tgp(all_ids)
+                dist = torch.cdist(proto, gen)
+                onehot = F.one_hot(labels, self.num_classes).float()
+                logits = -(dist + margin * onehot)
+                loss = F.cross_entropy(logits, labels)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+        with torch.no_grad():
+            protos = {c: tgp(torch.tensor(c, device=device)) for c in range(self.num_classes)}
+        return {"tgp": tgp, "protos": protos}
+
+    @torch.no_grad()
+    def _adaptive_margin(self, uploads: list[Prototypes], device) -> float:
+        """Max over classes of nearest-other-class prototype distance, capped at
+        margin_cap; the cap if there are fewer than 2 classes."""
+        per_class: dict[int, list] = defaultdict(list)
+        for protos in uploads:
+            for c, p in protos.items():
+                per_class[c].append(p.to(device))
+        classes = sorted(per_class)
+        if len(classes) < 2:
+            return self.config.margin_cap
+        avg = torch.stack([torch.stack(per_class[c]).mean(0) for c in classes])  # (C, D)
+        d = torch.cdist(avg, avg)
+        d.fill_diagonal_(float("inf"))
+        max_gap = d.min(dim=1).values.max().item()
+        return min(max_gap, self.config.margin_cap)
+
+    @torch.no_grad()
+    def predict(self, client, x, shared: dict) -> Predictions:
+        return prototype_prediction(
+            client.model.rep(x), shared["protos"], self.num_classes)

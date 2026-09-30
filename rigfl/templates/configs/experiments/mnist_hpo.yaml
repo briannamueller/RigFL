@@ -1,0 +1,35 @@
+# Demonstration-scale Optuna study, not a scientific search recommendation.
+name: mnist_hpo
+algorithm: fedprox
+
+base:
+  dataset: mnist
+  model_arch: fedavg_mnist_cnn
+  rounds: 2
+  eval_gap: 1
+  device: cpu
+  results_root: results
+  local_epochs: 1
+
+replicates:
+  - {partition_seed: 0, split_seed: 0, training_seed: 0}
+  - {partition_seed: 0, split_seed: 0, training_seed: 1}
+
+tuning:
+  trials: 4
+  sampler:
+    class: optuna.samplers.TPESampler
+    options:
+      seed: 17
+  metric: accuracy
+  search_space:
+    lr:
+      type: float
+      low: 0.001
+      high: 0.1
+      log: true
+    mu:
+      type: float
+      low: 0.001
+      high: 0.1
+      log: true

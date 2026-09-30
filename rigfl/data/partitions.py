@@ -1,0 +1,291 @@
+"""Configuration, identity, persistence, and loading for generated partitions."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import shlex
+import shutil
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+
+import torch
+from filelock import FileLock
+
+from rigfl.core import Client
+from rigfl.data.builder import (
+    _ArrayDataset,
+    _make_client,
+    _stream_generator,
+    _train_val_indices,
+)
+from rigfl.data.config import (
+    DEFAULT_DATA_DIR,
+    DEFAULT_DATASET_CONFIG,
+    FlowerDatasetSettings,
+    dataset_settings,
+)
+from rigfl.data.flower import generate_flower_partition
+from rigfl.data.transforms import data_transform_identity
+
+MANIFEST_KIND = "rigfl.partition_manifest"
+MANIFEST_SCHEMA_VERSION = 1
+PARTITION_PIPELINE_VERSION = 5
+
+
+@dataclass(frozen=True)
+class PartitionArtifact:
+    dataset: str
+    partition_id: str
+    path: Path
+    settings: FlowerDatasetSettings
+    manifest: dict
+
+
+#: Settings that define the validation split, which is carved when clients are
+#: built rather than stored, so they identify a run and not a partition.
+_DEFERRED_SPLIT_FIELDS = (
+    ("partition", ("split_seed", "val_frac")),
+    ("client_split", ("validation_fraction",)),
+)
+
+
+def stored_settings(settings: FlowerDatasetSettings, **dump_options) -> dict:
+    """Settings that determine what a partition stores."""
+    dumped = settings.model_dump(mode="json", **dump_options)
+    for section, fields in _DEFERRED_SPLIT_FIELDS:
+        values = dumped.get(section)
+        if isinstance(values, dict):
+            for field in fields:
+                values.pop(field, None)
+    return dumped
+
+
+def partition_fingerprint(dataset: str, settings: FlowerDatasetSettings) -> str:
+    """Stable identity derived only from settings that determine partition data."""
+    dumped = stored_settings(settings)
+    payload = {
+        "pipeline_version": PARTITION_PIPELINE_VERSION,
+        "dataset": dataset,
+        **dumped,
+        "data_transform": data_transform_identity(settings.data_transform),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()[:12]
+
+
+def partition_path(data_dir: str | Path, dataset: str, partition_id: str) -> Path:
+    return Path(data_dir) / dataset / f"partition_{partition_id}"
+
+
+def expected_partition(
+    dataset: str,
+    *,
+    config_path: str | Path = DEFAULT_DATASET_CONFIG,
+    data_dir: str | Path = DEFAULT_DATA_DIR,
+    settings: FlowerDatasetSettings | None = None,
+) -> tuple[FlowerDatasetSettings, str, Path]:
+    if settings is None:
+        settings = dataset_settings(dataset, config_path)
+    if not isinstance(settings, FlowerDatasetSettings):
+        raise ValueError(
+            f"dataset {dataset!r} uses the {settings.backend!r} backend and does "
+            "not produce a RigFL-generated partition"
+        )
+    partition_id = partition_fingerprint(dataset, settings)
+    return settings, partition_id, partition_path(data_dir, dataset, partition_id)
+
+
+def _omit_none(value):
+    if isinstance(value, dict):
+        return {
+            key: _omit_none(item)
+            for key, item in value.items()
+            if item is not None
+        }
+    if isinstance(value, list):
+        return [_omit_none(item) for item in value]
+    return value
+
+
+def generate_partition(
+    dataset: str,
+    *,
+    config_path: str | Path = DEFAULT_DATASET_CONFIG,
+    data_dir: str | Path = DEFAULT_DATA_DIR,
+    settings: FlowerDatasetSettings | None = None,
+) -> tuple[PartitionArtifact, bool]:
+    """Generate and atomically publish the configured partition.
+
+    Returns ``(artifact, created)``. A complete existing artifact is reused.
+    """
+    settings, partition_id, target = expected_partition(
+        dataset, config_path=config_path, data_dir=data_dir, settings=settings
+    )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with FileLock(f"{target}.lock"):
+        if target.exists():
+            return load_partition(
+                dataset,
+                config_path=config_path,
+                data_dir=data_dir,
+                settings=settings,
+            ), False
+        temporary = Path(
+            tempfile.mkdtemp(prefix=f".{target.name}.", dir=target.parent)
+        )
+        try:
+            backend_metadata = generate_flower_partition(settings, temporary)
+            manifest = {
+                "kind": MANIFEST_KIND,
+                "schema_version": MANIFEST_SCHEMA_VERSION,
+                "dataset": dataset,
+                "partition_id": partition_id,
+                "backend": backend_metadata["backend"],
+                "task": backend_metadata["task"],
+                "num_clients": backend_metadata["num_clients"],
+                "partition": stored_settings(settings, exclude_none=True)["partition"],
+                "clients": backend_metadata["clients"],
+                "input_spec": backend_metadata["input_spec"],
+                "target_spec": backend_metadata["target_spec"],
+                "source": _omit_none(backend_metadata["source"]),
+                "dataset_configuration": stored_settings(
+                    settings, exclude={"backend", "partition"}, exclude_none=True
+                ),
+                "pipeline_version": PARTITION_PIPELINE_VERSION,
+            }
+            (temporary / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+            os.replace(temporary, target)
+        except Exception:
+            shutil.rmtree(temporary, ignore_errors=True)
+            raise
+    return load_partition(
+        dataset,
+        config_path=config_path,
+        data_dir=data_dir,
+        settings=settings,
+    ), True
+
+
+def _read_manifest(path: Path) -> dict:
+    manifest_path = path / "manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read generated partition manifest: {manifest_path}") from exc
+    if manifest.get("kind") != MANIFEST_KIND:
+        raise ValueError(
+            f"unsupported partition manifest kind in {manifest_path}: "
+            f"{manifest.get('kind')!r}"
+        )
+    if manifest.get("schema_version") != MANIFEST_SCHEMA_VERSION:
+        raise ValueError(
+            f"unsupported partition manifest schema in {manifest_path}: "
+            f"{manifest.get('schema_version')!r}"
+        )
+    return manifest
+
+
+def load_partition(
+    dataset: str,
+    *,
+    config_path: str | Path = DEFAULT_DATASET_CONFIG,
+    data_dir: str | Path = DEFAULT_DATA_DIR,
+    settings: FlowerDatasetSettings | None = None,
+) -> PartitionArtifact:
+    """Resolve the configured fingerprint and load its generated manifest."""
+    settings, partition_id, path = expected_partition(
+        dataset, config_path=config_path, data_dir=data_dir, settings=settings
+    )
+    if not path.exists():
+        command = [
+            "rigfl",
+            "data",
+            "generate",
+            "--dataset",
+            dataset,
+            "--config",
+            str(config_path),
+            "--data-dir",
+            str(data_dir),
+            "--partition-seed",
+            str(settings.partition.partition_seed),
+            "--split-seed",
+            str(settings.partition.split_seed),
+        ]
+        formatted_command = " ".join(shlex.quote(part) for part in command)
+        raise FileNotFoundError(
+            f"generated partition for dataset {dataset!r} was not found at {path}. "
+            f"Run: {formatted_command}"
+        )
+    manifest = _read_manifest(path)
+    return PartitionArtifact(dataset, partition_id, path, settings, manifest)
+
+
+def _load_split(path: Path):
+    return torch.load(path, map_location="cpu", weights_only=True)
+
+
+def build_partition_clients(
+    artifact: PartitionArtifact,
+    *,
+    shared_dim: int,
+    batch: int,
+    seed: int = 0,
+    split_seed: int = 0,
+    validation_fraction: float = 0.2,
+    adapter=None,
+    backbones=None,
+    build_models: bool = True,
+) -> list[Client]:
+    """Construct federated clients from one previously generated partition.
+
+    ``build_models=False`` is for workflows that construct their own model pool.
+    """
+    num_clients = int(artifact.manifest["num_clients"])
+    num_classes = int(artifact.manifest["target_spec"]["num_classes"])
+    input_dtype = (
+        torch.long
+        if artifact.manifest["input_spec"]["kind"] == "token_sequence"
+        else torch.float32
+    )
+    # client_split fractions are shares of the whole client partition, and test
+    # is already carved off, so rescale against what train.pt actually holds.
+    client_split = (artifact.manifest.get("source") or {}).get("client_split")
+    pool_fraction = validation_fraction
+    if client_split:
+        pool_fraction = validation_fraction / (1 - client_split["test_fraction"])
+
+    clients = []
+    for cid in range(num_clients):
+        directory = artifact.path / "clients" / f"client_{cid}"
+        x_train, y_train = _load_split(directory / "train.pt")
+        x_test, y_test = _load_split(directory / "test.pt")
+        stored_validation = directory / "validation.pt"
+        if stored_validation.exists():
+            x_validation, y_validation = _load_split(stored_validation)
+            train_indices = range(len(y_train))
+            validation_indices = range(len(y_validation))
+        else:
+            # Train and validation share one stored tensor and differ only by index.
+            x_validation, y_validation = x_train, y_train
+            train_indices, validation_indices = _train_val_indices(
+                len(y_train),
+                None,
+                pool_fraction,
+                generator=_stream_generator(split_seed, 0),
+            )
+        clients.append(_make_client(
+            cid,
+            _ArrayDataset(x_train, y_train, train_indices, input_dtype=input_dtype),
+            _ArrayDataset(
+                x_validation, y_validation, validation_indices,
+                input_dtype=input_dtype,
+            ),
+            _ArrayDataset(x_test, y_test, range(len(y_test)), input_dtype=input_dtype),
+            backbones=backbones, shared_dim=shared_dim, num_classes=num_classes,
+            adapter=adapter, batch=batch, seed=seed, build_models=build_models,
+        ))
+    return clients

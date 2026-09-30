@@ -1,0 +1,125 @@
+"""FedProto -- Federated Prototype Learning (Tan et al., AAAI 2022).
+
+Clients keep their own (possibly different) models and never share weights.
+Instead, each client shares one *prototype* per class -- the average feature
+vector of its examples in that class. The server averages these prototypes into
+global prototypes and hands them back. Each client trains normally, plus a term
+that pulls each sample's feature toward its class's global prototype. At test
+time a sample is labelled by its nearest global prototype.
+
+Shares in representation space (the ``d`` interface); the model's adapter is
+what gives every client the same representation width.
+"""
+
+from __future__ import annotations
+
+from collections import defaultdict
+
+import torch
+import torch.nn.functional as F
+from pydantic import Field
+
+from rigfl.core.config import AlgorithmConfig
+from rigfl.core.interfaces import Algorithm
+from rigfl.prediction import Predictions
+
+Prototypes = dict[int, torch.Tensor]
+
+
+@torch.no_grad()
+def local_prototypes(model, loader, device) -> Prototypes:
+    model.eval()
+    total: dict[int, torch.Tensor] = {}
+    count: dict[int, int] = defaultdict(int)
+    for x, y in loader:
+        x, y = x.to(device), y.to(device)
+        for r, label in zip(model.rep(x), y):
+            c = label.item()
+            total[c] = r.clone() if c not in total else total[c] + r
+            count[c] += 1
+    return {c: total[c] / count[c] for c in total}
+
+
+def prototype_prediction(rep: torch.Tensor, global_protos: Prototypes,
+                         num_classes: int) -> Predictions:
+    """Nearest-prototype (L2) labels with probabilities softmax(-d) over classes
+    that have a global prototype. Classes with none get probability 0.
+    See DEVIATIONS.md.
+    """
+    classes = sorted(global_protos)
+    protos = torch.stack([global_protos[c].to(rep.device) for c in classes])
+    d = torch.cdist(rep, protos)                                  # [N, K], Euclidean
+    labels = torch.tensor([classes[i] for i in d.argmin(dim=1).tolist()],
+                          device=rep.device)
+    scores = torch.softmax(-d, dim=1)                             # [N, K]
+    probs = torch.zeros(rep.shape[0], num_classes, device=rep.device, dtype=scores.dtype)
+    probs[:, torch.as_tensor(classes, device=rep.device)] = scores
+    return Predictions.from_probabilities(probs, labels=labels)
+
+
+def resolve_num_classes(declared, model, global_protos) -> int:
+    """Resolve the prediction width from metadata, the model, or the prototypes.
+
+    The prototype-derived width is only a lower bound because an unreported class
+    has no prototype.
+    """
+    if declared is not None:
+        return int(declared)
+    out = getattr(getattr(model, "head", None), "out_features", None)
+    if out:
+        return int(out)
+    return int(max(global_protos)) + 1
+
+
+class FedProtoConfig(AlgorithmConfig):
+    local_epochs: int = Field(1, ge=1, description="Client training epochs per round.")
+    lr: float = Field(0.01, gt=0, description="Client optimizer learning rate.")
+    lamda: float = Field(0.1, ge=0, description="Weight of the prototype-alignment loss.")
+
+
+class FedProto(Algorithm):
+    def init_globals(self) -> None:
+        return None                       # no global prototypes yet on round 0
+
+    def local_train(self, client, global_protos: Prototypes | None) -> Prototypes:
+        model, loader = client.model, client.train_loader
+        device = self.device
+        model.to(device)
+        model.train()
+        optimizer = torch.optim.SGD(model.parameters(), lr=self.config.lr)
+
+        for _ in range(self.config.local_epochs):
+            for x, y in loader:
+                x, y = x.to(device), y.to(device)
+                rep = model.rep(x)
+                loss = F.cross_entropy(model.head(rep), y)
+
+                # pull each sample's representation toward its class prototype
+                if global_protos is not None:
+                    target = rep.detach().clone()
+                    for i, label in enumerate(y):
+                        proto = global_protos.get(label.item())
+                        if proto is not None:
+                            target[i] = proto
+                    loss = loss + self.config.lamda * F.mse_loss(rep, target)
+
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+
+        return local_prototypes(model, loader, device)
+
+    def aggregate(self, uploads: list[Prototypes], shared) -> Prototypes:
+        total: dict[int, torch.Tensor] = {}
+        count: dict[int, int] = defaultdict(int)
+        for protos in uploads:
+            for c, proto in protos.items():
+                total[c] = proto.clone() if c not in total else total[c] + proto
+                count[c] += 1
+        return {c: total[c] / count[c] for c in total}
+
+    @torch.no_grad()
+    def predict(self, client, x, global_protos: Prototypes) -> Predictions:
+        model = client.model
+        nc = resolve_num_classes(None, model, global_protos)
+        return prototype_prediction(model.rep(x), global_protos, nc)

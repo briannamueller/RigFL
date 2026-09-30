@@ -1,0 +1,13 @@
+# Demonstration-scale settings for a quick local run, not scientific defaults.
+algorithm: fedavg
+dataset: mnist
+model_arch: fedavg_mnist_cnn
+rounds: 20
+partition_seed: 0
+split_seed: 0
+training_seed: 0
+eval_gap: 1
+device: cpu
+results_root: results
+local_epochs: 1
+lr: 0.05

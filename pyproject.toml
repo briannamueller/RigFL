@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rigfl"
+version = "0.4.0"
+description = "A modular research framework for rigorous federated learning experimentation"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+license = "MIT"
+license-files = ["LICENSE", "licenses/*", "THIRD_PARTY_NOTICES.md"]
+authors = [{ name = "Brianna Mueller" }]
+dependencies = [
+    "numpy<2",               # torch 2.0.x is built against numpy 1.x
+    "torch",
+    "filelock",
+    "flwr-datasets[vision]>=0.6,<0.7",
+    "pydantic>=2",
+    "pyyaml",
+    # Caps below keep prebuilt wheels available on Python 3.10: newer releases of
+    # these dropped 3.10 wheels and fall back to source builds needing Rust/compilers.
+    "datasets<2.19",
+    "pyarrow<15",
+    "pillow<11",
+    "pandas<2.3",
+]
+
+[project.urls]
+Repository = "https://github.com/briannamueller/RigFL"
+Issues = "https://github.com/briannamueller/RigFL/issues"
+
+[project.scripts]
+rigfl = "rigfl.cli:main"
+
+[project.optional-dependencies]
+wandb = ["wandb"]                # optional experiment tracking
+biosilo = ["biosilo>=0.1.2,<0.2"]
+hpo = ["optuna>=4,<5"]
+test = ["pytest", "ruff==0.16.6"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.ruff.lint.per-file-ignores]
+# The optional dependency must be checked before importing its integration module.
+"tests/test_biosilo.py" = ["E402"]
+
+[tool.setuptools.packages.find]
+include = ["rigfl*"]
+
+[tool.setuptools.package-data]
+rigfl = [
+    "templates/.gitignore",
+    "templates/configs/*.yaml",
+    "templates/configs/experiments/*.yaml",
+]

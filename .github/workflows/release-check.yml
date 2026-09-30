@@ -1,0 +1,43 @@
+name: release check
+
+# Runs the README workflow from a fresh install of the checkout.
+on:
+  workflow_dispatch:
+
+jobs:
+  readme-workflow:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install from the checkout with HPO support
+        run: |
+          python -m venv /tmp/venv
+          /tmp/venv/bin/python -m pip install --upgrade pip
+          /tmp/venv/bin/python -m pip install ".[hpo]"
+
+      - name: Run the documented workflow
+        run: |
+          export PATH=/tmp/venv/bin:$PATH
+          cd /tmp
+          rigfl init project
+          cd project
+          rigfl data generate --dataset mnist
+          rigfl run configs/experiments/mnist_run.yaml
+          # the repeated run must reuse the saved result
+          rigfl run configs/experiments/mnist_run.yaml | tee rerun.log
+          grep -qi "skip" rerun.log
+          rigfl sweep configs/experiments/mnist_sweep.yaml --execute
+          rigfl report --save
+          rigfl report --filter model_heterogeneous --per-client --save
+          test -f results/reports/summary.csv
+          test -f results/reports/model_heterogeneous_per_client.csv
+          rigfl hpo configs/experiments/mnist_hpo.yaml
+          # resuming a finished study must not run anything new
+          before=$(ls results/runs | wc -l)
+          rigfl hpo configs/experiments/mnist_hpo.yaml
+          test "$(ls results/runs | wc -l)" -eq "$before"

@@ -1,0 +1,20 @@
+# Demonstration-scale Local/FedAvg/FedGH/FedProto runs, not scientific defaults.
+name: mnist_sweep
+
+base:
+  dataset: mnist
+  rounds: 20
+  eval_gap: 1
+  device: cpu
+  results_root: results
+  local_epochs: 1
+  lr: 0.05
+
+sweep:
+  algorithm: [local, fedavg, fedgh, fedproto]
+  model_arch: [fedavg_mnist_cnn, mnist_heterogeneous_3]
+
+replicates:
+  - {partition_seed: 0, split_seed: 0, training_seed: 0}
+  - {partition_seed: 0, split_seed: 0, training_seed: 1}
+  - {partition_seed: 0, split_seed: 0, training_seed: 2}

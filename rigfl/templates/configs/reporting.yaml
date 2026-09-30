@@ -1,0 +1,10 @@
+# Reporting definitions for the demonstration MNIST sweep.
+version: 1
+metric: accuracy
+round_selection: shared
+client_weighting: uniform
+
+filters:
+  model_heterogeneous:
+    algorithm: [local, fedgh, fedproto]
+    model_arch: [mnist_heterogeneous_3]
