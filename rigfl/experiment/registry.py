@@ -203,6 +203,8 @@ def split_public_configuration(
 def algorithm_spec(name: str) -> AlgorithmSpec:
     """The registered implementation, config class, and execution runner."""
     if name not in REGISTRY:
+        load_plugins()
+    if name not in REGISTRY:
         raise KeyError(f"unknown algorithm '{name}'; known: {', '.join(ALL_ALGORITHMS)}")
     return REGISTRY[name]
 
@@ -340,5 +342,16 @@ def build_algorithm(name: str, exp: ResolvedExperimentConfig,
     )
 
 
-# last, so an entry point can import anything defined above
-register_entry_points(metadata.entry_points(group="rigfl.algorithms"))
+_plugins_loaded = False
+
+
+def load_plugins() -> None:
+    """Register installed ``rigfl.algorithms`` entry points, once.
+
+    Called when RigFL needs its algorithm list rather than at import, so a plugin
+    can import from this module without importing itself halfway.
+    """
+    global _plugins_loaded
+    if not _plugins_loaded:
+        _plugins_loaded = True
+        register_entry_points(metadata.entry_points(group="rigfl.algorithms"))

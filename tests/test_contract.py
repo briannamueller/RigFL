@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from importlib import metadata
 
 import pytest
@@ -81,3 +84,32 @@ def test_installed_entry_points_register_with_their_distribution(
         REGISTRY.pop("ext_example", None)
         if "ext_example" in ALL_ALGORITHMS:
             ALL_ALGORITHMS.remove("ext_example")
+
+
+def test_a_plugin_imported_before_rigfl_still_registers(tmp_path):
+    (tmp_path / "ext_first.py").write_text(
+        "from rigfl.core.config import AlgorithmConfig\n"
+        "from rigfl.core.interfaces import Algorithm\n"
+        "from rigfl.experiment.registry import AlgorithmSpec\n"
+        "class ExtConfig(AlgorithmConfig):\n"
+        "    pass\n"
+        "SPEC = AlgorithmSpec(Algorithm, ExtConfig)\n"
+    )
+    info = tmp_path / "ext_first-0.1.dist-info"
+    info.mkdir()
+    (info / "METADATA").write_text(
+        "Metadata-Version: 2.1\nName: ext-first\nVersion: 0.1\n"
+    )
+    (info / "entry_points.txt").write_text(
+        "[rigfl.algorithms]\next_first = ext_first:SPEC\n"
+    )
+    # a fresh interpreter, so the plugin really is imported first
+    script = (
+        "import ext_first\n"
+        "from rigfl.experiment.registry import algorithm_spec\n"
+        "assert algorithm_spec('ext_first').config is ext_first.ExtConfig\n"
+    )
+    subprocess.run(
+        [sys.executable, "-c", script], check=True,
+        env={**os.environ, "PYTHONPATH": str(tmp_path)},
+    )

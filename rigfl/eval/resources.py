@@ -15,6 +15,7 @@ from typing import Any
 import torch
 from torch import nn
 
+# algorithms may record other kinds, such as peer_to_peer
 COMMUNICATION_KINDS = (
     "client_to_server",
     "server_to_client",
@@ -205,11 +206,9 @@ class ResourceMonitor:
     def record_transfer(self, kind: str, size: int, *,
                         sender: int | None = None,
                         receiver: int | None = None) -> None:
-        if kind not in self._communication:
-            raise ValueError(f"unknown communication kind: {kind}")
         if not isinstance(size, int) or isinstance(size, bool) or size < 0:
             raise ValueError("communication size must be a non-negative integer")
-        self._communication[kind] += size
+        self._communication[kind] = self._communication.get(kind, 0) + size
         if sender is not None:
             client = self._client(sender)
             client["sent_bytes"] += size

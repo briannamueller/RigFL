@@ -102,6 +102,10 @@ def main(argv: list[str] | None = None) -> None:
         "report": ("rigfl.experiment.collect", "main"),
         "seed-sensitivity": ("rigfl.experiment.variance", "main"),
     }
+    if argv and argv[0] in ("run", "sweep", "hpo", "report", "task"):
+        from rigfl.experiment.registry import load_plugins
+
+        load_plugins()
     if argv and argv[0] in delegated:
         from importlib import import_module
 
