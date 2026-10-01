@@ -213,7 +213,8 @@ class FedCAC(Algorithm):
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
-        trained = clone_state_dict(model.state_dict())
+        # server-side state stays on the CPU
+        trained = clone_state_dict({k: v.cpu() for k, v in model.state_dict().items()})
         mask = critical_parameter_mask(
             initial, trained, parameter_names=self.parameter_names,
             tau=self.config.tau,
