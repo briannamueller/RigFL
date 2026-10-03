@@ -29,6 +29,7 @@ from rigfl.data.config import (
 )
 from rigfl.data.flower import generate_flower_partition
 from rigfl.data.transforms import data_transform_identity
+from rigfl.experiment.artifacts import dumps
 
 MANIFEST_KIND = "rigfl.partition_manifest"
 MANIFEST_SCHEMA_VERSION = 1
@@ -156,7 +157,7 @@ def generate_partition(
                 ),
                 "pipeline_version": PARTITION_PIPELINE_VERSION,
             }
-            (temporary / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+            (temporary / "manifest.json").write_text(dumps(manifest) + "\n")
             os.replace(temporary, target)
         except Exception:
             shutil.rmtree(temporary, ignore_errors=True)

@@ -32,11 +32,37 @@ class ResultValidationError(ValueError):
 
 
 def dumps(payload: Any, *, indent: int | None = 2) -> str:
-    """Serialize standards-compliant JSON, refusing NaN and infinity."""
+    """Serialize standards-compliant JSON, refusing NaN and infinity.
+
+    With an indent, lists and small mappings of scalars stay on one line, so
+    label counts and per-round metrics read as rows.
+    """
     try:
-        return json.dumps(payload, indent=indent, allow_nan=False)
+        if indent is None:
+            return json.dumps(payload, allow_nan=False)
+        return _format_json(payload, " " * indent)
     except (TypeError, ValueError) as exc:
         raise ResultValidationError(f"payload is not valid JSON ({exc})") from exc
+
+
+def _is_scalar(value: Any) -> bool:
+    return value is None or isinstance(value, (str, int, float, bool))
+
+
+def _format_json(value: Any, indent: str, level: int = 0) -> str:
+    prefix, child = indent * level, indent * (level + 1)
+    if isinstance(value, dict):
+        if not value or (len(value) <= 3 and all(map(_is_scalar, value.values()))):
+            return json.dumps(value, allow_nan=False)
+        entries = [f"{child}{json.dumps(str(key))}: {_format_json(item, indent, level + 1)}"
+                   for key, item in value.items()]
+        return "{\n" + ",\n".join(entries) + f"\n{prefix}}}"
+    if isinstance(value, (list, tuple)):
+        if all(map(_is_scalar, value)):
+            return json.dumps(value, allow_nan=False)
+        entries = [f"{child}{_format_json(item, indent, level + 1)}" for item in value]
+        return "[\n" + ",\n".join(entries) + f"\n{prefix}]"
+    return json.dumps(value, allow_nan=False)
 
 
 def loads(text: str, *, path: Optional[Path] = None) -> Any:
