@@ -9,6 +9,7 @@ import argparse
 
 from rigfl.data.config import (
     BioSiloDatasetSettings,
+    PrebuiltDatasetSettings,
     dataset_settings,
     with_seed_overrides,
 )
@@ -16,6 +17,7 @@ from rigfl.data.partitions import (
     DEFAULT_DATA_DIR,
     DEFAULT_DATASET_CONFIG,
     generate_partition,
+    load_prebuilt_partition,
 )
 
 
@@ -60,6 +62,11 @@ def main(argv: list[str] | None = None, *, prog: str | None = None) -> None:
         args.partition_seed,
         args.split_seed,
     )
+    if isinstance(settings, PrebuiltDatasetSettings):
+        artifact = load_prebuilt_partition(args.dataset, settings)
+        print(f"prebuilt: {artifact.path}")
+        print(f"partition fingerprint: {artifact.partition_id}")
+        return
     if isinstance(settings, BioSiloDatasetSettings):
         from rigfl.data.biosilo import generate_biosilo_partition
 

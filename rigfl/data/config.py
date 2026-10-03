@@ -411,8 +411,24 @@ class BioSiloDatasetSettings(BaseModel):
         return value
 
 
+class PrebuiltDatasetSettings(BaseModel):
+    """A partition directory written outside RigFL (manifest.json + clients/)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    backend: Literal["prebuilt"] = "prebuilt"
+    path: str = Field(min_length=1, description="Partition directory.")
+    val_frac: float = Field(
+        0.2, gt=0, lt=1,
+        description="Fraction of client training data reserved for validation.",
+    )
+    split_seed: int = Field(
+        0, ge=0, description="Seed used to create client validation splits."
+    )
+
+
 DatasetSettings = Annotated[
-    FlowerDatasetSettings | BioSiloDatasetSettings,
+    FlowerDatasetSettings | BioSiloDatasetSettings | PrebuiltDatasetSettings,
     Field(discriminator="backend"),
 ]
 
@@ -431,6 +447,8 @@ def inactive_replicate_seed_fields(settings: DatasetSettings) -> set[str]:
     """Return data-seed fields that cannot affect this dataset configuration."""
     if isinstance(settings, BioSiloDatasetSettings):
         return set()
+    if isinstance(settings, PrebuiltDatasetSettings):
+        return {"partition_seed"}
 
     inactive = set()
     if (
@@ -475,6 +493,11 @@ def with_seed_overrides(
         if split_seed is not None:
             updates["split_seed"] = split_seed
         return settings.model_copy(update=updates) if updates else settings
+    if isinstance(settings, PrebuiltDatasetSettings):
+        # the partition is fixed on disk, so only the split seed applies
+        if split_seed is None:
+            return settings
+        return settings.model_copy(update={"split_seed": split_seed})
     overrides = {
         name: value
         for name, value in {

@@ -400,7 +400,7 @@ class ResolvedExperimentConfig(ExperimentConfig):
     resolved partition rather than user-authored experiment configuration.
     """
 
-    data_backend: Literal["flower", "biosilo"]
+    data_backend: Literal["flower", "biosilo", "prebuilt"]
     partition_id: str
     partition_scheme: str | None
     num_clients: int = Field(ge=1)

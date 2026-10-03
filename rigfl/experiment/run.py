@@ -22,12 +22,14 @@ from rigfl.data.config import (
     BioSiloDatasetSettings,
     DatasetSettings,
     FlowerDatasetSettings,
+    PrebuiltDatasetSettings,
     dataset_settings,
     with_seed_overrides,
 )
 from rigfl.data.partitions import (
     build_partition_clients,
     load_partition,
+    load_prebuilt_partition,
 )
 from rigfl.eval.resources import ResourceMonitor
 from rigfl.experiment.artifacts import (
@@ -78,7 +80,13 @@ def partition_summary(clients, num_classes: int, artifact=None, handle=None) -> 
             "train_label_hist": hist,
         })
     summary = {"per_client": out}
-    if artifact is not None:
+    if artifact is not None and isinstance(artifact.settings, PrebuiltDatasetSettings):
+        summary["prebuilt"] = {
+            "partition_id": artifact.partition_id,
+            "path": str(artifact.path),
+            "source": artifact.manifest.get("source"),
+        }
+    elif artifact is not None:
         summary["generated"] = {
             "partition_id": artifact.partition_id,
             "settings": artifact.settings.model_dump(mode="json"),
@@ -151,6 +159,28 @@ def resolve_experiment_data(
         )
         return resolved, ResolvedData(settings=settings, artifact=artifact)
 
+    if isinstance(settings, PrebuiltDatasetSettings):
+        artifact = load_prebuilt_partition(exp.dataset, settings)
+        manifest = artifact.manifest
+        manifest_input_spec = dict(manifest["input_spec"])
+        input_kind = manifest_input_spec.pop("kind")
+        partition = manifest.get("partition") or {}
+        resolved = ResolvedExperimentConfig(
+            **experiment_input,
+            data_backend="prebuilt",
+            partition_id=artifact.partition_id,
+            partition_seed=partition.get("partition_seed"),
+            split_seed=settings.split_seed,
+            partition_scheme=partition.get("scheme"),
+            num_clients=manifest["num_clients"],
+            num_classes=manifest["target_spec"]["num_classes"],
+            validation_fraction=settings.val_frac,
+            input_kind=input_kind,
+            input_spec={"input_kind": input_kind, **manifest_input_spec},
+            resolved_models=resolve_models(exp.model_arch, input_kind=input_kind),
+        )
+        return resolved, ResolvedData(settings=settings, artifact=artifact)
+
     if isinstance(settings, BioSiloDatasetSettings):
         from rigfl.data.biosilo import (
             biosilo_input_spec,
@@ -206,7 +236,7 @@ def run_one(
         model_input_spec["shape"] = tuple(model_input_spec["shape"])
     backbone_names = exp.resolved_models
     backbones = instantiate_backbones(backbone_names, input_spec=model_input_spec)
-    if exp.data_backend == "flower":
+    if exp.data_backend in ("flower", "prebuilt"):
         clients = build_partition_clients(
             data.artifact,
             shared_dim=exp.shared_dim,

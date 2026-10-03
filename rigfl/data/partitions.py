@@ -25,6 +25,7 @@ from rigfl.data.config import (
     DEFAULT_DATA_DIR,
     DEFAULT_DATASET_CONFIG,
     FlowerDatasetSettings,
+    PrebuiltDatasetSettings,
     dataset_settings,
 )
 from rigfl.data.flower import generate_flower_partition
@@ -223,6 +224,17 @@ def load_partition(
         )
     manifest = _read_manifest(path)
     return PartitionArtifact(dataset, partition_id, path, settings, manifest)
+
+
+def load_prebuilt_partition(
+    dataset: str, settings: PrebuiltDatasetSettings
+) -> PartitionArtifact:
+    """Load a partition directory written outside RigFL; its id comes from the manifest."""
+    path = Path(settings.path)
+    if not path.is_dir():
+        raise FileNotFoundError(f"prebuilt partition for {dataset!r} not found at {path}")
+    manifest = _read_manifest(path)
+    return PartitionArtifact(dataset, manifest["partition_id"], path, settings, manifest)
 
 
 def _load_split(path: Path):
