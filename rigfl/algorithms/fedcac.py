@@ -1,4 +1,4 @@
-"""FedCAC -- cautiously aggressive parameter collaboration (CVPR 2023).
+"""FedCAC -- cautiously aggressive parameter collaboration (ICCV 2023).
 
 Clients identify parameter-wise critical regions from their local update.  The
 server globally averages non-critical parameters and builds a separate critical

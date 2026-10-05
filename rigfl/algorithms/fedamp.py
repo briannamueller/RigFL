@@ -1,4 +1,4 @@
-"""FedAMP -- personalized attentive message passing (AAAI 2021).
+"""FedAMP -- federated attentive message passing (AAAI 2021).
 
 The server keeps one personalized model and one cloud (prox-center) model per
 client.  Cloud models are convex combinations of the previous personalized

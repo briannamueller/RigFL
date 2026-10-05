@@ -100,7 +100,7 @@ def ensemble_probabilities(
     shared_logits: torch.Tensor,
     private_weight: torch.Tensor,
 ) -> torch.Tensor:
-    """FedAPEN Eq. 6."""
+    """FedAPEN Eq. 5."""
     return (
         private_weight * _probabilities(private_logits)
         + (1.0 - private_weight) * _probabilities(shared_logits)
