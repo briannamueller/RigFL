@@ -148,7 +148,9 @@ class FedAPA(Algorithm):
         return cls(config, initial_client_models)
 
     def init_globals(self) -> FedAPAState:
-        extractors = tuple(extractor_state(model) for model in self.initial_models)
+        # every client starts from one extractor so element-wise mixing stays meaningful
+        start = extractor_state(self.initial_models[0])
+        extractors = tuple(clone_state_dict(start) for _ in self.initial_models)
         weights = torch.eye(len(extractors), dtype=torch.float32)
         return FedAPAState(extractors, weights)
 

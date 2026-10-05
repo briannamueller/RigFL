@@ -91,6 +91,28 @@ def _mixed_state(
     return mixed
 
 
+def _recompute_batchnorm_stats(model, loader, device) -> None:
+    """Re-estimate BatchNorm running statistics for the model's current weights.
+
+    The stored statistics were accumulated while the mixture kept changing, so
+    they don't match the final mixed weights.
+    """
+    norms = [module for module in model.modules()
+             if isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d))]
+    if not norms:
+        return
+    momenta = [module.momentum for module in norms]
+    for module in norms:
+        module.reset_running_stats()
+        module.momentum = None  # cumulative average over the pass
+    model.train()
+    with torch.no_grad():
+        for x, _ in loader:
+            model(x.to(device))
+    for module, momentum in zip(norms, momenta):
+        module.momentum = momentum
+
+
 class APPLE(Algorithm):
     """Learn one private collaboration vector and one core model per client."""
 
@@ -195,10 +217,12 @@ class APPLE(Algorithm):
         updated_core = clone_state_dict(model.state_dict())
         retained_cores = list(cores)
         retained_cores[client_id] = updated_core
-        client.state["apple_personalized_state"] = _mixed_state(
+        model.load_state_dict(_mixed_state(
             model, tuple(retained_cores), relationships, client_id,
             differentiable=False,
-        )
+        ))
+        _recompute_batchnorm_stats(model, client.train_loader, self.device)
+        client.state["apple_personalized_state"] = clone_state_dict(model.state_dict())
         return ModelUpload(updated_core, len(client.train_loader.dataset))
 
     def aggregate(self, uploads: list[ModelUpload], shared: APPLEState) -> APPLEState:
