@@ -40,23 +40,23 @@ def macro_f1(preds: torch.Tensor, labels: torch.Tensor, num_classes: int) -> flo
     return sum(scores) / len(scores) if scores else 0.0
 
 
-def log_loss(probs: torch.Tensor, labels: torch.Tensor, num_classes: int) -> float:
-    """Multiclass log loss (cross-entropy) of a predicted distribution.
-
-    .. math:: \\frac{1}{N} \\sum_i -\\log \\hat{p}_{i, y_i}
-
-    the mean over samples of the negative log of the probability the algorithm
-    assigned to the *true* class, with that probability clamped to
-    ``[LOG_LOSS_EPS, 1]`` before the log. Natural log, so the unit is nats and a
-    uniform prediction over ``C`` classes scores ``log C``.
-
-    Computed identically for every algorithm on held-out data; unrelated to
-    training losses.
-    """
+def log_loss(
+    probs: torch.Tensor,
+    labels: torch.Tensor,
+    num_classes: int,
+    class_weights: torch.Tensor | None = None,
+) -> float:
+    """Cross-entropy of predicted probabilities, optionally class weighted."""
     if labels.numel() == 0:
         return 0.0
-    true = probs.gather(1, labels.long().view(-1, 1).to(probs.device)).squeeze(1)
-    return (-torch.log(true.clamp(min=LOG_LOSS_EPS, max=1.0))).mean().item()
+    labels = labels.long().to(probs.device)
+    true = probs.gather(1, labels.view(-1, 1)).squeeze(1)
+    losses = -torch.log(true.clamp(min=LOG_LOSS_EPS, max=1.0))
+    if class_weights is None:
+        return losses.mean().item()
+    weights = class_weights.to(device=probs.device, dtype=probs.dtype)
+    sample_weights = weights[labels]
+    return (losses * sample_weights).sum().div(sample_weights.sum()).item()
 
 
 def _binary_ranking_inputs(
@@ -162,10 +162,9 @@ METRICS: dict[str, MetricSpec] = {
     "macro_f1": MetricSpec("macro_f1", "maximize", fn=macro_f1),
     "loss": MetricSpec("loss", "minimize", fn=log_loss,
                        needs="probabilities",
-                       note="multiclass log loss: mean over samples of -log of the "
-                            "probability assigned to the true class, clamped at "
-                            f"{LOG_LOSS_EPS:g}. Needs normalized class probabilities, "
-                            "which a label-only algorithm does not provide."),
+                       note="cross-entropy of the configured training objective. "
+                            "Needs normalized class probabilities, which a "
+                            "label-only algorithm does not provide."),
     "auroc": MetricSpec(
         "auroc", "maximize", fn=auroc,
         needs="probabilities", binary_only=True,
@@ -250,6 +249,7 @@ def compute_all(
     output: "Predictions | torch.Tensor",
     labels: torch.Tensor,
     num_classes: int,
+    class_weights: torch.Tensor | None = None,
 ) -> dict[str, float | None]:
     """Every computed metric, for one client's predictions.
 
@@ -291,7 +291,10 @@ def compute_all(
             out[name] = None
             continue
         try:
-            out[name] = s.fn(metric_input(s, output), labels, num_classes)
+            args = (metric_input(s, output), labels, num_classes)
+            out[name] = (
+                s.fn(*args, class_weights) if name == "loss" else s.fn(*args)
+            )
         except MetricInputUnavailable:
             out[name] = None
     return out

@@ -23,6 +23,8 @@ By default, test performance is reported at the training round with the highest 
 When validation values tie, RigFL selects the earliest round.
 
 RigFL records `accuracy`, `balanced_accuracy`, `macro_f1`, `auroc`, `auprc`, and `loss` at every evaluation round. `loss` is used only for [early stopping](configuration.md#early-stopping). AUROC and AUPRC are available for binary tasks, where label 1 is the positive class. AUPRC is computed as average precision. A client's value is reported as unavailable, not as 0, when its split lacks a positive or a negative example.
+When class weighting is enabled, validation and test loss use the
+training-derived class weights; other reported metrics are unchanged.
 
 ## Client-level gain analysis
 

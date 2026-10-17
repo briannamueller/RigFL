@@ -79,7 +79,9 @@ def evaluate_split(algorithm, clients, shared, device, split: str, num_classes: 
             per_client[key], counts[key] = None, None
             continue
         output, labels = _concat(outputs), torch.cat(labels)
-        per_client[key] = compute_all(output, labels, num_classes)
+        per_client[key] = compute_all(
+            output, labels, num_classes, class_weights=client.class_weights
+        )
         counts[key] = int(labels.numel())
     return {
         "clients": per_client,

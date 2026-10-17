@@ -39,6 +39,7 @@ class Client:
     val_loader: DataLoader | None = None
     test_loader: DataLoader | None = None
     client_id: int | None = None
+    class_weights: torch.Tensor | None = None
     state: dict = field(default_factory=dict)
 
 

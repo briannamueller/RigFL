@@ -22,6 +22,10 @@ from rigfl.algorithms.fedavg import (
 )
 from rigfl.core.config import AlgorithmConfig
 from rigfl.core.interfaces import Algorithm
+from rigfl.core.losses import (
+    classification_loss,
+    distribution_classification_loss,
+)
 from rigfl.core.model import assemble_model
 from rigfl.prediction import Predictions
 
@@ -108,9 +112,13 @@ def ensemble_probabilities(
 
 
 def _distribution_cross_entropy(
-    probabilities: torch.Tensor, labels: torch.Tensor
+    probabilities: torch.Tensor,
+    labels: torch.Tensor,
+    class_weights: torch.Tensor | None = None,
 ) -> torch.Tensor:
-    return F.nll_loss(probabilities.clamp_min(1e-12).log(), labels)
+    return distribution_classification_loss(
+        probabilities, labels, class_weights
+    )
 
 
 def _kl(first: torch.Tensor, second: torch.Tensor) -> torch.Tensor:
@@ -128,6 +136,7 @@ def adapt_ensemble_weight(
     epochs: int,
     lr: float,
     device: torch.device,
+    class_weights: torch.Tensor | None = None,
 ) -> None:
     """FedAPEN Eq. 8 while both model parameter sets remain fixed."""
     private_model.eval()
@@ -142,7 +151,9 @@ def adapt_ensemble_weight(
             probabilities = ensemble_probabilities(
                 private_logits, shared_logits, private_weight
             )
-            loss = _distribution_cross_entropy(probabilities, y)
+            loss = _distribution_cross_entropy(
+                probabilities, y, class_weights
+            )
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -221,6 +232,7 @@ class FedAPEN(Algorithm):
             epochs=self.config.adaptation_epochs,
             lr=self.config.adaptation_lr,
             device=self.device,
+            class_weights=client.class_weights,
         )
         fixed_weight = private_weight.detach()
         private_optimizer = torch.optim.SGD(private_model.parameters(), lr=self.config.lr)
@@ -241,9 +253,13 @@ class FedAPEN(Algorithm):
                     + (1.0 - fixed_weight) * shared_probabilities
                 )
                 private_loss = (
-                    F.cross_entropy(private_logits, y)
+                    classification_loss(
+                        private_logits, y, client.class_weights
+                    )
                     + _kl(private_probabilities, shared_probabilities)
-                    + _distribution_cross_entropy(private_ensemble, y)
+                    + _distribution_cross_entropy(
+                        private_ensemble, y, client.class_weights
+                    )
                 )
                 private_optimizer.zero_grad()
                 private_loss.backward()
@@ -260,9 +276,13 @@ class FedAPEN(Algorithm):
                     + (1.0 - fixed_weight) * shared_probabilities
                 )
                 shared_loss = (
-                    F.cross_entropy(shared_logits, y)
+                    classification_loss(
+                        shared_logits, y, client.class_weights
+                    )
                     + _kl(shared_probabilities, private_probabilities)
-                    + _distribution_cross_entropy(shared_ensemble, y)
+                    + _distribution_cross_entropy(
+                        shared_ensemble, y, client.class_weights
+                    )
                 )
                 shared_optimizer.zero_grad()
                 shared_loss.backward()

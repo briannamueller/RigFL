@@ -25,6 +25,7 @@ from rigfl.algorithms.fedavg import (
 )
 from rigfl.core.config import AlgorithmConfig
 from rigfl.core.interfaces import Algorithm
+from rigfl.core.losses import classification_loss
 from rigfl.prediction import Predictions
 
 State = dict[str, torch.Tensor]
@@ -205,7 +206,7 @@ class APPLE(Algorithm):
                     model, cores, relationships, client_id, differentiable=True
                 )
                 logits = torch.func.functional_call(model, personalized, (x,))
-                loss = F.cross_entropy(logits, y)
+                loss = classification_loss(logits, y, client.class_weights)
                 if regularization:
                     loss = loss + 0.5 * regularization * (
                         relationships - p0

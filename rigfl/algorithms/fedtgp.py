@@ -22,6 +22,7 @@ from torch.utils.data import DataLoader
 from rigfl.algorithms.fedproto import local_prototypes, prototype_prediction
 from rigfl.core.config import AlgorithmConfig
 from rigfl.core.interfaces import Algorithm
+from rigfl.core.losses import classification_loss
 from rigfl.eval.resources import payload_bytes
 from rigfl.prediction import Predictions
 
@@ -93,7 +94,9 @@ class FedTGP(Algorithm):
             for x, y in loader:
                 x, y = x.to(device), y.to(device)
                 rep = model.rep(x)
-                loss = F.cross_entropy(model.head(rep), y)
+                loss = classification_loss(
+                    model.head(rep), y, client.class_weights
+                )
                 if global_protos is not None:
                     target = rep.detach().clone()
                     for i, label in enumerate(y):

@@ -19,6 +19,7 @@ from pydantic import Field
 
 from rigfl.core.config import AlgorithmConfig
 from rigfl.core.interfaces import Algorithm
+from rigfl.core.losses import classification_loss
 from rigfl.prediction import Predictions
 
 
@@ -126,8 +127,10 @@ class FedAvg(Algorithm):
     def _round_reference(self, model) -> dict[str, torch.Tensor] | None:
         return None
 
-    def _training_loss(self, model, logits, labels, reference) -> torch.Tensor:
-        return F.cross_entropy(logits, labels)
+    def _training_loss(
+        self, model, logits, labels, reference, class_weights
+    ) -> torch.Tensor:
+        return classification_loss(logits, labels, class_weights)
 
     def local_train(self, client, global_model) -> ModelUpload:
         model, loader = client.model, client.train_loader
@@ -142,7 +145,9 @@ class FedAvg(Algorithm):
         for _ in range(self.config.local_epochs):
             for x, y in loader:
                 x, y = x.to(self.device), y.to(self.device)
-                loss = self._training_loss(model, model(x), y, reference)
+                loss = self._training_loss(
+                    model, model(x), y, reference, client.class_weights
+                )
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()

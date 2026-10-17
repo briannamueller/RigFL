@@ -23,6 +23,7 @@ from rigfl.algorithms.fedavg import (
 )
 from rigfl.core.config import AlgorithmConfig
 from rigfl.core.interfaces import Algorithm
+from rigfl.core.losses import classification_loss
 from rigfl.eval.resources import payload_bytes
 from rigfl.prediction import Predictions
 
@@ -168,7 +169,7 @@ class FedAMP(Algorithm):
         for _ in range(self.config.local_epochs):
             for x, y in client.train_loader:
                 x, y = x.to(self.device), y.to(self.device)
-                loss = F.cross_entropy(model(x), y)
+                loss = classification_loss(model(x), y, client.class_weights)
                 if reference is not None and proximal_scale:
                     penalty = sum(
                         (parameter - reference[name]).square().sum()

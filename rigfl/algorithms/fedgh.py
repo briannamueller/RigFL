@@ -19,6 +19,7 @@ from pydantic import Field
 from rigfl.algorithms.fedproto import local_prototypes
 from rigfl.core.config import AlgorithmConfig
 from rigfl.core.interfaces import Algorithm
+from rigfl.core.losses import classification_loss
 from rigfl.prediction import Predictions
 
 Prototypes = dict[int, torch.Tensor]
@@ -55,7 +56,7 @@ class FedGH(Algorithm):
         for _ in range(self.config.local_epochs):
             for x, y in loader:
                 x, y = x.to(device), y.to(device)
-                loss = F.cross_entropy(model(x), y)
+                loss = classification_loss(model(x), y, client.class_weights)
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()

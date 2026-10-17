@@ -17,6 +17,7 @@ from typing import Any
 import numpy as np
 import torch
 
+from rigfl.core.losses import apply_class_weighting
 from rigfl.data.builder import build_clients
 from rigfl.data.config import (
     BioSiloDatasetSettings,
@@ -265,6 +266,9 @@ def run_one(
         )
     else:
         raise RuntimeError(f"unresolved data backend: {exp.data_backend!r}")
+    apply_class_weighting(
+        clients, exp.class_weighting, exp.num_classes
+    )
     algorithm = build_algorithm(
         name, exp, cfg, model_input_spec=model_input_spec,
         model_template=clients[0].model,
@@ -297,9 +301,7 @@ def run_one(
         wall_seconds=round(resources["observed"]["wall_seconds"]["total"], 1),
         resources=resources,
         partition=partition_summary(
-            clients,
-            exp.num_classes,
-            artifact=data.artifact,
+            clients, exp.num_classes, artifact=data.artifact,
             handle=data.handle,
         ),
     )

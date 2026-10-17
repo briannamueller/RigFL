@@ -26,6 +26,7 @@ from rigfl.algorithms.fedavg import (
 )
 from rigfl.core.config import AlgorithmConfig
 from rigfl.core.interfaces import Algorithm
+from rigfl.core.losses import classification_loss
 from rigfl.eval.resources import payload_bytes
 from rigfl.prediction import Predictions
 
@@ -295,7 +296,7 @@ class FedPAC(Algorithm):
         )
         for x, y in client.train_loader:
             x, y = x.to(self.device), y.to(self.device)
-            loss = F.cross_entropy(model(x), y)
+            loss = classification_loss(model(x), y, client.class_weights)
             head_optimizer.zero_grad()
             loss.backward()
             head_optimizer.step()
@@ -312,7 +313,9 @@ class FedPAC(Algorithm):
             for x, y in client.train_loader:
                 x, y = x.to(self.device), y.to(self.device)
                 representation = model.rep(x)
-                loss = F.cross_entropy(model.head(representation), y)
+                loss = classification_loss(
+                    model.head(representation), y, client.class_weights
+                )
                 if self.config.lamda and shared.prototypes:
                     targets = representation.detach().clone()
                     for index, label in enumerate(y):

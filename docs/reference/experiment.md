@@ -16,6 +16,7 @@ These options configure individual runs, sweeps, and tuning studies.
 | `shared_dim` | integer | `512` | ≥ 1 | Representation width used by algorithms that exchange representations (FedProto, FedGH, pFedMoE, FedTGP); ignored by all others. |
 | `model_arch` | string | `fedavg_cnn` | — | Architecture name given to every client, or a model-family name assigning the family's architectures to clients. Algorithms that require identical client architectures accept only an architecture name. |
 | `batch` | integer | `32` | ≥ 1 | Client training batch size. |
+| `class_weighting` | string | `none` | `none`, `global_balanced`, `local_balanced` | Class-weighting strategy for cross-entropy loss (may be useful for imbalanced classification). `global_balanced` computes `N / (C * n_c)` weights from pooled client training labels; `local_balanced` computes them separately for each client. |
 | `eval_gap` | integer | `1` | ≥ 1 | Evaluate every N communication rounds for iterative runners. |
 | `device` | string | `auto` | `auto`, `cpu`, `mps`, `cuda` | Device used for training and evaluation. |
 | `results_root` | string | `results` | — | Base directory for runs, reports, and study files. |

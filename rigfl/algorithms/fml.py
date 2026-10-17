@@ -18,6 +18,7 @@ from pydantic import Field
 
 from rigfl.core.config import AlgorithmConfig
 from rigfl.core.interfaces import Algorithm
+from rigfl.core.losses import classification_loss
 from rigfl.core.model import ClientModel, assemble_model
 from rigfl.prediction import Predictions
 
@@ -71,9 +72,13 @@ class FML(Algorithm):
                 x, y = x.to(device), y.to(device)
                 out, out_m = model(x), meme(x)
                 # Each model's teacher is detached, matching the FML objective.
-                loss = (self.config.alpha * F.cross_entropy(out, y)
+                loss = (self.config.alpha * classification_loss(
+                            out, y, client.class_weights
+                        )
                         + (1 - self.config.alpha) * F.kl_div(F.log_softmax(out, 1), F.softmax(out_m.detach(), 1), reduction="batchmean"))
-                loss_m = (self.config.beta * F.cross_entropy(out_m, y)
+                loss_m = (self.config.beta * classification_loss(
+                              out_m, y, client.class_weights
+                          )
                           + (1 - self.config.beta) * F.kl_div(F.log_softmax(out_m, 1), F.softmax(out.detach(), 1), reduction="batchmean"))
                 opt.zero_grad()
                 opt_m.zero_grad()

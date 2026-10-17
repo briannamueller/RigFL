@@ -22,6 +22,7 @@ from rigfl.algorithms.fedavg import (
 from rigfl.core.adapters import LearnedProjection
 from rigfl.core.config import AlgorithmConfig
 from rigfl.core.interfaces import Algorithm
+from rigfl.core.losses import classification_loss
 from rigfl.prediction import Predictions
 
 
@@ -151,7 +152,9 @@ class PFedMoE(Algorithm):
                 representation, _ = mixed_representation(
                     proxy, private_model, gate, x
                 )
-                loss = F.cross_entropy(private_model.head(representation), y)
+                loss = classification_loss(
+                    private_model.head(representation), y, client.class_weights
+                )
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()

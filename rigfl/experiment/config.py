@@ -156,6 +156,15 @@ class ExperimentConfig(BaseModel):
         ),
     )
     batch: int = Field(32, ge=1, description="Client training batch size.")
+    class_weighting: Literal["none", "global_balanced", "local_balanced"] = Field(
+        "none",
+        description=(
+            "Class-weighting strategy for cross-entropy loss (may be useful for "
+            "imbalanced classification). `global_balanced` computes "
+            "`N / (C * n_c)` weights from pooled client training labels; "
+            "`local_balanced` computes them separately for each client."
+        ),
+    )
     eval_gap: int = Field(
         1,
         ge=1,

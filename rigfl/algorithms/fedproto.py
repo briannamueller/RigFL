@@ -21,6 +21,7 @@ from pydantic import Field
 
 from rigfl.core.config import AlgorithmConfig
 from rigfl.core.interfaces import Algorithm
+from rigfl.core.losses import classification_loss
 from rigfl.prediction import Predictions
 
 Prototypes = dict[int, torch.Tensor]
@@ -92,7 +93,9 @@ class FedProto(Algorithm):
             for x, y in loader:
                 x, y = x.to(device), y.to(device)
                 rep = model.rep(x)
-                loss = F.cross_entropy(model.head(rep), y)
+                loss = classification_loss(
+                    model.head(rep), y, client.class_weights
+                )
 
                 # pull each sample's representation toward its class prototype
                 if global_protos is not None:

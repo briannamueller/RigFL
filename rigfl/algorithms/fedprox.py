@@ -37,6 +37,10 @@ class FedProx(FedAvg):
         return {name: parameter.detach().clone()
                 for name, parameter in model.named_parameters()}
 
-    def _training_loss(self, model, logits, labels, reference) -> torch.Tensor:
-        return (super()._training_loss(model, logits, labels, reference)
+    def _training_loss(
+        self, model, logits, labels, reference, class_weights
+    ) -> torch.Tensor:
+        return (super()._training_loss(
+                    model, logits, labels, reference, class_weights
+                )
                 + proximal_penalty(model, reference, self.config.mu))
