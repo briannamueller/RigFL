@@ -11,7 +11,7 @@ from rigfl.algorithms.fedtgp import FedTGP, FedTGPConfig
 from rigfl.algorithms.global_ensemble import GlobalEnsemble, GlobalEnsembleConfig
 from rigfl.core import Algorithm, Client, Predictions
 from rigfl.core.config import AlgorithmConfig
-from rigfl.core.round import iterative
+from rigfl.core.round import independent, iterative
 from rigfl.eval.report import summarize_resources
 from rigfl.eval.resources import ResourceMonitor, payload_bytes
 
@@ -82,8 +82,10 @@ def test_global_ensemble_does_not_count_an_unused_server_broadcast():
     algorithm = GlobalEnsemble(GlobalEnsembleConfig())
     monitor = ResourceMonitor(DEVICE)
     with monitor:
-        iterative(algorithm, _clients(), num_rounds=2, device=DEVICE,
-                  num_classes=2, verbose=False, resource_monitor=monitor)
+        independent(
+            algorithm, _clients(), num_rounds=2, device=DEVICE,
+            num_classes=2, verbose=False, resource_monitor=monitor,
+        )
     communication = monitor.to_dict()["observed"]["communication_bytes"]
     assert communication["client_to_server"] > 0
     assert communication["server_to_client"] == 0

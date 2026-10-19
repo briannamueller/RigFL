@@ -30,7 +30,7 @@ from rigfl.algorithms.fml import FML, FMLConfig
 from rigfl.algorithms.global_ensemble import GlobalEnsemble, GlobalEnsembleConfig
 from rigfl.algorithms.local import Local, LocalConfig
 from rigfl.algorithms.pfedmoe import PFedMoE, PFedMoEConfig
-from rigfl.core import AdaptivePool, LearnedProjection, iterative
+from rigfl.core import AdaptivePool, LearnedProjection, independent, iterative
 from rigfl.core.config import AlgorithmConfig
 from rigfl.experiment.config import (
     ExperimentConfig,
@@ -73,7 +73,7 @@ class AlgorithmSpec:
 
 
 REGISTRY = {
-    "local":    AlgorithmSpec(Local, LocalConfig),
+    "local":    AlgorithmSpec(Local, LocalConfig, runner=independent),
     "fedproto": AlgorithmSpec(
         FedProto, FedProtoConfig, representation_adapter="projection"
     ),
@@ -119,7 +119,9 @@ REGISTRY = {
     "pfedmoe":  AlgorithmSpec(
         PFedMoE, PFedMoEConfig, representation_adapter="projection"
     ),
-    "global_ensemble": AlgorithmSpec(GlobalEnsemble, GlobalEnsembleConfig),
+    "global_ensemble": AlgorithmSpec(
+        GlobalEnsemble, GlobalEnsembleConfig, runner=independent
+    ),
 }
 
 # report order; register_algorithm appends to it

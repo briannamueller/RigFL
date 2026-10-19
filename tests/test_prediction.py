@@ -9,7 +9,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from rigfl.core import Client, ClientModel, LearnedProjection, iterative
+from rigfl.core import Client, ClientModel, LearnedProjection, independent, iterative
 from rigfl.eval.metrics import (
     LOG_LOSS_EPS,
     log_loss,
@@ -144,11 +144,18 @@ def _predictions(algorithm, rounds: int = 2):
     for cid, client in enumerate(clients):
         client.client_id = cid
         client.state.clear()
-    shared = algorithm.init_globals()
-    for rnd in range(rounds):
-        algorithm.round_idx = rnd
-        uploads = [algorithm.local_train(client, shared) for client in clients]
-        shared = algorithm.aggregate(uploads, shared)
+    if type(algorithm).__name__ in ("Local", "GlobalEnsemble"):
+        independent(
+            algorithm, clients, num_rounds=rounds, device=DEVICE,
+            num_classes=NUM_CLASSES, verbose=False,
+        )
+        shared = getattr(algorithm, "members", None)
+    else:
+        shared = algorithm.init_globals()
+        for rnd in range(rounds):
+            algorithm.round_idx = rnd
+            uploads = [algorithm.local_train(client, shared) for client in clients]
+            shared = algorithm.aggregate(uploads, shared)
 
     outs = []
     with torch.no_grad():

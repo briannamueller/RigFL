@@ -1,55 +1,35 @@
-"""Global Ensemble -- soft-vote over all client models.
-
-Clients train locally and upload their models each round; prediction averages the
-class probabilities of every client model.
-"""
+"""Global Ensemble -- a fixed soft-voting ensemble of local models."""
 
 from __future__ import annotations
 
 import torch
 import torch.nn.functional as F
-from pydantic import Field
 
-from rigfl.core.config import AlgorithmConfig
-from rigfl.core.interfaces import Algorithm
-from rigfl.core.losses import classification_loss
+from rigfl.algorithms.local import Local, LocalConfig
 from rigfl.prediction import Predictions
 
 
-class GlobalEnsembleConfig(AlgorithmConfig):
-    local_epochs: int = Field(1, ge=1, description="Client training epochs per round.")
-    lr: float = Field(0.01, gt=0, description="Client optimizer learning rate.")
+class GlobalEnsembleConfig(LocalConfig):
+    """Global Ensemble uses the same local-training settings as Local."""
 
 
-class GlobalEnsemble(Algorithm):
-    def init_globals(self) -> list:
-        return []
+class GlobalEnsemble(Local):
+    """Train as Local, then uniformly ensemble every selected client model."""
 
-    def local_train(self, client, shared):
-        model, loader = client.model, client.train_loader
-        device = self.device
-        model.to(device)
-        model.train()
-        optimizer = torch.optim.SGD(model.parameters(), lr=self.config.lr)
-        for _ in range(self.config.local_epochs):
-            for x, y in loader:
-                x, y = x.to(device), y.to(device)
-                loss = classification_loss(model(x), y, client.class_weights)
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-        return model                      # upload a reference to the trained model
+    def __init__(self, config: GlobalEnsembleConfig):
+        super().__init__(config)
+        self.members: list[torch.nn.Module] = []
 
-    def aggregate(self, uploads: list, shared) -> list:
-        return list(uploads)              # shared = every client's model
-
-    def communication_payload_bytes(self, payload, *, kind: str) -> int:
-        if kind == "server_to_client":
-            return 0
-        return super().communication_payload_bytes(payload, kind=kind)
+    def finalize_local_models(
+        self, models: list[torch.nn.Module]
+    ) -> list[torch.nn.Module]:
+        self.members = list(models)
+        return self.members
 
     @torch.no_grad()
-    def predict(self, client, x, shared: list) -> Predictions:
-        # mean of member softmaxes; there are no ensemble logits
-        probs = sum(F.softmax(m(x), dim=1) for m in shared) / len(shared)
-        return Predictions.from_probabilities(probs)
+    def predict(self, client, x, shared=None) -> Predictions:
+        members = self.members if shared is None else shared
+        if not members:
+            raise RuntimeError("global ensemble has no trained member models")
+        probabilities = sum(F.softmax(model(x), dim=1) for model in members)
+        return Predictions.from_probabilities(probabilities / len(members))

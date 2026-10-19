@@ -15,12 +15,14 @@ from rigfl.core.interfaces import Algorithm
 from rigfl.core.model import ClientModel
 from rigfl.eval.metrics import (
     COMPUTED_METRICS,
+    compute_all,
     direction_of,
     unavailable_reason,
 )
 from rigfl.eval.protocol import evaluate_split
 from rigfl.eval.resources import measured, payload_bytes
 from rigfl.eval.selection import aggregate
+from rigfl.prediction import Predictions
 
 if TYPE_CHECKING:
     from rigfl.experiment.config import EarlyStoppingConfig
@@ -41,6 +43,183 @@ class Client:
     client_id: int | None = None
     class_weights: torch.Tensor | None = None
     state: dict = field(default_factory=dict)
+
+
+def independent(algorithm: Algorithm, clients: list[Client], num_rounds: int,
+                device: torch.device, num_classes: int, eval_gap: int = 1,
+                verbose: bool = True, tracker=None, early_stopping=None,
+                resource_monitor=None) -> dict:
+    """Train and select one model per client, then evaluate the final baseline.
+
+    Local and Global Ensemble share this runner. Their only difference is the
+    shared object returned by ``finalize_local_models`` and how ``predict`` uses
+    it: Local evaluates each client's own model, while Global Ensemble evaluates
+    the same frozen soft-voting pool for every client.
+    """
+    _require_operations(
+        algorithm,
+        "independent",
+        ("make_optimizer", "train_one_round", "finalize_local_models", "predict"),
+    )
+    _start_run(algorithm, clients, device, num_rounds)
+    enabled = early_stopping is not None and early_stopping.enabled
+    metric = early_stopping.metric if enabled else None
+    direction = direction_of(metric) if enabled else None
+    patience = early_stopping.patience if enabled else None
+    min_delta = early_stopping.min_delta if enabled else None
+    selections = {}
+    models = []
+
+    for cid, client in enumerate(clients):
+        model = client.model.to(device)
+        optimizer = algorithm.make_optimizer(model)
+        best_state = best_value = best_round = None
+        stale = 0
+        last_round = -1
+        termination = "completed_all_rounds"
+
+        for rnd in range(num_rounds):
+            algorithm.round_idx = rnd
+            with measured(
+                resource_monitor, "local_train", category="algorithm", client_id=cid
+            ):
+                algorithm.train_one_round(client, optimizer)
+            last_round = rnd
+
+            if not enabled or (rnd % eval_gap != 0 and rnd != num_rounds - 1):
+                continue
+            with measured(
+                resource_monitor, "validation", category="evaluation", client_id=cid
+            ):
+                metrics = _model_validation_metrics(
+                    model, client, device, num_classes
+                )
+            value = metrics.get(metric)
+            if value is None:
+                raise ValueError(
+                    f'independent early stopping metric "{metric}" is unavailable '
+                    f"for client {cid}"
+                )
+            if _improved(value, best_value, direction, min_delta):
+                best_value, best_round, stale = value, rnd, 0
+                best_state = {
+                    key: tensor.detach().cpu().clone()
+                    for key, tensor in model.state_dict().items()
+                }
+            else:
+                stale += 1
+                if stale >= patience:
+                    termination = "early_stopping"
+                    break
+
+        if enabled:
+            if best_state is None:
+                raise RuntimeError(
+                    f"independent runner selected no checkpoint for client {cid}"
+                )
+            model.load_state_dict(best_state)
+            selected_round = best_round
+        else:
+            selected_round = last_round
+        model.eval()
+        models.append(model)
+        selections[str(cid)] = {
+            "selected_round": selected_round,
+            "best_value": best_value,
+            "stopped_at_round": last_round,
+            "termination_reason": termination,
+        }
+
+    shared = algorithm.finalize_local_models(models)
+    if resource_monitor is not None and shared is not None:
+        for cid, model in enumerate(models):
+            resource_monitor.record_transfer(
+                "client_to_server",
+                _payload_size(algorithm, model, kind="client_to_server"),
+                sender=cid,
+            )
+    if resource_monitor is not None:
+        resource_monitor.checkpoint(0)
+
+    evaluated = {
+        "validation": evaluate_split(
+            algorithm, clients, shared, device, "val", num_classes,
+            resource_monitor=resource_monitor,
+        ),
+        "test": evaluate_split(
+            algorithm, clients, shared, device, "test", num_classes,
+            resource_monitor=resource_monitor,
+        ),
+    }
+    history = {}
+    append_evaluation(history, 0, evaluated["validation"], evaluated["test"])
+
+    if tracker is not None:
+        _update_tracker_resources(tracker, resource_monitor)
+        tracker.log_round(0, evaluated["validation"], evaluated["test"])
+    if verbose:
+        _print_round(0, evaluated)
+
+    return {
+        "evaluation_history": history,
+        "selection_provenance": {
+            "stage": "independent_local_training",
+            "metric": metric,
+            "clients": selections,
+        },
+        "early_stopping": {
+            "enabled": enabled,
+            "scope": "per_client",
+            "termination_reason": (
+                "per_client" if enabled else "completed_all_rounds"
+            ),
+            "stopped_at_round": max(
+                (value["stopped_at_round"] for value in selections.values()),
+                default=-1,
+            ),
+            "metric": metric,
+            "direction": direction,
+            "aggregation": None,
+            "patience": patience,
+            "min_delta": min_delta,
+            "best_round": None,
+            "best_value": None,
+            "clients": selections,
+        },
+    }
+
+
+@torch.no_grad()
+def _model_validation_metrics(model, client, device, num_classes: int) -> dict:
+    if client.val_loader is None:
+        raise ValueError("independent early stopping requires validation data")
+    was_training = model.training
+    model.eval()
+    outputs, labels = [], []
+    try:
+        for x, y in client.val_loader:
+            probabilities = Predictions.from_logits(model(x.to(device))).probabilities
+            outputs.append(probabilities.cpu())
+            labels.append(y.cpu())
+    finally:
+        model.train(was_training)
+    if not labels:
+        raise ValueError("independent early stopping received an empty validation split")
+    return compute_all(
+        Predictions.from_probabilities(torch.cat(outputs)),
+        torch.cat(labels),
+        num_classes,
+        class_weights=client.class_weights,
+    )
+
+
+def _improved(value: float, best: float | None, direction: str,
+              min_delta: float) -> bool:
+    if best is None:
+        return True
+    if direction == "minimize":
+        return value < best - min_delta
+    return value > best + min_delta
 
 
 def iterative(algorithm: Algorithm, clients: list[Client], num_rounds: int,
