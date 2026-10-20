@@ -38,6 +38,7 @@ def result_data_configuration(record: dict) -> dict:
     experiment = record.get("config", {}).get("experiment", {})
     dataset = experiment.get("dataset")
 
+    data_fields = _DATA_FIELDS
     partition = record.get("partition", {})
     if "generated" in partition:
         settings = deepcopy(partition["generated"].get("settings", {}))
@@ -48,9 +49,15 @@ def result_data_configuration(record: dict) -> dict:
     elif "biosilo" in partition:
         settings = deepcopy(partition["biosilo"].get("settings", {}))
         settings.pop("seed", None)
+        # BioSilo fits feature selection on each seed's training split, so the
+        # feature count can differ between seeds of the same configuration
+        data_fields = tuple(f for f in _DATA_FIELDS if f != "input_spec")
         source = {
             "backend": "biosilo",
             "dataset": partition["biosilo"].get("dataset"),
+            "source_manifest_version": partition["biosilo"].get(
+                "source_manifest_version"
+            ),
             "settings": settings,
         }
     else:
@@ -62,7 +69,7 @@ def result_data_configuration(record: dict) -> dict:
 
     return {
         "dataset": str(dataset) if dataset is not None else None,
-        "experiment": {field: experiment.get(field) for field in _DATA_FIELDS},
+        "experiment": {field: experiment.get(field) for field in data_fields},
         "source": source,
     }
 
