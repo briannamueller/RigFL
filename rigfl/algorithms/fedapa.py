@@ -12,7 +12,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 import torch
-import torch.nn.functional as F
 from pydantic import Field
 
 from rigfl.algorithms.fedavg import clone_state_dict, validate_state_structure

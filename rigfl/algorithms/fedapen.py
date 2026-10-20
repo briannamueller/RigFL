@@ -10,7 +10,6 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import torch
-import torch.nn.functional as F
 from pydantic import Field
 from torch import nn
 from torch.utils.data import DataLoader, Subset

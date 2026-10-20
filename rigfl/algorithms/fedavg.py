@@ -14,7 +14,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 import torch
-import torch.nn.functional as F
 from pydantic import Field
 
 from rigfl.core.config import AlgorithmConfig

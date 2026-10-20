@@ -14,7 +14,6 @@ from dataclasses import dataclass
 from typing import Literal
 
 import torch
-import torch.nn.functional as F
 from pydantic import Field
 from torch import nn
 
