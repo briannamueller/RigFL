@@ -59,6 +59,25 @@ def test_architecture_family_constructs_distinct_backbones(
     ]
 
 
+def test_brats_family_builds_both_architectures_and_infers_channels():
+    names = resolve_models("brats_heterogeneous_2", input_kind="image")
+    factories = instantiate_backbones(
+        names,
+        input_spec={"kind": "image", "shape": (4, 64, 64)},
+    )
+    convmixer, mobilenet = [factory() for factory in factories]
+
+    assert names == ["convmixer_256d8", "mobilenet_v2"]
+    assert convmixer.stem[0].in_channels == 4
+    assert convmixer.stem[0].kernel_size == (4, 4)
+    assert convmixer.stem[0].stride == (4, 4)
+    assert len(convmixer.blocks) == 8
+    assert mobilenet.features[0][0].in_channels == 4
+    assert mobilenet.features[0][0].stride == (2, 2)
+    assert convmixer(torch.randn(2, 4, 64, 64)).shape == (2, 256)
+    assert mobilenet(torch.randn(2, 4, 64, 64)).shape == (2, 1280)
+
+
 def test_model_arch_sweep_skips_families_for_homogeneous_algorithms():
     grid = expand({
         "sweep": {

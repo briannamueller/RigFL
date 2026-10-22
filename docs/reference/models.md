@@ -10,6 +10,8 @@
 | `fedavg_cnn` | `image` |
 | `cifar_resnet18` | `image` |
 | `cifar_mobilenet_v2` | `image` |
+| `mobilenet_v2` | `image` |
+| `convmixer_256d8` | `image` |
 | `tabular_linear` | `numeric` |
 | `tabular_mlp` | `numeric` |
 | `tabular_residual_mlp` | `numeric` |
@@ -24,7 +26,12 @@
 |---|---|
 | `mnist_heterogeneous_3` | `lenet5`, `fedavg_mnist_cnn`, `small_cnn` |
 | `image_heterogeneous_3` | `fedavg_cnn`, `cifar_resnet18`, `cifar_mobilenet_v2` |
+| `brats_heterogeneous_2` | `convmixer_256d8`, `mobilenet_v2` |
 | `tabular_heterogeneous_3` | `tabular_linear`, `tabular_mlp`, `tabular_residual_mlp` |
 | `temporal_heterogeneous_3` | `temporal_gru`, `temporal_cnn`, `temporal_lstm` |
 
 For a model family, RigFL assigns architectures to clients in the listed order, round-robin by client ID. The order is therefore part of the resolved experiment identity. `model_arch` accepts an architecture name or a family name; algorithms that require identical client architectures accept only an architecture name and are skipped for family values in sweeps.
+
+The `brats_heterogeneous_2` family pairs ConvMixer-256/8 with a
+standard-stride MobileNetV2. Both infer the image-channel count from the
+dataset, so no four-channel-specific model names are needed.

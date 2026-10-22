@@ -26,6 +26,7 @@ from rigfl.core.losses import (
     distribution_classification_loss,
 )
 from rigfl.core.model import assemble_model
+from rigfl.data.builder import _train_val_indices
 from rigfl.prediction import Predictions
 
 
@@ -65,11 +66,12 @@ def split_adaptation_data(
             "FedAPEN requires at least two client training samples so its "
             "adaptability set is disjoint from model-training data."
         )
-    adaptation_size = min(max(1, round(size * fraction)), size - 1)
-    generator = torch.Generator().manual_seed(seed)
-    order = torch.randperm(size, generator=generator).tolist()
-    adaptation_indices = order[:adaptation_size]
-    training_indices = order[adaptation_size:]
+    training_indices, adaptation_indices = _train_val_indices(
+        size,
+        getattr(loader.dataset, "groups", None),
+        fraction,
+        generator=torch.Generator().manual_seed(seed),
+    )
     batch_size = loader.batch_size or 1
     common = {
         "batch_size": batch_size,

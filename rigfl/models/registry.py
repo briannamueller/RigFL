@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import torch.nn as nn
 
+from rigfl.models.brats import ConvMixer256D8, MobileNetV2
 from rigfl.models.cifar import (
     CifarMobileNetV2,
     CifarResNet18,
@@ -23,6 +24,8 @@ MODEL_ARCHITECTURE_REGISTRY: dict[str, tuple[str, type[nn.Module]]] = {
     "fedavg_cnn": ("image", FedAvgCNN),
     "cifar_resnet18": ("image", CifarResNet18),
     "cifar_mobilenet_v2": ("image", CifarMobileNetV2),
+    "mobilenet_v2": ("image", MobileNetV2),
+    "convmixer_256d8": ("image", ConvMixer256D8),
     "tabular_linear": ("numeric", TabularLinear),
     "tabular_mlp": ("numeric", TabularMLP),
     "tabular_residual_mlp": ("numeric", TabularResidualMLP),
@@ -39,6 +42,9 @@ MODEL_FAMILIES = {
     ],
     "image_heterogeneous_3": [
         "fedavg_cnn", "cifar_resnet18", "cifar_mobilenet_v2"
+    ],
+    "brats_heterogeneous_2": [
+        "convmixer_256d8", "mobilenet_v2"
     ],
     "tabular_heterogeneous_3": [
         "tabular_linear", "tabular_mlp", "tabular_residual_mlp"

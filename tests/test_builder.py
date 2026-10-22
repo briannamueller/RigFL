@@ -70,6 +70,33 @@ def test_build_clients_gives_each_client_its_own_backbone():
     assert clients[0].model.backbone is not clients[1].model.backbone
 
 
+def test_build_clients_preserves_groups_on_split_datasets():
+    def source(_cid: int, split: str):
+        size = 20 if split == "train" else 8
+        return (
+            torch.randn(size, INPUT_DIM),
+            torch.arange(size) % NUM_CLASSES,
+            [f"{split}-{index // 2}" for index in range(size)],
+        )
+
+    client = build_clients(
+        source,
+        num_clients=1,
+        num_classes=NUM_CLASSES,
+        backbones=[lambda: TinyBackbone(6)],
+        shared_dim=SHARED_DIM,
+        val_frac=0.2,
+        split_seed=7,
+    )[0]
+
+    train_groups = set(client.train_loader.dataset.groups)
+    val_groups = set(client.val_loader.dataset.groups)
+    assert train_groups.isdisjoint(val_groups)
+    assert set(client.test_loader.dataset.groups) == {
+        f"test-{index}" for index in range(4)
+    }
+
+
 def test_small_clients_still_get_a_validation_split():
     """Small clients receive nonempty training and validation splits."""
     from rigfl.data.builder import _train_val_indices

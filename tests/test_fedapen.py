@@ -45,6 +45,20 @@ def test_adaptability_split_is_a_disjoint_partition_of_training_data():
     assert len(adaptation.dataset) == 4
 
 
+def test_adaptability_split_keeps_subject_groups_disjoint():
+    loader = _loader(20)
+    loader.dataset.groups = [f"subject-{index // 2}" for index in range(20)]
+
+    training, adaptation = split_adaptation_data(
+        loader, fraction=0.2, seed=17
+    )
+
+    groups = loader.dataset.groups
+    training_groups = {groups[index] for index in training.dataset.indices}
+    adaptation_groups = {groups[index] for index in adaptation.dataset.indices}
+    assert training_groups.isdisjoint(adaptation_groups)
+
+
 def test_adaptation_changes_only_the_bounded_ensemble_weight():
     private = _model(1.0)
     shared = _model(-1.0)

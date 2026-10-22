@@ -48,11 +48,15 @@ class _ArrayDataset(Dataset):
         X,
         y,
         indices: Sequence[int],
+        groups=None,
         input_dtype: torch.dtype = torch.float32,
     ):
         self.fields = [getattr(X, f) for f in X._fields] if _is_multi(X) else [X]
         self.multi = _is_multi(X)
         self.y, self.indices = y, list(indices)
+        self.groups = (
+            None if groups is None else [groups[index] for index in self.indices]
+        )
         self.input_dtype = input_dtype
 
     def __len__(self) -> int:
@@ -164,12 +168,12 @@ def build_clients(source: Source, num_clients: int, num_classes: int,
             len(y_tr), g_tr, val_frac,
             generator=_stream_generator(split_seed, 0),
         )
-        x_te, y_te, _ = source(cid, "test")
+        x_te, y_te, g_te = source(cid, "test")
         clients.append(_make_client(
             cid,
-            _ArrayDataset(x_tr, y_tr, train_idx),
-            _ArrayDataset(x_tr, y_tr, val_idx),
-            _ArrayDataset(x_te, y_te, range(len(y_te))),
+            _ArrayDataset(x_tr, y_tr, train_idx, groups=g_tr),
+            _ArrayDataset(x_tr, y_tr, val_idx, groups=g_tr),
+            _ArrayDataset(x_te, y_te, range(len(y_te)), groups=g_te),
             backbones=backbones, shared_dim=shared_dim, num_classes=num_classes,
             adapter=adapter, batch=batch, seed=seed, build_models=build_models,
         ))
