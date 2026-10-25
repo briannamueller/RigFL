@@ -44,6 +44,37 @@ class TabularMLP(nn.Module):
         return self.layers(x)
 
 
+class TabularMLP64(nn.Module):
+    """One-hidden-layer MLP with input and hidden-feature normalization."""
+
+    def __init__(self, input_spec=None):
+        super().__init__()
+        width = _input_width(input_spec)
+        self.layers = nn.Sequential(
+            nn.BatchNorm1d(width),
+            nn.Linear(width, 64),
+            nn.BatchNorm1d(64),
+            nn.ReLU(inplace=True),
+        )
+        self.out_dim = 64
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.layers(x)
+
+
+class TabularLogisticRegression(nn.Module):
+    """Batch-normalized inputs for a directly attached linear head."""
+
+    def __init__(self, input_spec=None):
+        super().__init__()
+        width = _input_width(input_spec)
+        self.normalization = nn.BatchNorm1d(width)
+        self.out_dim = width
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.normalization(x)
+
+
 class TabularResidualMLP(nn.Module):
     """Residual tabular feature extractor."""
 

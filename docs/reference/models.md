@@ -13,7 +13,9 @@
 | `mobilenet_v2` | `image` |
 | `convmixer_256d8` | `image` |
 | `tabular_linear` | `numeric` |
+| `tabular_logreg` | `numeric` |
 | `tabular_mlp` | `numeric` |
+| `tabular_mlp_64` | `numeric` |
 | `tabular_residual_mlp` | `numeric` |
 | `phishing_byte_cnn` | `token_sequence` |
 | `temporal_gru` | `temporal` |
@@ -28,6 +30,7 @@
 | `image_heterogeneous_3` | `fedavg_cnn`, `cifar_resnet18`, `cifar_mobilenet_v2` |
 | `brats_heterogeneous_2` | `convmixer_256d8`, `mobilenet_v2` |
 | `tabular_heterogeneous_3` | `tabular_linear`, `tabular_mlp`, `tabular_residual_mlp` |
+| `scrnaseq_heterogeneous_2` | `tabular_logreg`, `tabular_mlp_64` |
 | `temporal_heterogeneous_3` | `temporal_gru`, `temporal_cnn`, `temporal_lstm` |
 
 For a model family, RigFL assigns architectures to clients in the listed order, round-robin by client ID. The order is therefore part of the resolved experiment identity. `model_arch` accepts an architecture name or a family name; algorithms that require identical client architectures accept only an architecture name and are skipped for family values in sweeps.

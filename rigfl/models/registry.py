@@ -13,7 +13,13 @@ from rigfl.models.cifar import (
 )
 from rigfl.models.mnist import FedAvgMNISTCNN, LeNet5
 from rigfl.models.phishing import PhishingByteCNN
-from rigfl.models.tabular import TabularLinear, TabularMLP, TabularResidualMLP
+from rigfl.models.tabular import (
+    TabularLinear,
+    TabularLogisticRegression,
+    TabularMLP,
+    TabularMLP64,
+    TabularResidualMLP,
+)
 from rigfl.models.temporal import TemporalCNN, TemporalGRU, TemporalLSTM
 
 # Short YAML name -> input kind + feature-extractor class.
@@ -27,7 +33,9 @@ MODEL_ARCHITECTURE_REGISTRY: dict[str, tuple[str, type[nn.Module]]] = {
     "mobilenet_v2": ("image", MobileNetV2),
     "convmixer_256d8": ("image", ConvMixer256D8),
     "tabular_linear": ("numeric", TabularLinear),
+    "tabular_logreg": ("numeric", TabularLogisticRegression),
     "tabular_mlp": ("numeric", TabularMLP),
+    "tabular_mlp_64": ("numeric", TabularMLP64),
     "tabular_residual_mlp": ("numeric", TabularResidualMLP),
     "phishing_byte_cnn": ("token_sequence", PhishingByteCNN),
     "temporal_gru": ("temporal", TemporalGRU),
@@ -48,6 +56,9 @@ MODEL_FAMILIES = {
     ],
     "tabular_heterogeneous_3": [
         "tabular_linear", "tabular_mlp", "tabular_residual_mlp"
+    ],
+    "scrnaseq_heterogeneous_2": [
+        "tabular_logreg", "tabular_mlp_64"
     ],
     "temporal_heterogeneous_3": [
         "temporal_gru", "temporal_cnn", "temporal_lstm"

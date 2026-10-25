@@ -6,6 +6,7 @@ import pytest
 import torch
 import torch.nn as nn
 
+from rigfl.core.model import assemble_model
 from rigfl.experiment.identity import fingerprint
 from rigfl.experiment.launch import expand
 from rigfl.experiment.registry import (
@@ -76,6 +77,30 @@ def test_brats_family_builds_both_architectures_and_infers_channels():
     assert mobilenet.features[0][0].stride == (2, 2)
     assert convmixer(torch.randn(2, 4, 64, 64)).shape == (2, 256)
     assert mobilenet(torch.randn(2, 4, 64, 64)).shape == (2, 1280)
+
+
+def test_scrnaseq_family_builds_logistic_regression_and_single_hidden_layer_mlp():
+    names = resolve_models("scrnaseq_heterogeneous_2", input_kind="numeric")
+    factories = instantiate_backbones(
+        names,
+        input_spec={"kind": "numeric", "shape": (2_000,)},
+    )
+    logreg_backbone, mlp_backbone = [factory() for factory in factories]
+
+    assert names == ["tabular_logreg", "tabular_mlp_64"]
+    assert logreg_backbone.out_dim == 2_000
+    assert isinstance(logreg_backbone.normalization, nn.BatchNorm1d)
+    assert isinstance(mlp_backbone.layers[0], nn.BatchNorm1d)
+    assert isinstance(mlp_backbone.layers[1], nn.Linear)
+    assert mlp_backbone.layers[1].in_features == 2_000
+    assert mlp_backbone.layers[1].out_features == 64
+    assert isinstance(mlp_backbone.layers[2], nn.BatchNorm1d)
+
+    x = torch.randn(2, 2_000)
+    logreg = assemble_model(logreg_backbone, shared_dim=64, num_classes=4)
+    mlp = assemble_model(mlp_backbone, shared_dim=64, num_classes=4)
+    assert logreg(x).shape == (2, 4)
+    assert mlp(x).shape == (2, 4)
 
 
 def test_model_arch_sweep_skips_families_for_homogeneous_algorithms():
