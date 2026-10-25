@@ -20,6 +20,11 @@ from rigfl.models.cifar import (
     CifarResNet18,
     CifarThreeLayerCNN,
     FedAvgCNN,
+    FedGHCNN1,
+    FedGHCNN2,
+    FedGHCNN3,
+    FedGHCNN4,
+    FedGHCNN5,
     SmallCNN,
 )
 from rigfl.models.mnist import FedAvgMNISTCNN, LeNet5
@@ -52,6 +57,11 @@ MODEL_ARCHITECTURE_REGISTRY: dict[str, tuple[str, type[nn.Module]]] = {
     "cifar_cnn_79_158_316": ("image", CifarCNN79_158_316),
     "cifar_cnn_85_170_340": ("image", CifarCNN85_170_340),
     "cifar_cnn_91_182_364": ("image", CifarCNN91_182_364),
+    "fedgh_cnn_1": ("image", FedGHCNN1),
+    "fedgh_cnn_2": ("image", FedGHCNN2),
+    "fedgh_cnn_3": ("image", FedGHCNN3),
+    "fedgh_cnn_4": ("image", FedGHCNN4),
+    "fedgh_cnn_5": ("image", FedGHCNN5),
     "mobilenet_v2": ("image", MobileNetV2),
     "convmixer_256d8": ("image", ConvMixer256D8),
     "tabular_linear": ("numeric", TabularLinear),
@@ -84,6 +94,13 @@ MODEL_FAMILIES = {
         "cifar_cnn_79_158_316",
         "cifar_cnn_85_170_340",
         "cifar_cnn_91_182_364",
+    ],
+    "fedgh_heterogeneous_5": [
+        "fedgh_cnn_1",
+        "fedgh_cnn_2",
+        "fedgh_cnn_3",
+        "fedgh_cnn_4",
+        "fedgh_cnn_5",
     ],
     "brats_heterogeneous_2": [
         "convmixer_256d8", "mobilenet_v2"

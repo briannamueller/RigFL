@@ -119,6 +119,34 @@ def test_cifar_width_family_builds_reported_channel_variants():
             reference.conv3[0].out_channels] == [64, 128, 256]
 
 
+def test_fedgh_cifar_family_builds_reported_variants():
+    expected = [
+        ("fedgh_cnn_1", 32, 2000),
+        ("fedgh_cnn_2", 16, 2000),
+        ("fedgh_cnn_3", 32, 1000),
+        ("fedgh_cnn_4", 32, 800),
+        ("fedgh_cnn_5", 32, 500),
+    ]
+    names = resolve_models("fedgh_heterogeneous_5", input_kind="image")
+    factories = instantiate_backbones(
+        names,
+        input_spec={"kind": "image", "shape": (3, 32, 32)},
+    )
+
+    assert names == [name for name, _, _ in expected]
+    for factory, (_, conv2_channels, fc1_dim) in zip(factories, expected):
+        backbone = factory()
+        assert backbone.conv1.in_channels == 3
+        assert backbone.conv1.out_channels == 16
+        assert backbone.conv1.kernel_size == (5, 5)
+        assert backbone.conv2.out_channels == conv2_channels
+        assert backbone.conv2.kernel_size == (5, 5)
+        assert backbone.fc1.in_features == conv2_channels * 5 * 5
+        assert backbone.fc1.out_features == fc1_dim
+        assert backbone.fc2.out_features == 500
+        assert backbone(torch.randn(2, 3, 32, 32)).shape == (2, 500)
+
+
 def test_scrnaseq_family_builds_logistic_regression_and_single_hidden_layer_mlp():
     names = resolve_models("scrnaseq_heterogeneous_2", input_kind="numeric")
     factories = instantiate_backbones(

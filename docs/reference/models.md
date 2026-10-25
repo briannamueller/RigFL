@@ -21,6 +21,11 @@
 | `cifar_cnn_79_158_316` | `image` |
 | `cifar_cnn_85_170_340` | `image` |
 | `cifar_cnn_91_182_364` | `image` |
+| `fedgh_cnn_1` | `image` |
+| `fedgh_cnn_2` | `image` |
+| `fedgh_cnn_3` | `image` |
+| `fedgh_cnn_4` | `image` |
+| `fedgh_cnn_5` | `image` |
 | `mobilenet_v2` | `image` |
 | `convmixer_256d8` | `image` |
 | `tabular_linear` | `numeric` |
@@ -40,6 +45,7 @@
 | `mnist_heterogeneous_3` | `lenet5`, `fedavg_mnist_cnn`, `small_cnn` |
 | `image_heterogeneous_3` | `fedavg_cnn`, `cifar_resnet18`, `cifar_mobilenet_v2` |
 | `cifar_width_heterogeneous_10` | Ten three-layer CNNs with channel widths from `37,74,148` through `91,182,364` |
+| `fedgh_heterogeneous_5` | Five two-layer CNNs with the convolutional and fully connected widths reported for FedGH |
 | `brats_heterogeneous_2` | `convmixer_256d8`, `mobilenet_v2` |
 | `tabular_heterogeneous_3` | `tabular_linear`, `tabular_mlp`, `tabular_residual_mlp` |
 | `scrnaseq_heterogeneous_2` | `tabular_logreg`, `tabular_mlp_64` |

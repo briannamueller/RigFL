@@ -140,6 +140,69 @@ class CifarCNN91_182_364(CifarThreeLayerCNN):
         super().__init__((91, 182, 364), input_spec=input_spec)
 
 
+class FedGHCNN(nn.Module):
+    """Two-convolution CIFAR backbone with configurable hidden widths."""
+
+    def __init__(
+        self,
+        conv2_channels: int = 32,
+        fc1_dim: int = 2000,
+        in_ch: int = 3,
+        input_spec=None,
+    ):
+        super().__init__()
+        in_ch = _image_channels(input_spec, in_ch)
+        shape = tuple(input_spec.get("shape", ())) if input_spec else (in_ch, 32, 32)
+        if len(shape) != 3:
+            raise ValueError(
+                f"FedGHCNN requires [channels, height, width], got {shape}"
+            )
+
+        self.conv1 = nn.Conv2d(in_ch, 16, 5)
+        self.conv2 = nn.Conv2d(16, conv2_channels, 5)
+        self.pool = nn.MaxPool2d(2, 2)
+
+        height, width = shape[1:]
+        height = ((height - 4) // 2 - 4) // 2
+        width = ((width - 4) // 2 - 4) // 2
+        if height < 1 or width < 1:
+            raise ValueError(f"image shape {shape} is too small for the CIFAR CNN")
+        self.fc1 = nn.Linear(conv2_channels * height * width, fc1_dim)
+        self.fc2 = nn.Linear(fc1_dim, 500)
+        self.out_dim = 500
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
+        x = F.relu(self.fc1(x.flatten(1)))
+        return F.relu(self.fc2(x))
+
+
+class FedGHCNN1(FedGHCNN):
+    def __init__(self, input_spec=None):
+        super().__init__(32, 2000, input_spec=input_spec)
+
+
+class FedGHCNN2(FedGHCNN):
+    def __init__(self, input_spec=None):
+        super().__init__(16, 2000, input_spec=input_spec)
+
+
+class FedGHCNN3(FedGHCNN):
+    def __init__(self, input_spec=None):
+        super().__init__(32, 1000, input_spec=input_spec)
+
+
+class FedGHCNN4(FedGHCNN):
+    def __init__(self, input_spec=None):
+        super().__init__(32, 800, input_spec=input_spec)
+
+
+class FedGHCNN5(FedGHCNN):
+    def __init__(self, input_spec=None):
+        super().__init__(32, 500, input_spec=input_spec)
+
+
 # Heterogeneous CIFAR-10 backbones (32x32, no torchvision):
 #   FedAvgCNN     -- the CNN from FedAvg (McMahan et al., AISTATS 2017)
 #   CifarResNet18 -- ResNet-18 (He et al., CVPR 2016)
