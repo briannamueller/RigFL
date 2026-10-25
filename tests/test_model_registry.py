@@ -79,6 +79,46 @@ def test_brats_family_builds_both_architectures_and_infers_channels():
     assert mobilenet(torch.randn(2, 4, 64, 64)).shape == (2, 1280)
 
 
+def test_cifar_width_family_builds_reported_channel_variants():
+    widths = [
+        (37, 74, 148),
+        (43, 86, 172),
+        (49, 98, 196),
+        (55, 110, 220),
+        (61, 122, 244),
+        (67, 134, 268),
+        (73, 146, 292),
+        (79, 158, 316),
+        (85, 170, 340),
+        (91, 182, 364),
+    ]
+    expected_names = [
+        f"cifar_cnn_{c1}_{c2}_{c3}" for c1, c2, c3 in widths
+    ]
+    names = resolve_models("cifar_width_heterogeneous_10", input_kind="image")
+    factories = instantiate_backbones(
+        names,
+        input_spec={"kind": "image", "shape": (3, 32, 32)},
+    )
+
+    assert names == expected_names
+    for factory, (c1, c2, c3) in zip(factories, widths):
+        backbone = factory()
+        assert backbone.conv1[0].out_channels == c1
+        assert backbone.conv2[0].out_channels == c2
+        assert backbone.conv3[0].out_channels == c3
+        assert backbone.out_dim == c3 * 4 * 4
+        assert backbone(torch.randn(2, 3, 32, 32)).shape == (2, c3 * 4 * 4)
+
+    reference = instantiate_backbones(
+        resolve_models("cifar_cnn_64_128_256", input_kind="image"),
+        input_spec={"kind": "image", "shape": (3, 32, 32)},
+    )[0]()
+    assert [reference.conv1[0].out_channels,
+            reference.conv2[0].out_channels,
+            reference.conv3[0].out_channels] == [64, 128, 256]
+
+
 def test_scrnaseq_family_builds_logistic_regression_and_single_hidden_layer_mlp():
     names = resolve_models("scrnaseq_heterogeneous_2", input_kind="numeric")
     factories = instantiate_backbones(

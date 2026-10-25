@@ -42,6 +42,104 @@ class SmallCNN(nn.Module):
         return F.relu(self.fc(self.features(x).flatten(1)))
 
 
+class CifarThreeLayerCNN(nn.Module):
+    """Three-layer CIFAR CNN with configurable channel widths."""
+
+    def __init__(
+        self,
+        channels: tuple[int, int, int] = (64, 128, 256),
+        in_ch: int = 3,
+        input_spec=None,
+    ):
+        super().__init__()
+        in_ch = _image_channels(input_spec, in_ch)
+        shape = tuple(input_spec.get("shape", ())) if input_spec else (in_ch, 32, 32)
+        if len(shape) != 3:
+            raise ValueError(
+                f"CifarThreeLayerCNN requires [channels, height, width], got {shape}"
+            )
+
+        c1, c2, c3 = channels
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(in_ch, c1, 3),
+            nn.BatchNorm2d(c1),
+            nn.ReLU(),
+        )
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(c1, c2, 3),
+            nn.BatchNorm2d(c2),
+            nn.ReLU(),
+        )
+        self.conv3 = nn.Sequential(
+            nn.Conv2d(c2, c3, 3),
+            nn.BatchNorm2d(c3),
+            nn.ReLU(),
+        )
+        self.maxpool = nn.MaxPool2d(2, 2)
+
+        height, width = shape[1:]
+        height = ((height - 2) // 2 - 2) // 2 - 2
+        width = ((width - 2) // 2 - 2) // 2 - 2
+        if height < 1 or width < 1:
+            raise ValueError(f"image shape {shape} is too small for the CIFAR CNN")
+        self.out_dim = c3 * height * width
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.maxpool(self.conv1(x))
+        x = self.maxpool(self.conv2(x))
+        return self.conv3(x).flatten(1)
+
+
+class CifarCNN37_74_148(CifarThreeLayerCNN):
+    def __init__(self, input_spec=None):
+        super().__init__((37, 74, 148), input_spec=input_spec)
+
+
+class CifarCNN43_86_172(CifarThreeLayerCNN):
+    def __init__(self, input_spec=None):
+        super().__init__((43, 86, 172), input_spec=input_spec)
+
+
+class CifarCNN49_98_196(CifarThreeLayerCNN):
+    def __init__(self, input_spec=None):
+        super().__init__((49, 98, 196), input_spec=input_spec)
+
+
+class CifarCNN55_110_220(CifarThreeLayerCNN):
+    def __init__(self, input_spec=None):
+        super().__init__((55, 110, 220), input_spec=input_spec)
+
+
+class CifarCNN61_122_244(CifarThreeLayerCNN):
+    def __init__(self, input_spec=None):
+        super().__init__((61, 122, 244), input_spec=input_spec)
+
+
+class CifarCNN67_134_268(CifarThreeLayerCNN):
+    def __init__(self, input_spec=None):
+        super().__init__((67, 134, 268), input_spec=input_spec)
+
+
+class CifarCNN73_146_292(CifarThreeLayerCNN):
+    def __init__(self, input_spec=None):
+        super().__init__((73, 146, 292), input_spec=input_spec)
+
+
+class CifarCNN79_158_316(CifarThreeLayerCNN):
+    def __init__(self, input_spec=None):
+        super().__init__((79, 158, 316), input_spec=input_spec)
+
+
+class CifarCNN85_170_340(CifarThreeLayerCNN):
+    def __init__(self, input_spec=None):
+        super().__init__((85, 170, 340), input_spec=input_spec)
+
+
+class CifarCNN91_182_364(CifarThreeLayerCNN):
+    def __init__(self, input_spec=None):
+        super().__init__((91, 182, 364), input_spec=input_spec)
+
+
 # Heterogeneous CIFAR-10 backbones (32x32, no torchvision):
 #   FedAvgCNN     -- the CNN from FedAvg (McMahan et al., AISTATS 2017)
 #   CifarResNet18 -- ResNet-18 (He et al., CVPR 2016)

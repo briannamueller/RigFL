@@ -6,8 +6,19 @@ import torch.nn as nn
 
 from rigfl.models.brats import ConvMixer256D8, MobileNetV2
 from rigfl.models.cifar import (
+    CifarCNN37_74_148,
+    CifarCNN43_86_172,
+    CifarCNN49_98_196,
+    CifarCNN55_110_220,
+    CifarCNN61_122_244,
+    CifarCNN67_134_268,
+    CifarCNN73_146_292,
+    CifarCNN79_158_316,
+    CifarCNN85_170_340,
+    CifarCNN91_182_364,
     CifarMobileNetV2,
     CifarResNet18,
+    CifarThreeLayerCNN,
     FedAvgCNN,
     SmallCNN,
 )
@@ -30,6 +41,17 @@ MODEL_ARCHITECTURE_REGISTRY: dict[str, tuple[str, type[nn.Module]]] = {
     "fedavg_cnn": ("image", FedAvgCNN),
     "cifar_resnet18": ("image", CifarResNet18),
     "cifar_mobilenet_v2": ("image", CifarMobileNetV2),
+    "cifar_cnn_37_74_148": ("image", CifarCNN37_74_148),
+    "cifar_cnn_43_86_172": ("image", CifarCNN43_86_172),
+    "cifar_cnn_49_98_196": ("image", CifarCNN49_98_196),
+    "cifar_cnn_55_110_220": ("image", CifarCNN55_110_220),
+    "cifar_cnn_61_122_244": ("image", CifarCNN61_122_244),
+    "cifar_cnn_64_128_256": ("image", CifarThreeLayerCNN),
+    "cifar_cnn_67_134_268": ("image", CifarCNN67_134_268),
+    "cifar_cnn_73_146_292": ("image", CifarCNN73_146_292),
+    "cifar_cnn_79_158_316": ("image", CifarCNN79_158_316),
+    "cifar_cnn_85_170_340": ("image", CifarCNN85_170_340),
+    "cifar_cnn_91_182_364": ("image", CifarCNN91_182_364),
     "mobilenet_v2": ("image", MobileNetV2),
     "convmixer_256d8": ("image", ConvMixer256D8),
     "tabular_linear": ("numeric", TabularLinear),
@@ -50,6 +72,18 @@ MODEL_FAMILIES = {
     ],
     "image_heterogeneous_3": [
         "fedavg_cnn", "cifar_resnet18", "cifar_mobilenet_v2"
+    ],
+    "cifar_width_heterogeneous_10": [
+        "cifar_cnn_37_74_148",
+        "cifar_cnn_43_86_172",
+        "cifar_cnn_49_98_196",
+        "cifar_cnn_55_110_220",
+        "cifar_cnn_61_122_244",
+        "cifar_cnn_67_134_268",
+        "cifar_cnn_73_146_292",
+        "cifar_cnn_79_158_316",
+        "cifar_cnn_85_170_340",
+        "cifar_cnn_91_182_364",
     ],
     "brats_heterogeneous_2": [
         "convmixer_256d8", "mobilenet_v2"
