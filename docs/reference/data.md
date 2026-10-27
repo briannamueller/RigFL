@@ -69,9 +69,10 @@
 | `partition.partition_by` | string \| null | `null` | — | Column whose values are distributed across clients. |
 | `partition.alpha` | number \| list of positive numbers | `0.1` | > 0 | Dirichlet concentration for client distributions. |
 | `partition.min_partition_size` | integer | `10` | ≥ 1 | Minimum samples assigned to each client. |
+| `partition.min_samples_per_present_class` | integer \| null | `null` | ≥ 1 | Minimum samples per represented target class before splitting. |
 | `partition.self_balancing` | boolean | `false` | — | Reduce assignments to clients that already exceed the average size. |
 
-A list-valued `alpha` must contain one value per client.
+A list-valued `alpha` must contain one value per client. When `min_samples_per_present_class` is set, smaller target-class groups are reassigned uniformly among clients meeting the threshold. If none meet it, the groups are combined on the client with the largest group.
 
 ### `distribution` partitioning
 

@@ -170,6 +170,34 @@ def test_partition_fingerprint_is_stable_and_tracks_generation_settings(
     assert baseline != partition_fingerprint(DATASET, first)
 
 
+def test_minimum_present_class_count_changes_partition_identity_when_enabled():
+    common = {
+        "source_dataset": "organization/source-data",
+        "source_splits": {"merge_splits": ["train", "test"]},
+        "client_split": {
+            "validation_fraction": 0.25,
+            "test_fraction": 0.2,
+            "stratify": True,
+        },
+    }
+    baseline = FlowerDatasetSettings(**common)
+    configured = FlowerDatasetSettings(
+        **common,
+        partition={
+            "scheme": "dirichlet",
+            "min_samples_per_present_class": 5,
+        },
+    )
+
+    assert (
+        "min_samples_per_present_class"
+        not in partitions.stored_settings(baseline)["partition"]
+    )
+    assert partition_fingerprint(DATASET, baseline) != partition_fingerprint(
+        DATASET, configured
+    )
+
+
 def test_partition_fingerprint_ignores_the_validation_split_settings():
     first = FlowerDatasetSettings(
         source_dataset="organization/source-data",

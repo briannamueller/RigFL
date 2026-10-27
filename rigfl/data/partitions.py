@@ -57,6 +57,12 @@ _DEFERRED_SPLIT_FIELDS = (
 def stored_settings(settings: FlowerDatasetSettings, **dump_options) -> dict:
     """Settings that determine what a partition stores."""
     dumped = settings.model_dump(mode="json", **dump_options)
+    partition = dumped.get("partition")
+    if (
+        isinstance(partition, dict)
+        and partition.get("min_samples_per_present_class") is None
+    ):
+        partition.pop("min_samples_per_present_class", None)
     for section, fields in _DEFERRED_SPLIT_FIELDS:
         values = dumped.get(section)
         if isinstance(values, dict):

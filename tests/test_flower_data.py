@@ -125,6 +125,51 @@ def test_merged_partition_is_split_into_requested_client_fractions():
     assert set(other["test"]["sample_id"]) != set(splits["test"]["sample_id"])
 
 
+def test_small_class_groups_are_redistributed_uniformly_and_reproducibly():
+    features = Features({
+        "sample_id": Value("int64"),
+        "label": ClassLabel(num_classes=2),
+    })
+    partitions = [
+        Dataset.from_dict(
+            {
+                "sample_id": list(range(7)),
+                "label": [0, 0, 0, 0, 0, 1, 1],
+            },
+            features=features,
+        ),
+        Dataset.from_dict(
+            {
+                "sample_id": list(range(7, 17)),
+                "label": [0, 0, 0, 0, 0, 1, 1, 1, 1, 1],
+            },
+            features=features,
+        ),
+        Dataset.from_dict(
+            {
+                "sample_id": list(range(17, 27)),
+                "label": [0, 0, 0, 0, 0, 1, 1, 1, 1, 1],
+            },
+            features=features,
+        ),
+    ]
+
+    first = flower._redistribute_small_class_groups(partitions, "label", 3, 11)
+    second = flower._redistribute_small_class_groups(partitions, "label", 3, 11)
+
+    first_ids = [partition["sample_id"] for partition in first]
+    assert first_ids == [partition["sample_id"] for partition in second]
+    assert sorted(sample for client in first_ids for sample in client) == list(
+        range(27)
+    )
+    assert set(first[0]["label"]) == {0}
+    assert all(
+        count == 0 or count >= 3
+        for partition in first
+        for count in np.bincount(partition["label"], minlength=2)
+    )
+
+
 def test_image_mode_coerces_mixed_images_to_one_shape():
     grayscale = PILImage.fromarray(np.zeros((4, 4), dtype=np.uint8), mode="L")
     rgb = PILImage.fromarray(np.zeros((4, 4, 3), dtype=np.uint8), mode="RGB")

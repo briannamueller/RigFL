@@ -377,7 +377,13 @@ def render_data_reference() -> str:
             level=3,
         )
         if scheme == "dirichlet":
-            section += "\nA list-valued `alpha` must contain one value per client.\n"
+            section += (
+                "\nA list-valued `alpha` must contain one value per client. "
+                "When `min_samples_per_present_class` is set, smaller target-class "
+                "groups are reassigned uniformly among clients meeting the threshold. "
+                "If none meet it, the groups are combined on the client with the "
+                "largest group.\n"
+            )
         elif scheme == "shard":
             section += (
                 "\nSet at least one of `num_shards_per_partition` or `shard_size`.\n"

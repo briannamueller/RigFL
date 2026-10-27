@@ -421,6 +421,62 @@ def _merge_source_splits(
     return DatasetDict({_MERGED_SPLIT: merged})
 
 
+def _redistribute_small_class_groups(
+    partitions,
+    target_column: str,
+    minimum: int,
+    seed: int,
+):
+    """Reassign undersized target-class groups between client partitions."""
+    labels = [np.asarray(partition[target_column]) for partition in partitions]
+    retained = [np.ones(len(partition), dtype=bool) for partition in partitions]
+    incoming = [[] for _ in partitions]
+    rng = np.random.default_rng(seed)
+    classes = sorted({
+        value
+        for partition_labels in labels
+        for value in np.unique(partition_labels).tolist()
+    })
+
+    for class_value in classes:
+        indices = [
+            np.flatnonzero(partition_labels == class_value)
+            for partition_labels in labels
+        ]
+        counts = np.asarray([len(class_indices) for class_indices in indices])
+        donors = np.flatnonzero((counts > 0) & (counts < minimum))
+        if not len(donors):
+            continue
+
+        recipients = np.flatnonzero(counts >= minimum)
+        if not len(recipients):
+            total = int(counts.sum())
+            if total < minimum:
+                raise ValueError(
+                    f"target class {class_value!r} has {total} samples, fewer than "
+                    f"min_samples_per_present_class={minimum}"
+                )
+            recipient = int(np.argmax(counts))
+            recipients = np.asarray([recipient])
+            donors = donors[donors != recipient]
+
+        for donor in donors.tolist():
+            donor_indices = indices[donor]
+            assignments = rng.choice(recipients, size=len(donor_indices))
+            retained[donor][donor_indices] = False
+            for recipient in np.unique(assignments):
+                selected = donor_indices[assignments == recipient].tolist()
+                incoming[int(recipient)].append(partitions[donor].select(selected))
+
+    redistributed = []
+    for partition, keep, additions in zip(partitions, retained, incoming):
+        base = partition.select(np.flatnonzero(keep).tolist())
+        redistributed.append(
+            concatenate_datasets([base, *additions]) if additions else base
+        )
+    return redistributed
+
+
 def _split_client_partition(
     partition,
     settings,
@@ -555,14 +611,16 @@ def _client_raw_partitions(
     role_to_source,
     settings,
     target_column: str,
+    merged_partition=None,
 ):
     p = settings.partition
     if merged_source:
-        merged_partition = (
-            initial_merged
-            if partition_id == 0
-            else fds.load_partition(partition_id, _MERGED_SPLIT)
-        )
+        if merged_partition is None:
+            merged_partition = (
+                initial_merged
+                if partition_id == 0
+                else fds.load_partition(partition_id, _MERGED_SPLIT)
+            )
         raw = _split_client_partition(
             merged_partition,
             settings.client_split,
@@ -686,6 +744,35 @@ def generate_flower_partition(
         selected_partition_ids = list(range(total_clients))
     num_clients = len(selected_partition_ids)
 
+    merged_partitions = None
+    minimum = getattr(p, "min_samples_per_present_class", None)
+    if merged_source and minimum is not None:
+        merged_partitions = [
+            (
+                initial_merged
+                if partition_id == 0
+                else fds.load_partition(partition_id, _MERGED_SPLIT)
+            )
+            for partition_id in selected_partition_ids
+        ]
+        merged_partitions = _redistribute_small_class_groups(
+            merged_partitions,
+            resolved.target_column,
+            minimum,
+            p.partition_seed,
+        )
+        too_small = [
+            client_id
+            for client_id, partition in enumerate(merged_partitions)
+            if len(partition) < p.min_partition_size
+        ]
+        if too_small:
+            client_ids = ", ".join(map(str, too_small))
+            raise ValueError(
+                "min_samples_per_present_class leaves client partitions below "
+                f"min_partition_size: {client_ids}"
+            )
+
     raw_clients = [
         _client_raw_partitions(
             fds,
@@ -696,8 +783,11 @@ def generate_flower_partition(
             role_to_source=role_to_source,
             settings=settings,
             target_column=resolved.target_column,
+            merged_partition=(
+                merged_partitions[cid] if merged_partitions is not None else None
+            ),
         )
-        for partition_id in selected_partition_ids
+        for cid, partition_id in enumerate(selected_partition_ids)
     ]
     clients = []
     client_targets = []

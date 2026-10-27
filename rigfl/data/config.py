@@ -125,6 +125,10 @@ class DirichletSettings(PartitionSettingsBase):
     min_partition_size: int = Field(
         10, ge=1, description="Minimum samples assigned to each client."
     )
+    min_samples_per_present_class: int | None = Field(
+        None, ge=1,
+        description="Minimum samples per represented target class before splitting.",
+    )
     self_balancing: bool = Field(
         False,
         description="Reduce assignments to clients that already exceed the average size.",
@@ -361,6 +365,11 @@ class FlowerDatasetSettings(BaseModel):
             )
         if not merged and self.client_split is not None:
             raise ValueError("client_split requires source_splits.merge_splits")
+        minimum = getattr(self.partition, "min_samples_per_present_class", None)
+        if minimum is not None and not merged:
+            raise ValueError(
+                "min_samples_per_present_class requires source_splits.merge_splits"
+            )
         return self
 
 
