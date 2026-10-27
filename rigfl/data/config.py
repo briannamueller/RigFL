@@ -50,7 +50,10 @@ class ClientSplitSettings(BaseModel):
     validation_fraction: float = Field(
         gt=0,
         lt=1,
-        description="Fraction of each client partition reserved for validation.",
+        description=(
+            "Fraction of each client's training data reserved for validation, "
+            "after the test split is removed."
+        ),
     )
     test_fraction: float = Field(
         gt=0,
@@ -60,15 +63,6 @@ class ClientSplitSettings(BaseModel):
     stratify: bool = Field(
         description="Preserve target proportions when creating client splits."
     )
-
-    @model_validator(mode="after")
-    def _leave_training_data(self):
-        if self.validation_fraction + self.test_fraction >= 1:
-            raise ValueError(
-                "client_split.validation_fraction and test_fraction must sum to "
-                "less than one"
-            )
-        return self
 
 
 class PartitionSettingsBase(BaseModel):

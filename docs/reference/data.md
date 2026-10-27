@@ -34,11 +34,11 @@
 
 | Setting | Type | Default | Allowed | Description |
 |---|---|---|---|---|
-| `client_split.validation_fraction` | number | required | > 0; < 1 | Fraction of each client partition reserved for validation. |
+| `client_split.validation_fraction` | number | required | > 0; < 1 | Fraction of each client's training data reserved for validation, after the test split is removed. |
 | `client_split.test_fraction` | number | required | > 0; < 1 | Fraction of each client partition reserved for testing. |
 | `client_split.stratify` | boolean | required | — | Preserve target proportions when creating client splits. |
 
-`client_split` and `source_splits.merge_splits` must be used together. Merged split names must be unique, and the validation and test fractions must sum to less than 1.
+`client_split` and `source_splits.merge_splits` must be used together, and merged split names must be unique. Test is carved from the whole client partition and validation from what remains.
 
 ### Common partition settings
 

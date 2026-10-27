@@ -264,13 +264,6 @@ def build_partition_clients(
         if artifact.manifest["input_spec"]["kind"] == "token_sequence"
         else torch.float32
     )
-    # client_split fractions are shares of the whole client partition, and test
-    # is already carved off, so rescale against what train.pt actually holds.
-    client_split = (artifact.manifest.get("source") or {}).get("client_split")
-    pool_fraction = validation_fraction
-    if client_split:
-        pool_fraction = validation_fraction / (1 - client_split["test_fraction"])
-
     clients = []
     for cid in range(num_clients):
         directory = artifact.path / "clients" / f"client_{cid}"
@@ -287,7 +280,7 @@ def build_partition_clients(
             train_indices, validation_indices = _train_val_indices(
                 len(y_train),
                 None,
-                pool_fraction,
+                validation_fraction,
                 generator=_stream_generator(split_seed, 0),
             )
         clients.append(_make_client(

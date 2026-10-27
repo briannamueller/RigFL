@@ -44,15 +44,11 @@
 |---|---|
 | `mnist_heterogeneous_3` | `lenet5`, `fedavg_mnist_cnn`, `small_cnn` |
 | `image_heterogeneous_3` | `fedavg_cnn`, `cifar_resnet18`, `cifar_mobilenet_v2` |
-| `cifar_width_heterogeneous_10` | Ten three-layer CNNs with channel widths from `37,74,148` through `91,182,364` |
-| `fedgh_heterogeneous_5` | Five two-layer CNNs with the convolutional and fully connected widths reported for FedGH |
+| `cifar_width_heterogeneous_10` | `cifar_cnn_37_74_148`, `cifar_cnn_43_86_172`, `cifar_cnn_49_98_196`, `cifar_cnn_55_110_220`, `cifar_cnn_61_122_244`, `cifar_cnn_67_134_268`, `cifar_cnn_73_146_292`, `cifar_cnn_79_158_316`, `cifar_cnn_85_170_340`, `cifar_cnn_91_182_364` |
+| `fedgh_heterogeneous_5` | `fedgh_cnn_1`, `fedgh_cnn_2`, `fedgh_cnn_3`, `fedgh_cnn_4`, `fedgh_cnn_5` |
 | `brats_heterogeneous_2` | `convmixer_256d8`, `mobilenet_v2` |
 | `tabular_heterogeneous_3` | `tabular_linear`, `tabular_mlp`, `tabular_residual_mlp` |
 | `scrnaseq_heterogeneous_2` | `tabular_logreg`, `tabular_mlp_64` |
 | `temporal_heterogeneous_3` | `temporal_gru`, `temporal_cnn`, `temporal_lstm` |
 
 For a model family, RigFL assigns architectures to clients in the listed order, round-robin by client ID. The order is therefore part of the resolved experiment identity. `model_arch` accepts an architecture name or a family name; algorithms that require identical client architectures accept only an architecture name and are skipped for family values in sweeps.
-
-The `brats_heterogeneous_2` family pairs ConvMixer-256/8 with a
-standard-stride MobileNetV2. Both infer the image-channel count from the
-dataset, so no four-channel-specific model names are needed.

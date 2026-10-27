@@ -309,7 +309,7 @@ class _Backbone(nn.Module):
         return x.flatten(1)[:, :4]
 
 
-def test_merged_validation_fraction_is_a_share_of_the_whole_client(tmp_path):
+def test_merged_validation_fraction_is_a_share_of_the_training_data(tmp_path):
     # 20 samples per client: generation carved off 4 test, so train.pt holds 16.
     directory = tmp_path / "clients" / "client_0"
     directory.mkdir(parents=True)
@@ -329,7 +329,7 @@ def test_merged_validation_fraction_is_a_share_of_the_whole_client(tmp_path):
             "target_spec": {"num_classes": 2},
             "input_spec": {"kind": "image"},
             "source": {
-                "client_split": {"validation_fraction": 0.15, "test_fraction": 0.2}
+                "client_split": {"validation_fraction": 0.25, "test_fraction": 0.2}
             },
         },
     )
@@ -338,13 +338,13 @@ def test_merged_validation_fraction_is_a_share_of_the_whole_client(tmp_path):
         artifact,
         shared_dim=4,
         batch=4,
-        validation_fraction=0.15,
+        validation_fraction=0.25,
         backbones=[_Backbone],
     )
 
-    # 15% of the 20-sample client is 3, not 15% of the 16 stored training samples.
-    assert len(clients[0].val_loader.dataset) == 3
-    assert len(clients[0].train_loader.dataset) == 13
+    # 25% of the 16 stored training samples, as for every other backend.
+    assert len(clients[0].val_loader.dataset) == 4
+    assert len(clients[0].train_loader.dataset) == 12
 
 
 def test_split_seed_changes_validation_only(monkeypatch, tmp_path):

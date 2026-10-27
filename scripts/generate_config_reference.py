@@ -356,8 +356,8 @@ def render_data_reference() -> str:
         _section("Client splits", ClientSplitSettings, "client_split", level=3)
         + (
             "\n`client_split` and `source_splits.merge_splits` must be used "
-            "together. Merged split names must be unique, and the validation "
-            "and test fractions must sum to less than 1.\n"
+            "together, and merged split names must be unique. Test is carved from "
+            "the whole client partition and validation from what remains.\n"
         ),
         _section(
             "Common partition settings",
