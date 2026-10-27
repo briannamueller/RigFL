@@ -5,9 +5,11 @@ Reporting-round selection is performed later from recorded history.
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
@@ -45,6 +47,19 @@ class Client:
     state: dict = field(default_factory=dict)
 
 
+def client_training_seed(seed: int, client_id: int) -> int:
+    """Seed for one client's independent training run."""
+    return int(np.random.SeedSequence([seed, client_id]).generate_state(1)[0])
+
+
+def seed_training(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
 def independent(algorithm: Algorithm, clients: list[Client], num_rounds: int,
                 device: torch.device, num_classes: int, eval_gap: int = 1,
                 verbose: bool = True, tracker=None, early_stopping=None,
@@ -55,6 +70,9 @@ def independent(algorithm: Algorithm, clients: list[Client], num_rounds: int,
     shared object returned by ``finalize_local_models`` and how ``predict`` uses
     it: Local evaluates each client's own model, while Global Ensemble evaluates
     the same frozen soft-voting pool for every client.
+
+    Each client trains from its own seed, derived from the run's training seed,
+    so its model does not depend on the clients trained before it.
     """
     _require_operations(
         algorithm,
@@ -69,8 +87,11 @@ def independent(algorithm: Algorithm, clients: list[Client], num_rounds: int,
     min_delta = early_stopping.min_delta if enabled else None
     selections = {}
     models = []
+    # run_one seeds torch with the training seed before building clients
+    run_seed = torch.initial_seed()
 
     for cid, client in enumerate(clients):
+        seed_training(client_training_seed(run_seed, cid))
         model = client.model.to(device)
         optimizer = algorithm.make_optimizer(model)
         best_state = best_value = best_round = None
