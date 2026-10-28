@@ -64,6 +64,9 @@ def set_seed(seed: int) -> None:
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+    # same seed and GPU model give the same weights
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 
 def partition_summary(clients, num_classes: int, artifact=None, handle=None) -> dict:
