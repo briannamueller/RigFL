@@ -154,7 +154,7 @@
 |---|---|---|---|---|
 | `local_epochs` | integer | `1` | ≥ 1 | Client training epochs per round. |
 | `lr` | number | `0.01` | > 0 | Private-model learning rate. |
-| `proxy_lr` | number | `0.01` | > 0 | Proxy-extractor learning rate. |
+| `proxy_lr` | number \| null | `null` | > 0 | Proxy-extractor learning rate; defaults to lr. |
 | `gate_lr` | number | `0.01` | > 0 | Private gating-network learning rate. |
 | `gate_hidden_dim` | integer | `32` | ≥ 1 | Width of the private two-layer gating network. |
 | `aux_model_arch` | string \| null | `null` | — | Architecture used for the shared homogeneous proxy extractor. Defaults to model_arch, or its family's first member. |

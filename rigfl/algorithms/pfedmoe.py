@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import torch
-from pydantic import Field
+from pydantic import Field, model_validator
 from torch import nn
 
 from rigfl.algorithms.fedavg import (
@@ -28,7 +28,9 @@ from rigfl.prediction import Predictions
 class PFedMoEConfig(AlgorithmConfig):
     local_epochs: int = Field(1, ge=1, description="Client training epochs per round.")
     lr: float = Field(0.01, gt=0, description="Private-model learning rate.")
-    proxy_lr: float = Field(0.01, gt=0, description="Proxy-extractor learning rate.")
+    proxy_lr: float | None = Field(
+        None, gt=0, description="Proxy-extractor learning rate; defaults to lr."
+    )
     gate_lr: float = Field(0.01, gt=0, description="Private gating-network learning rate.")
     gate_hidden_dim: int = Field(
         32, ge=1, description="Width of the private two-layer gating network."
@@ -40,6 +42,13 @@ class PFedMoEConfig(AlgorithmConfig):
             "Defaults to model_arch, or its family's first member."
         ),
     )
+
+    @model_validator(mode="after")
+    def _proxy_lr_defaults_to_lr(self):
+        # the paper trains both feature extractors at one learning rate
+        if self.proxy_lr is None:
+            self.proxy_lr = self.lr
+        return self
 
 
 class ProxyExtractor(nn.Module):
