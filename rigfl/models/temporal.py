@@ -87,6 +87,31 @@ class TemporalLSTM(nn.Module):
         return F.relu(self.output(combined))
 
 
+def _causal_conv(conv: nn.Conv1d, padded: torch.Tensor) -> torch.Tensor:
+    """``conv(padded)`` computed as one batched product over the kernel taps.
+
+    With ``cudnn.deterministic`` set, PyTorch runs dilated grouped convolutions
+    on a very slow non-cuDNN path; this gives the same result quickly.
+    """
+    taps, dilation, groups = conv.kernel_size[0], conv.dilation[0], conv.groups
+    windows = padded.unfold(2, (taps - 1) * dilation + 1, 1)[..., ::dilation]
+    batch, channels, steps, _ = windows.shape
+    windows = windows.reshape(batch, groups, channels // groups, steps, taps)
+    weight = conv.weight.reshape(groups, conv.out_channels // groups, channels // groups, taps)
+    out = torch.einsum("bgctk,gock->bgot", windows, weight)
+    return out.reshape(batch, conv.out_channels, steps) + conv.bias.view(1, -1, 1)
+
+
+class _FeatureBatchNorm(nn.BatchNorm1d):
+    """Batch norm over features that uses running statistics for a one-sample batch."""
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.training and x.shape[0] == 1:
+            return F.batch_norm(x, self.running_mean, self.running_var,
+                                self.weight, self.bias, training=False, eps=self.eps)
+        return super().forward(x)
+
+
 class TemporalTPC(nn.Module):
     """Temporal Pointwise Convolution (Rocheteau et al., 2021), light configuration.
 
@@ -125,7 +150,7 @@ class TemporalTPC(nn.Module):
             self.point_norms.append(nn.BatchNorm1d(point_size))
             previous_streams, streams = streams, streams + point_size
         self.head = nn.Linear(streams * (1 + temporal_kernels) + static_width, out_dim)
-        self.head_norm = nn.BatchNorm1d(out_dim)
+        self.head_norm = _FeatureBatchNorm(out_dim)
         self.dropout = nn.Dropout(dropout)
         self.temporal_dropout = nn.Dropout(temporal_dropout)
         self.out_dim = out_dim
@@ -146,7 +171,7 @@ class TemporalTPC(nn.Module):
         temporal_out = point_out = None
         for layer, conv in enumerate(self.temporal):
             padded = F.pad(x, ((self.kernel_size - 1) * self._dilation(layer), 0))
-            conv_out = self.temporal_dropout(self.temporal_norms[layer](conv(padded)))
+            conv_out = self.temporal_dropout(self.temporal_norms[layer](_causal_conv(conv, padded)))
             parts = [p for p in (temporal_out, point_out) if p is not None]
             point_out = self.dropout(self.point_norms[layer](
                 self.pointwise[layer](torch.cat([*parts, original, static_steps], dim=1))))
