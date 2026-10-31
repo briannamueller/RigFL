@@ -37,6 +37,8 @@
 | `temporal_gru` | `temporal` |
 | `temporal_cnn` | `temporal` |
 | `temporal_lstm` | `temporal` |
+| `temporal_tpc_light` | `temporal` |
+| `temporal_attention` | `temporal` |
 
 ## Model families
 

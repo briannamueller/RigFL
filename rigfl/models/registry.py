@@ -36,7 +36,13 @@ from rigfl.models.tabular import (
     TabularMLP64,
     TabularResidualMLP,
 )
-from rigfl.models.temporal import TemporalCNN, TemporalGRU, TemporalLSTM
+from rigfl.models.temporal import (
+    TemporalAttention,
+    TemporalCNN,
+    TemporalGRU,
+    TemporalLSTM,
+    TemporalTPC,
+)
 
 # Short YAML name -> input kind + feature-extractor class.
 MODEL_ARCHITECTURE_REGISTRY: dict[str, tuple[str, type[nn.Module]]] = {
@@ -73,6 +79,8 @@ MODEL_ARCHITECTURE_REGISTRY: dict[str, tuple[str, type[nn.Module]]] = {
     "temporal_gru": ("temporal", TemporalGRU),
     "temporal_cnn": ("temporal", TemporalCNN),
     "temporal_lstm": ("temporal", TemporalLSTM),
+    "temporal_tpc_light": ("temporal", TemporalTPC),
+    "temporal_attention": ("temporal", TemporalAttention),
 }
 
 # A model_arch value is either one architecture name or one family name.
