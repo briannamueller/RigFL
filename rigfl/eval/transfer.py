@@ -197,7 +197,9 @@ def paired_client_gains(
     if not pairs:
         raise TransferComparisonError("comparison found no paired test values")
 
-    return {"metric": name, "selection_view": view, "pairs": pairs}
+    return {"metric": name,
+            "selection_view": selected_algorithm["selection_view"],
+            "pairs": pairs}
 
 
 def pairs_by_replicate(pairs: list[dict]) -> dict[tuple, list[dict]]:
