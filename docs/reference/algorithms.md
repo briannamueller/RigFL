@@ -165,3 +165,4 @@
 |---|---|---|---|---|
 | `local_epochs` | integer | `1` | ≥ 1 | Client training epochs per round. |
 | `lr` | number | `0.01` | > 0 | Client optimizer learning rate. |
+| `member_metric` | string \| null | `null` | — | Validation metric that picks each client's member checkpoint; defaults to the early-stopping metric. Training still stops on the early-stopping metric, so setting this to the reporting metric makes the members the models Local reports. |
