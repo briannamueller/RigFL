@@ -152,3 +152,18 @@ def test_distribution_statistics_use_every_seed_not_just_the_last():
     # averaged over seeds: 1.0 and 0.0 -> 0.5, not whichever came last
     assert abs(s["p10_accuracy"] - 0.5) < 1e-9
     assert abs(s["bottom_10pct_mean_accuracy"] - 0.5) < 1e-9
+
+
+def test_runs_with_independent_clients_use_their_own_rounds_in_any_view():
+    from rigfl.eval.report import selection_for
+
+    record = _record("local", 0, [.1, .9, .2], [.5, .7, .6])
+    history = record["result"]["evaluation_history"]
+    history["clients"]["1"]["validation"]["accuracy"] = [.8, .3, None]
+    history["clients"]["1"]["test"]["accuracy"] = [.4, .6, None]
+    record["result"]["round_selection"] = "client-specific"
+
+    selected = selection_for(record, "accuracy", **_SEL)
+    assert selected["selection_view"] == "client-specific"
+    assert selected["selected_rounds"] == {"0": 1, "1": 0}
+    assert selected["test"]["accuracy"] == [.7, .4]

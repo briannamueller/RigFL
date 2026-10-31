@@ -83,3 +83,83 @@ def test_local_and_global_ensemble_train_identical_member_models():
     for local_client, ensemble_member in zip(local_clients, ensemble.members):
         for name, value in local_client.model.state_dict().items():
             assert torch.equal(value, ensemble_member.state_dict()[name])
+
+
+def test_local_records_every_epoch_of_each_clients_own_training():
+    clients = [_client(), _client()]
+    clients[1].train_loader = DataLoader(
+        TensorDataset(torch.tensor([[0.0], [1.0], [2.0], [3.0]]),
+                      torch.tensor([1, 1, 0, 0])), batch_size=4)
+    result = independent(
+        Local(LocalConfig(local_epochs=1, lr=0.5)), clients, num_rounds=8,
+        device=torch.device("cpu"), num_classes=2, verbose=False,
+        early_stopping=EarlyStoppingConfig(enabled=True, metric="loss", patience=2),
+    )
+
+    assert result["round_selection"] == "client-specific"
+    history = result["evaluation_history"]
+    rounds = history["evaluation_rounds"]
+    for cid, selection in result["selection_provenance"]["clients"].items():
+        losses = history["clients"][cid]["validation"]["loss"]
+        tests = history["clients"][cid]["test"]["loss"]
+        trained = [r <= selection["stopped_at_round"] for r in rounds]
+        assert [v is not None for v in losses] == trained
+        assert [v is not None for v in tests] == trained
+        assert losses[rounds.index(selection["selected_round"])] == min(
+            v for v in losses if v is not None)
+
+
+def test_local_and_global_ensemble_select_identical_members_with_early_stopping():
+    local_clients = [_client(), _client()]
+    ensemble_clients = [_client(), _client()]
+    local = Local(LocalConfig(local_epochs=1, lr=0.5))
+    ensemble = GlobalEnsemble(GlobalEnsembleConfig(local_epochs=1, lr=0.5))
+    common = dict(
+        num_rounds=8, device=torch.device("cpu"), num_classes=2, verbose=False,
+        early_stopping=EarlyStoppingConfig(enabled=True, metric="loss", patience=2),
+    )
+    local_result = independent(local, local_clients, **common)
+    ensemble_result = independent(ensemble, ensemble_clients, **common)
+
+    assert (local_result["selection_provenance"]
+            == ensemble_result["selection_provenance"])
+    assert "round_selection" not in ensemble_result
+    for local_client, ensemble_member in zip(local_clients, ensemble.members):
+        for name, value in local_client.model.state_dict().items():
+            assert torch.equal(value, ensemble_member.state_dict()[name])
+
+
+def test_global_ensemble_members_are_the_local_models_local_reports():
+    from rigfl.eval.metrics import compute_all
+    from rigfl.eval.report import selection_for
+    from rigfl.prediction import Predictions
+
+    def clients():
+        pair = [_client(), _client()]
+        pair[1].train_loader = DataLoader(
+            TensorDataset(torch.tensor([[0.0], [1.0], [2.0], [3.0]]),
+                          torch.tensor([1, 1, 0, 0])), batch_size=4)
+        return pair
+
+    common = dict(
+        num_rounds=8, device=torch.device("cpu"), num_classes=2, verbose=False,
+        early_stopping=EarlyStoppingConfig(enabled=True, metric="loss", patience=2),
+    )
+    local = independent(Local(LocalConfig(lr=0.5)), clients(), **common)
+    ensemble = GlobalEnsemble(GlobalEnsembleConfig(lr=0.5, member_metric="accuracy"))
+    ensemble_clients = clients()
+    result = independent(ensemble, ensemble_clients, **common)
+
+    record = {"config": {"experiment": {"num_classes": 2}}, "result": local}
+    reported = selection_for(record, "accuracy")["selected_rounds"]
+    history = local["evaluation_history"]
+    for cid, member in enumerate(ensemble.members):
+        selection = result["selection_provenance"]["clients"][str(cid)]
+        assert selection["selected_round"] == reported[str(cid)]
+        x, y = next(iter(ensemble_clients[cid].test_loader))
+        with torch.no_grad():
+            loss = compute_all(Predictions.from_logits(member(x)), y, 2)["loss"]
+        index = history["evaluation_rounds"].index(reported[str(cid)])
+        assert loss == history["clients"][str(cid)]["test"]["loss"][index]
+    assert result["selection_provenance"]["metric"] == "accuracy"
+    assert result["early_stopping"]["metric"] == "loss"

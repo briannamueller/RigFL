@@ -124,11 +124,16 @@ def pooled_within_replicate_sd(values: list[list[float]]) -> float | None:
 def selection_for(record: dict, metric: str | None, *, view: str = "shared",
                   aggregation: str = "uniform",
                   include_test: bool = True) -> dict:
-    """Select one run's reporting rounds from its validation history."""
+    """Select one run's reporting rounds from its validation history.
+
+    A run whose clients train and stop independently records
+    ``round_selection: client-specific``; it always uses that view.
+    """
     name = resolve_metric(metric)
     if spec(name).binary_only:
         require_task_metric(name, record["config"]["experiment"]["num_classes"])
     history = record["result"]["evaluation_history"]
+    view = record["result"].get("round_selection") or view
     if view == "shared":
         return select_shared(history, name, aggregation=aggregation,
                              include_test=include_test)

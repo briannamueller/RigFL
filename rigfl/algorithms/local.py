@@ -17,6 +17,9 @@ class LocalConfig(AlgorithmConfig):
 
 
 class Local(Algorithm):
+    # each client is evaluated on its own model, so every training epoch is scored
+    scores_every_epoch = True
+
     def init_globals(self) -> None:
         return None
 

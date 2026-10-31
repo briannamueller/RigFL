@@ -3,7 +3,13 @@
 from rigfl.core.adapters import Adapter, AdaptivePool, Identity, LearnedProjection
 from rigfl.core.interfaces import Algorithm
 from rigfl.core.model import ClientModel, assemble_model
-from rigfl.core.round import Client, append_evaluation, independent, iterative
+from rigfl.core.round import (
+    Client,
+    append_evaluation,
+    independent,
+    iterative,
+    per_client_rounds,
+)
 from rigfl.prediction import Predictions, check_predictions
 
 __all__ = [
@@ -20,4 +26,5 @@ __all__ = [
     "append_evaluation",
     "independent",
     "iterative",
+    "per_client_rounds",
 ]

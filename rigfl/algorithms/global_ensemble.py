@@ -2,19 +2,41 @@
 
 from __future__ import annotations
 
+from typing import Optional
+
 import torch
 import torch.nn.functional as F
+from pydantic import Field, field_validator
 
 from rigfl.algorithms.local import Local, LocalConfig
+from rigfl.eval.metrics import canonical
 from rigfl.prediction import Predictions
 
 
 class GlobalEnsembleConfig(LocalConfig):
     """Global Ensemble uses the same local-training settings as Local."""
 
+    member_metric: Optional[str] = Field(
+        None,
+        description=(
+            "Validation metric that picks each client's member checkpoint; "
+            "defaults to the early-stopping metric. Training still stops on the "
+            "early-stopping metric, so setting this to the reporting metric makes "
+            "the members the models Local reports."
+        ),
+    )
+
+    @field_validator("member_metric")
+    @classmethod
+    def _known_metric(cls, value):
+        return None if value is None else canonical(value)
+
 
 class GlobalEnsemble(Local):
     """Train as Local, then uniformly ensemble every selected client model."""
+
+    # the ensemble exists only once every client has finished training
+    scores_every_epoch = False
 
     def __init__(self, config: GlobalEnsembleConfig):
         super().__init__(config)

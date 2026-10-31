@@ -5,6 +5,7 @@ Reporting-round selection is performed later from recorded history.
 
 from __future__ import annotations
 
+import contextlib
 import random
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -21,7 +22,7 @@ from rigfl.eval.metrics import (
     direction_of,
     unavailable_reason,
 )
-from rigfl.eval.protocol import evaluate_split
+from rigfl.eval.protocol import evaluate_client, evaluate_split
 from rigfl.eval.resources import measured, payload_bytes
 from rigfl.eval.selection import aggregate
 from rigfl.prediction import Predictions
@@ -64,12 +65,22 @@ def independent(algorithm: Algorithm, clients: list[Client], num_rounds: int,
                 device: torch.device, num_classes: int, eval_gap: int = 1,
                 verbose: bool = True, tracker=None, early_stopping=None,
                 resource_monitor=None) -> dict:
-    """Train and select one model per client, then evaluate the final baseline.
+    """Train and select one model per client, then evaluate the baseline.
 
     Local and Global Ensemble share this runner. Their only difference is the
     shared object returned by ``finalize_local_models`` and how ``predict`` uses
     it: Local evaluates each client's own model, while Global Ensemble evaluates
     the same frozen soft-voting pool for every client.
+
+    An algorithm with ``scores_every_epoch`` (Local) is scored on validation and
+    test at every evaluation epoch of each client's own training, and those
+    epochs make up its history. Clients stop independently, so a client has no
+    values after it stops and reporting selects each client's own epoch.
+    Otherwise the history holds one evaluation of the finalized models.
+
+    Each client keeps the checkpoint that is best on the algorithm's
+    ``member_metric`` when it sets one (Global Ensemble), and otherwise on the
+    early-stopping metric. Training still stops on the early-stopping metric.
 
     Each client trains from its own seed, derived from the run's training seed,
     so its model does not depend on the clients trained before it.
@@ -85,7 +96,13 @@ def independent(algorithm: Algorithm, clients: list[Client], num_rounds: int,
     direction = direction_of(metric) if enabled else None
     patience = early_stopping.patience if enabled else None
     min_delta = early_stopping.min_delta if enabled else None
+    member_metric = getattr(getattr(algorithm, "config", None), "member_metric", None)
+    select = member_metric or metric
+    select_direction = direction_of(select) if select else None
+    select_delta = min_delta if select == metric else 0.0
+    per_epoch = getattr(algorithm, "scores_every_epoch", False)
     selections = {}
+    epochs: dict[int, list] = {}
     models = []
     # run_one seeds torch with the training seed before building clients
     run_seed = torch.initial_seed()
@@ -94,10 +111,11 @@ def independent(algorithm: Algorithm, clients: list[Client], num_rounds: int,
         seed_training(client_training_seed(run_seed, cid))
         model = client.model.to(device)
         optimizer = algorithm.make_optimizer(model)
-        best_state = best_value = best_round = None
+        best_state = best_value = best_round = stop_value = None
         stale = 0
         last_round = -1
         termination = "completed_all_rounds"
+        epochs[cid] = []
 
         for rnd in range(num_rounds):
             algorithm.round_idx = rnd
@@ -107,33 +125,52 @@ def independent(algorithm: Algorithm, clients: list[Client], num_rounds: int,
                 algorithm.train_one_round(client, optimizer)
             last_round = rnd
 
-            if not enabled or (rnd % eval_gap != 0 and rnd != num_rounds - 1):
+            if not (select or per_epoch) or (
+                    rnd % eval_gap != 0 and rnd != num_rounds - 1):
                 continue
-            with measured(
-                resource_monitor, "validation", category="evaluation", client_id=cid
-            ):
-                metrics = _model_validation_metrics(
-                    model, client, device, num_classes
-                )
-            value = metrics.get(metric)
-            if value is None:
-                raise ValueError(
-                    f'independent early stopping metric "{metric}" is unavailable '
-                    f"for client {cid}"
-                )
-            if _improved(value, best_value, direction, min_delta):
-                best_value, best_round, stale = value, rnd, 0
+            if per_epoch:
+                # scoring that early stopping would not do runs on a forked RNG,
+                # so training follows the same random stream either way
+                with _forked_rng(not enabled):
+                    val = evaluate_client(algorithm, client, cid, None, device,
+                                          "val", num_classes, resource_monitor)
+                with _forked_rng(True):
+                    test = evaluate_client(algorithm, client, cid, None, device,
+                                           "test", num_classes, resource_monitor)
+                epochs[cid].append((rnd, val, test))
+                if not select:
+                    continue
+                metrics = val[0] or {}
+            else:
+                with measured(
+                    resource_monitor, "validation", category="evaluation",
+                    client_id=cid
+                ), _forked_rng(not enabled):
+                    metrics = _model_validation_metrics(
+                        model, client, device, num_classes
+                    )
+            for name in {metric, select} - {None}:
+                if metrics.get(name) is None:
+                    raise ValueError(
+                        f'independent runner metric "{name}" is unavailable '
+                        f"for client {cid}"
+                    )
+            if _improved(metrics[select], best_value, select_direction, select_delta):
+                best_value, best_round = metrics[select], rnd
                 best_state = {
                     key: tensor.detach().cpu().clone()
                     for key, tensor in model.state_dict().items()
                 }
-            else:
-                stale += 1
-                if stale >= patience:
-                    termination = "early_stopping"
-                    break
+            if enabled:
+                if _improved(metrics[metric], stop_value, direction, min_delta):
+                    stop_value, stale = metrics[metric], 0
+                else:
+                    stale += 1
+                    if stale >= patience:
+                        termination = "early_stopping"
+                        break
 
-        if enabled:
+        if select:
             if best_state is None:
                 raise RuntimeError(
                     f"independent runner selected no checkpoint for client {cid}"
@@ -162,30 +199,41 @@ def independent(algorithm: Algorithm, clients: list[Client], num_rounds: int,
     if resource_monitor is not None:
         resource_monitor.checkpoint(0)
 
-    evaluated = {
-        "validation": evaluate_split(
-            algorithm, clients, shared, device, "val", num_classes,
-            resource_monitor=resource_monitor,
-        ),
-        "test": evaluate_split(
-            algorithm, clients, shared, device, "test", num_classes,
-            resource_monitor=resource_monitor,
-        ),
-    }
     history = {}
-    append_evaluation(history, 0, evaluated["validation"], evaluated["test"])
-
-    if tracker is not None:
-        _update_tracker_resources(tracker, resource_monitor)
-        tracker.log_round(0, evaluated["validation"], evaluated["test"])
-    if verbose:
-        _print_round(0, evaluated)
+    if per_epoch:
+        for rnd, evaluated in per_client_rounds(epochs):
+            append_evaluation(
+                history, rnd, evaluated["validation"], evaluated["test"])
+            if tracker is not None:
+                tracker.log_round(rnd, evaluated["validation"], evaluated["test"])
+            if verbose:
+                _print_round(rnd, evaluated)
+        if tracker is not None:
+            _update_tracker_resources(tracker, resource_monitor)
+    else:
+        evaluated = {
+            "validation": evaluate_split(
+                algorithm, clients, shared, device, "val", num_classes,
+                resource_monitor=resource_monitor,
+            ),
+            "test": evaluate_split(
+                algorithm, clients, shared, device, "test", num_classes,
+                resource_monitor=resource_monitor,
+            ),
+        }
+        append_evaluation(history, 0, evaluated["validation"], evaluated["test"])
+        if tracker is not None:
+            _update_tracker_resources(tracker, resource_monitor)
+            tracker.log_round(0, evaluated["validation"], evaluated["test"])
+        if verbose:
+            _print_round(0, evaluated)
 
     return {
         "evaluation_history": history,
+        **({"round_selection": "client-specific"} if per_epoch else {}),
         "selection_provenance": {
             "stage": "independent_local_training",
-            "metric": metric,
+            "metric": select,
             "clients": selections,
         },
         "early_stopping": {
@@ -208,6 +256,34 @@ def independent(algorithm: Algorithm, clients: list[Client], num_rounds: int,
             "clients": selections,
         },
     }
+
+
+def per_client_rounds(epochs: dict[int, list]):
+    """Yield ``(round, {"validation": block, "test": block})`` in round order.
+
+    ``epochs`` maps each client id to its ``(round, (metrics, count),
+    (metrics, count))`` evaluations. Every client appears in every block, with
+    ``None`` at rounds it was not evaluated, such as rounds after it stopped.
+    """
+    by_round: dict[int, dict] = {}
+    for cid, evaluations in epochs.items():
+        for rnd, val, test in evaluations:
+            by_round.setdefault(rnd, {})[cid] = {"validation": val, "test": test}
+    for rnd in sorted(by_round):
+        scored = by_round[rnd]
+        yield rnd, {
+            split: {
+                "clients": {str(cid): scored[cid][split][0] if cid in scored else None
+                            for cid in epochs},
+                "sample_counts": {str(cid): scored[cid][split][1] if cid in scored
+                                  else None for cid in epochs},
+            }
+            for split in ("validation", "test")
+        }
+
+
+def _forked_rng(fork: bool):
+    return torch.random.fork_rng(devices=[]) if fork else contextlib.nullcontext()
 
 
 @torch.no_grad()

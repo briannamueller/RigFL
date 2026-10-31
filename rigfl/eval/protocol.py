@@ -56,37 +56,44 @@ def evaluate_split(algorithm, clients, shared, device, split: str, num_classes: 
     per_client: dict[str, dict[str, float] | None] = {}
     counts: dict[str, int | None] = {}
     for cid, client in enumerate(clients):
-        key = str(cid)
-        loader = getattr(client, f"{split}_loader")
-        if loader is None:
-            per_client[key], counts[key] = None, None
-            continue
         client_shared = (shared_by_client[cid]
                          if shared_by_client is not None else shared)
-        outputs, labels = [], []
-        operation = "validation" if split == "val" else "test"
-        with (
-            measured(resource_monitor, operation, category="evaluation",
-                     client_id=cid),
-            _eval_mode(client.model, client_shared, client.state),
-        ):
-            for x, y in loader:
-                out = check_predictions(
-                    algorithm.predict(client, x.to(device), client_shared))
-                outputs.append(_to_cpu(out))
-                labels.append(y)
-        if not outputs:                      # empty loader -- no data, not zero score
-            per_client[key], counts[key] = None, None
-            continue
-        output, labels = _concat(outputs), torch.cat(labels)
-        per_client[key] = compute_all(
-            output, labels, num_classes, class_weights=client.class_weights
-        )
-        counts[key] = int(labels.numel())
+        per_client[str(cid)], counts[str(cid)] = evaluate_client(
+            algorithm, client, cid, client_shared, device, split, num_classes,
+            resource_monitor=resource_monitor)
     return {
         "clients": per_client,
         "sample_counts": counts,
     }
+
+
+def evaluate_client(algorithm, client, cid: int, shared, device, split: str,
+                    num_classes: int, resource_monitor=None
+                    ) -> tuple[dict[str, float] | None, int | None]:
+    """Every computed metric for one client on one split, and its sample count.
+
+    A client with no data on the split gets ``(None, None)``.
+    """
+    loader = getattr(client, f"{split}_loader")
+    if loader is None:
+        return None, None
+    outputs, labels = [], []
+    operation = "validation" if split == "val" else "test"
+    with (
+        measured(resource_monitor, operation, category="evaluation",
+                 client_id=cid),
+        _eval_mode(client.model, shared, client.state),
+    ):
+        for x, y in loader:
+            out = check_predictions(algorithm.predict(client, x.to(device), shared))
+            outputs.append(_to_cpu(out))
+            labels.append(y)
+    if not outputs:                      # empty loader -- no data, not zero score
+        return None, None
+    output, labels = _concat(outputs), torch.cat(labels)
+    metrics = compute_all(output, labels, num_classes,
+                          class_weights=client.class_weights)
+    return metrics, int(labels.numel())
 
 
 def _to_cpu(out: Predictions) -> Predictions:
