@@ -122,6 +122,9 @@ MODEL_FAMILIES = {
     "temporal_heterogeneous_3": [
         "temporal_gru", "temporal_cnn", "temporal_lstm"
     ],
+    "temporal_gru_tpc_attention": [
+        "temporal_gru", "temporal_tpc_light", "temporal_attention"
+    ],
 }
 
 

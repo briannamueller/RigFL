@@ -52,5 +52,6 @@
 | `tabular_heterogeneous_3` | `tabular_linear`, `tabular_mlp`, `tabular_residual_mlp` |
 | `scrnaseq_heterogeneous_2` | `tabular_logreg`, `tabular_mlp_64` |
 | `temporal_heterogeneous_3` | `temporal_gru`, `temporal_cnn`, `temporal_lstm` |
+| `temporal_gru_tpc_attention` | `temporal_gru`, `temporal_tpc_light`, `temporal_attention` |
 
 For a model family, RigFL assigns architectures to clients in the listed order, round-robin by client ID. The order is therefore part of the resolved experiment identity. `model_arch` accepts an architecture name or a family name; algorithms that require identical client architectures accept only an architecture name and are skipped for family values in sweeps.
