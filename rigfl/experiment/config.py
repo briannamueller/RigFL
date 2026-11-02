@@ -177,6 +177,13 @@ class ExperimentConfig(BaseModel):
         ge=1,
         description="Evaluate every N communication rounds for iterative runners.",
     )
+    save_test_predictions: bool = Field(
+        False,
+        description=(
+            "Save per-sample test predictions at every round a report can select. "
+            "Reports need them for sample-level flips."
+        ),
+    )
     device: Literal["auto", "cpu", "mps", "cuda"] = Field(
         "auto", description="Device used for training and evaluation."
     )

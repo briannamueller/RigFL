@@ -8,6 +8,7 @@ import torch
 from torch import nn
 
 from rigfl.eval.metrics import canonical, compute_all
+from rigfl.eval.predictions import sample_record
 from rigfl.eval.resources import measured
 from rigfl.prediction import Predictions, check_predictions
 
@@ -47,11 +48,12 @@ def _eval_mode(*objects):
 @torch.no_grad()
 def evaluate_split(algorithm, clients, shared, device, split: str, num_classes: int,
                    shared_by_client: list | None = None,
-                   resource_monitor=None) -> dict:
+                   resource_monitor=None, samples: dict | None = None) -> dict:
     """Every computed metric for every client on one split, keyed by client id.
 
     A client with no data is recorded as ``None``. Sample counts accompany the
-    metrics for weighted aggregation.
+    metrics for weighted aggregation. ``samples``, when given, receives each
+    client's per-sample predictions (see ``evaluate_client``).
     """
     per_client: dict[str, dict[str, float] | None] = {}
     counts: dict[str, int | None] = {}
@@ -60,7 +62,7 @@ def evaluate_split(algorithm, clients, shared, device, split: str, num_classes: 
                          if shared_by_client is not None else shared)
         per_client[str(cid)], counts[str(cid)] = evaluate_client(
             algorithm, client, cid, client_shared, device, split, num_classes,
-            resource_monitor=resource_monitor)
+            resource_monitor=resource_monitor, samples=samples)
     return {
         "clients": per_client,
         "sample_counts": counts,
@@ -68,11 +70,13 @@ def evaluate_split(algorithm, clients, shared, device, split: str, num_classes: 
 
 
 def evaluate_client(algorithm, client, cid: int, shared, device, split: str,
-                    num_classes: int, resource_monitor=None
+                    num_classes: int, resource_monitor=None,
+                    samples: dict | None = None
                     ) -> tuple[dict[str, float] | None, int | None]:
     """Every computed metric for one client on one split, and its sample count.
 
-    A client with no data on the split gets ``(None, None)``.
+    A client with no data on the split gets ``(None, None)``. ``samples``, when
+    given, maps the client id to its ``sample_record``.
     """
     loader = getattr(client, f"{split}_loader")
     if loader is None:
@@ -93,6 +97,8 @@ def evaluate_client(algorithm, client, cid: int, shared, device, split: str,
     output, labels = _concat(outputs), torch.cat(labels)
     metrics = compute_all(output, labels, num_classes,
                           class_weights=client.class_weights)
+    if samples is not None:
+        samples[str(cid)] = sample_record(output, labels)
     return metrics, int(labels.numel())
 
 

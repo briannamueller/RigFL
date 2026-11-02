@@ -73,6 +73,26 @@ replicate and then reported with its across-replicate mean, sample standard
 deviation, and 95% t-confidence interval when independent replicates are
 available.
 
+### Sample-level flips
+
+With `save_test_predictions: true`, each run saves its test predictions at
+every round a report can select, and the report compares each method with
+Local sample by sample, at the rounds both were reported from:
+
+- **Negative flips:** the share of a client's test samples that Local
+  classifies correctly and the method does not.
+- **Positive flips:** the share that Local gets wrong and the method gets
+  right.
+- **True-class probability:** the mean change in the probability of the true
+  class, and the share of samples where it drops.
+
+For balanced accuracy, a client's rates are the mean of its per-class rates
+instead, so for either metric positive minus negative flips is the client's
+change in the reported metric. Rates are averaged over clients within each
+replicate, then across replicates. The report also gives both flip rates per
+true class, where positive minus negative is the change in that class's
+recall. Rows without saved predictions on both sides show no flips.
+
 When the report is saved, this analysis is written to
 `<stem>_client_level_gain_analysis.csv` next to the aggregate table, such as
 `results/reports/model_heterogeneous_client_level_gain_analysis.csv` with

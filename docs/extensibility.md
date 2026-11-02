@@ -155,4 +155,7 @@ An algorithm that doesn't train in rounds can pass its own `runner` to
 `AlgorithmSpec`. RigFL calls it as
 `runner(algorithm, clients, num_rounds, device, num_classes, **options)`, and it
 must return `{"evaluation_history": ...}` built with
-`rigfl.core.append_evaluation`.
+`rigfl.core.append_evaluation`. When an experiment sets
+`save_test_predictions: true`, RigFL also passes `save_test_predictions=True`;
+to support it, return `"test_predictions"` from a
+`rigfl.eval.predictions.SelectedPredictions` fed every evaluation.

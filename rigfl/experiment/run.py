@@ -286,12 +286,14 @@ def run_one(
     tracker = make_tracker(name, exp, cfg)
     monitor = ResourceMonitor(device, estimate_flops=exp.estimate_flops)
     runner = spec.runner
+    # passed only when on, so runners without the option still work
+    options = {"save_test_predictions": True} if exp.save_test_predictions else {}
     with monitor:
         result = runner(algorithm, clients, num_rounds=exp.rounds, device=device,
                         num_classes=exp.num_classes, eval_gap=exp.eval_gap,
                         verbose=not exp.quiet, tracker=tracker,
                         early_stopping=exp.early_stopping,
-                        resource_monitor=monitor)
+                        resource_monitor=monitor, **options)
     resources = monitor.to_dict()
 
     record = make_run_record(

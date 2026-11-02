@@ -45,4 +45,5 @@ ENVIRONMENT_ONLY_EXPERIMENT_FIELDS = (
     "dataset_config",
     "data_dir",
     "estimate_flops",
+    "save_test_predictions",
 )

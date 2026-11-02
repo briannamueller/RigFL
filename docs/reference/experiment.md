@@ -18,6 +18,7 @@ These options configure individual runs, sweeps, and tuning studies.
 | `batch` | integer | `32` | ≥ 1 | Client training batch size. |
 | `class_weighting` | string | `none` | `none`, `global_balanced`, `local_balanced` | Class-weighting strategy for cross-entropy loss (may be useful for imbalanced classification). `global_balanced` computes `N / (C * n_c)` weights from pooled client training labels; `local_balanced` computes them separately for each client. |
 | `eval_gap` | integer | `1` | ≥ 1 | Evaluate every N communication rounds for iterative runners. |
+| `save_test_predictions` | boolean | `false` | — | Save per-sample test predictions at every round a report can select. Reports need them for sample-level flips. |
 | `device` | string | `auto` | `auto`, `cpu`, `mps`, `cuda` | Device used for training and evaluation. |
 | `results_root` | string | `results` | — | Base directory for runs, reports, and study files. |
 | `quiet` | boolean | `true` | — | Suppress per-round progress output. |

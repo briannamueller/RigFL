@@ -18,6 +18,7 @@ from rigfl.eval.report import (
 from rigfl.eval.selection import resolve_metric
 from rigfl.eval.transfer import (
     TransferComparisonError,
+    format_flip_table,
     format_negative_transfer_table,
     negative_transfer_summary,
 )
@@ -538,6 +539,10 @@ def main(argv: list[str] | None = None, *, prog: str | None = None) -> None:
     if transfer_table or missing_local:
         print("\n===== CLIENT-LEVEL GAIN ANALYSIS =====\n")
         print("\n\n".join(part for part in (transfer_table, missing_local) if part))
+    flip_table = format_flip_table(rows)
+    if flip_table:
+        print("\n===== SAMPLE-LEVEL FLIPS =====\n")
+        print(flip_table)
     if args.resources:
         print("\n===== RESOURCES =====\n")
         print(format_resource_table(rows))
@@ -733,6 +738,18 @@ def _transfer_csv_rows(rows: dict, filter_name: str) -> list[dict]:
         magnitude = summary["negative_transfer_magnitude"]
         row["harmed_client_count"] = magnitude["harmed_client_count"]
         row["affected_replicate_count"] = magnitude["affected_replicate_count"]
+        flips = summary["flips"]
+        row["flips_available"] = flips["available"]
+        if flips["available"]:
+            for field in ("negative_flip_rate", "positive_flip_rate",
+                          "true_class_probability_change",
+                          "lower_true_class_probability"):
+                for statistic in ("estimate", "sd", "ci_low", "ci_high"):
+                    row[f"{field}_{statistic}"] = flips[field].get(statistic)
+            for c, counts in flips["per_class"].items():
+                row[f"class_{c}_test_samples"] = counts["n"]
+                for field in ("negative_flip_rate", "positive_flip_rate"):
+                    row[f"class_{c}_{field}_estimate"] = counts[field]["estimate"]
         output.append(
             _with_settings(row, settings, result["algorithm_settings"])
         )

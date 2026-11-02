@@ -22,6 +22,7 @@ from rigfl.eval.metrics import (
     direction_of,
     unavailable_reason,
 )
+from rigfl.eval.predictions import SelectedPredictions
 from rigfl.eval.protocol import evaluate_client, evaluate_split
 from rigfl.eval.resources import measured, payload_bytes
 from rigfl.eval.selection import aggregate
@@ -64,7 +65,7 @@ def seed_training(seed: int) -> None:
 def independent(algorithm: Algorithm, clients: list[Client], num_rounds: int,
                 device: torch.device, num_classes: int, eval_gap: int = 1,
                 verbose: bool = True, tracker=None, early_stopping=None,
-                resource_monitor=None) -> dict:
+                resource_monitor=None, save_test_predictions: bool = False) -> dict:
     """Train and select one model per client, then evaluate the baseline.
 
     Local and Global Ensemble share this runner. Their only difference is the
@@ -104,6 +105,7 @@ def independent(algorithm: Algorithm, clients: list[Client], num_rounds: int,
     selections = {}
     epochs: dict[int, list] = {}
     models = []
+    kept = SelectedPredictions() if save_test_predictions else None
     # run_one seeds torch with the training seed before building clients
     run_seed = torch.initial_seed()
 
@@ -134,10 +136,14 @@ def independent(algorithm: Algorithm, clients: list[Client], num_rounds: int,
                 with _forked_rng(not enabled):
                     val = evaluate_client(algorithm, client, cid, None, device,
                                           "val", num_classes, resource_monitor)
+                samples = {} if kept is not None else None
                 with _forked_rng(True):
                     test = evaluate_client(algorithm, client, cid, None, device,
-                                           "test", num_classes, resource_monitor)
+                                           "test", num_classes, resource_monitor,
+                                           samples=samples)
                 epochs[cid].append((rnd, val, test))
+                if kept is not None:
+                    kept.observe_client(cid, rnd, val[0], samples.get(str(cid)))
                 if not select:
                     continue
                 metrics = val[0] or {}
@@ -211,6 +217,7 @@ def independent(algorithm: Algorithm, clients: list[Client], num_rounds: int,
         if tracker is not None:
             _update_tracker_resources(tracker, resource_monitor)
     else:
+        samples = {} if kept is not None else None
         evaluated = {
             "validation": evaluate_split(
                 algorithm, clients, shared, device, "val", num_classes,
@@ -218,9 +225,11 @@ def independent(algorithm: Algorithm, clients: list[Client], num_rounds: int,
             ),
             "test": evaluate_split(
                 algorithm, clients, shared, device, "test", num_classes,
-                resource_monitor=resource_monitor,
+                resource_monitor=resource_monitor, samples=samples,
             ),
         }
+        if kept is not None:
+            kept.observe_round(0, evaluated["validation"], samples)
         append_evaluation(history, 0, evaluated["validation"], evaluated["test"])
         if tracker is not None:
             _update_tracker_resources(tracker, resource_monitor)
@@ -230,6 +239,7 @@ def independent(algorithm: Algorithm, clients: list[Client], num_rounds: int,
 
     return {
         "evaluation_history": history,
+        **({"test_predictions": kept.to_dict()} if kept is not None else {}),
         **({"round_selection": "client-specific"} if per_epoch else {}),
         "selection_provenance": {
             "stage": "independent_local_training",
@@ -322,7 +332,7 @@ def _improved(value: float, best: float | None, direction: str,
 def iterative(algorithm: Algorithm, clients: list[Client], num_rounds: int,
               device: torch.device, num_classes: int, eval_gap: int = 1,
               verbose: bool = True, tracker=None, early_stopping=None,
-              resource_monitor=None) -> dict:
+              resource_monitor=None, save_test_predictions: bool = False) -> dict:
     """Train, recording every metric for every client at every evaluation round.
 
     Returns the canonical history. No round in it is marked selected; use
@@ -336,6 +346,7 @@ def iterative(algorithm: Algorithm, clients: list[Client], num_rounds: int,
         shared = algorithm.init_globals()
 
     history: dict = {}
+    kept = SelectedPredictions() if save_test_predictions else None
     stop_reason = "completed_all_rounds"
     last_round = -1
 
@@ -364,14 +375,18 @@ def iterative(algorithm: Algorithm, clients: list[Client], num_rounds: int,
             resource_monitor.checkpoint(rnd)
 
         if rnd % eval_gap == 0 or rnd == num_rounds - 1:
+            samples = {} if kept is not None else None
             evaluated = {
                 "validation": evaluate_split(algorithm, clients, shared, device, "val",
                                              num_classes,
                                              resource_monitor=resource_monitor),
                 "test": evaluate_split(algorithm, clients, shared, device, "test",
                                        num_classes,
-                                       resource_monitor=resource_monitor),
+                                       resource_monitor=resource_monitor,
+                                       samples=samples),
             }
+            if kept is not None:
+                kept.observe_round(rnd, evaluated["validation"], samples)
             append_evaluation(
                 history, rnd, evaluated["validation"], evaluated["test"])
 
@@ -391,6 +406,7 @@ def iterative(algorithm: Algorithm, clients: list[Client], num_rounds: int,
 
     return {
         "evaluation_history": history,
+        **({"test_predictions": kept.to_dict()} if kept is not None else {}),
         "early_stopping": es.record(stop_reason, last_round),
     }
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 
 from rigfl.eval.metrics import canonical
+from rigfl.eval.predictions import predictions_at
 from rigfl.eval.report import (
     REPLICATE_FIELDS,
     by_condition,
@@ -192,6 +193,9 @@ def paired_client_gains(
                     "local_value": local_value,
                     "gain": algorithm_value - local_value,
                     "sample_count": weights.get(client_id),
+                    "flips": _client_flips(
+                        algorithm, selected_algorithm, local, selected_local,
+                        client_id),
                 }
             )
     if not pairs:
@@ -200,6 +204,117 @@ def paired_client_gains(
     return {"metric": name,
             "selection_view": selected_algorithm["selection_view"],
             "pairs": pairs}
+
+
+_PROBABILITY_FIELDS = ("probability_change", "lower_probability")
+
+
+def _selected_round(selected: dict, client_id: str):
+    if "selected_rounds" in selected:
+        return selected["selected_rounds"].get(client_id)
+    return selected["selected_round"]
+
+
+def _client_flips(algorithm: dict, selected_algorithm: dict, local: dict,
+                  selected_local: dict, client_id: str) -> dict | None:
+    """Per-sample changes from Local to the algorithm on one client's test set.
+
+    A positive flip is a sample Local gets wrong and the algorithm gets right; a
+    negative flip is the reverse. Counts are per true class. ``None`` when
+    either run has no saved predictions at its selected round.
+    """
+    ours = predictions_at(algorithm, client_id,
+                          _selected_round(selected_algorithm, client_id))
+    theirs = predictions_at(local, client_id,
+                            _selected_round(selected_local, client_id))
+    if ours is None or theirs is None:
+        return None
+    labels = ours["labels"]
+    if labels != theirs["labels"]:
+        raise TransferComparisonError(
+            f"client {client_id} test labels differ between the algorithm and Local runs")
+    p_ours, p_local = ours["true_class_probability"], theirs["true_class_probability"]
+    has_probability = p_ours is not None and p_local is not None
+    changes = ([a - b for a, b in zip(p_ours, p_local)] if has_probability
+               else [None] * len(labels))
+    per_class: dict[str, dict] = {}
+    for label, mine, local_label, change in zip(
+            labels, ours["predicted"], theirs["predicted"], changes):
+        counts = per_class.setdefault(str(label), {
+            "n": 0, "positive": 0, "negative": 0,
+            "probability_change": 0.0, "lower_probability": 0})
+        counts["n"] += 1
+        counts["positive"] += mine == label != local_label
+        counts["negative"] += local_label == label != mine
+        if change is not None:
+            counts["probability_change"] += change
+            counts["lower_probability"] += change < 0
+    totals = {field: sum(c[field] for c in per_class.values())
+              for field in ("positive", "negative", "probability_change",
+                            "lower_probability")}
+    return {"n": len(labels), "per_class": per_class,
+            "has_probability": has_probability, **totals}
+
+
+def flip_summary(pairs: list[dict], metric: str, aggregation: str = "uniform", *,
+                 include_uncertainty: bool = True) -> dict:
+    """Sample-level flip rates, averaged over clients and then replicates.
+
+    A client's rates are shares of its test samples, or for balanced accuracy
+    the mean of its per-class rates, so positive minus negative flips is the
+    client's change in the metric. Per-class rates divide by the class's test
+    count, so a class's net flip rate is its recall change; a client without
+    test samples of a class is left out of that class's average.
+    """
+    class_averaged = canonical(metric) == "balanced_accuracy"
+    if any(pair["flips"] is None for pair in pairs):
+        return {"available": False,
+                "reason": "a paired run has no saved test predictions"}
+    by_replicate = pairs_by_replicate(pairs)
+    keys = sorted(by_replicate, key=repr)
+
+    def averaged(rate) -> dict:
+        per_replicate = []
+        for key in keys:
+            values = [rate(pair["flips"]) for pair in by_replicate[key]]
+            weights = [pair["flips"]["n"] for pair in by_replicate[key]]
+            value = aggregate(values, weights, aggregation)
+            if value is not None:
+                per_replicate.append(value)
+        return effect_summary(per_replicate, include_uncertainty=include_uncertainty)
+
+    def share(field):
+        def rate(flips):
+            if field in _PROBABILITY_FIELDS and not flips["has_probability"]:
+                return None
+            if class_averaged:
+                rates = [c[field] / c["n"] for c in flips["per_class"].values() if c["n"]]
+                return sum(rates) / len(rates) if rates else None
+            return flips[field] / flips["n"] if flips["n"] else None
+        return rate
+
+    classes = sorted({c for pair in pairs for c in pair["flips"]["per_class"]}, key=int)
+
+    def class_share(c, field):
+        def rate(flips):
+            counts = flips["per_class"].get(c)
+            return counts[field] / counts["n"] if counts and counts["n"] else None
+        return rate
+
+    return {
+        "available": True,
+        "negative_flip_rate": _clip_rate(averaged(share("negative"))),
+        "positive_flip_rate": _clip_rate(averaged(share("positive"))),
+        "true_class_probability_change": averaged(share("probability_change")),
+        "lower_true_class_probability": _clip_rate(averaged(share("lower_probability"))),
+        "per_class": {
+            c: {"n": sum(pair["flips"]["per_class"].get(c, {}).get("n", 0)
+                         for pair in pairs),
+                "negative_flip_rate": _clip_rate(averaged(class_share(c, "negative"))),
+                "positive_flip_rate": _clip_rate(averaged(class_share(c, "positive")))}
+            for c in classes
+        },
+    }
 
 
 def pairs_by_replicate(pairs: list[dict]) -> dict[tuple, list[dict]]:
@@ -304,6 +419,8 @@ def negative_transfer_summary(
         "negative_transfer_magnitude": effects["harm_magnitude"],
         "negative_transfer_burden": effects["harm_burden"],
         "worst_tail_gain": effects["worst_tail_gain"],
+        "flips": flip_summary(pairs, metric, aggregation,
+                              include_uncertainty=include_uncertainty),
     }
     return summary
 
@@ -390,6 +507,73 @@ def _interval(value: dict, *, percent: bool = False) -> str:
         f"{rendered} [{low * scale:.{digits}f}{suffix}, "
         f"{high * scale:.{digits}f}{suffix}]"
     )
+
+
+def format_flip_table(rows: dict) -> str:
+    """Sample-level flips relative to Local, overall and per true class."""
+    compared = {
+        label: row for label, row in rows.items()
+        if row.get("negative_transfer", {}).get("available", False)
+    }
+    if not compared:
+        return ""
+    out = []
+    unavailable = []
+    for condition, group in by_condition(compared).items():
+        if out:
+            out.append("")
+        out += condition_heading(condition)
+        out += [
+            "| algorithm | configuration | round selection | negative flips | "
+            "positive flips | mean change in true-class probability | "
+            "lower true-class probability |",
+            "|---|---|---|---:|---:|---:|---:|",
+        ]
+        per_class = []
+        for label, row in group.items():
+            summary = row["negative_transfer"]
+            flips = summary["flips"]
+            algorithm, configuration = row_cells(label, row)
+            if not flips["available"]:
+                out.append(f"| {algorithm} | {configuration} | "
+                           f"{summary['selection_view']} | — | — | — | — |")
+                unavailable.append((row_name(label, row), flips["reason"]))
+                continue
+            out.append("| " + " | ".join([
+                algorithm, configuration, summary["selection_view"],
+                _interval(flips["negative_flip_rate"], percent=True),
+                _interval(flips["positive_flip_rate"], percent=True),
+                _interval(flips["true_class_probability_change"]),
+                _interval(flips["lower_true_class_probability"], percent=True),
+            ]) + " |")
+            for c, counts in flips["per_class"].items():
+                per_class.append("| " + " | ".join([
+                    algorithm, configuration, c, str(counts["n"]),
+                    _interval(counts["negative_flip_rate"], percent=True),
+                    _interval(counts["positive_flip_rate"], percent=True),
+                ]) + " |")
+        if per_class:
+            out += [
+                "",
+                "| algorithm | configuration | true class | test samples | "
+                "negative flips | positive flips |",
+                "|---|---|---|---:|---:|---:|",
+                *per_class,
+            ]
+    out.extend([
+        "",
+        "Rates are shares of each client's test samples (for balanced accuracy, "
+        "the mean of its per-class rates), averaged over clients. "
+        "A negative flip is a sample Local classifies correctly and the method "
+        "does not; a positive flip is the reverse. Per-class rates use that "
+        "class's test samples, so positive minus negative is the change in the "
+        "class's recall.",
+    ])
+    if unavailable:
+        out.append("")
+        out.extend(f"{name}: flips unavailable — {reason}."
+                   for name, reason in unavailable)
+    return "\n".join(out)
 
 
 def format_negative_transfer_table(rows: dict) -> str:
