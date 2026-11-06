@@ -43,6 +43,8 @@ def test_model_is_configured_independently_of_dataset_name():
      ["lenet5", "fedavg_mnist_cnn", "small_cnn"], [84, 512, 128]),
     ("tabular_heterogeneous_3", "numeric", torch.randn(2, 12),
      ["tabular_linear", "tabular_mlp", "tabular_residual_mlp"], [64, 64, 64]),
+    ("paysim_heterogeneous_3", "numeric", torch.randn(2, 7),
+     ["tabular_flower_mlp", "tabular_dcn_v2", "tabular_tabnet"], [64, 64, 64]),
     ("phishing_byte_cnn", "token_sequence", torch.randint(0, 258, (2, 256)),
      ["phishing_byte_cnn"], [128]),
 ])
@@ -243,3 +245,16 @@ def test_run_identity_uses_resolved_family_members(monkeypatch):
     assert fp(original) == fp(alias)
     assert fp(original) != fp(reordered)
 
+
+def test_brats_three_model_family_builds_on_four_channel_slices():
+    names = resolve_models("brats_heterogeneous_3", input_kind="image")
+    factories = instantiate_backbones(
+        names,
+        input_spec={"kind": "image", "shape": (4, 128, 128)},
+    )
+    x = torch.randn(2, 4, 128, 128)
+
+    assert names == ["fedavg_cnn", "resnet18", "mobilenet_v2"]
+    assert [factory()(x).shape for factory in factories] == [
+        (2, 512), (2, 512), (2, 1280)
+    ]

@@ -10,6 +10,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from rigfl.models.cifar import CifarResNet18
+
 
 def _image_channels(input_spec, default: int = 3) -> int:
     if not input_spec:
@@ -218,3 +220,17 @@ class MobileNetV2(nn.Module):
         x = self.features(x)
         x = F.adaptive_avg_pool2d(x, 1).reshape(x.shape[0], -1)
         return self.dropout(x)
+
+
+class ResNet18(CifarResNet18):
+    """ResNet-18 with the standard 7x7 stride-2 stem and max pool. Emits 512-d."""
+
+    def __init__(self, input_spec=None):
+        super().__init__(input_spec)
+        self.conv1 = nn.Conv2d(self.conv1.in_channels, 64, 7, 2, 3, bias=False)
+        self.maxpool = nn.MaxPool2d(3, 2, 1)
+
+    def forward(self, x):
+        out = self.maxpool(F.relu(self.bn1(self.conv1(x))))
+        out = self.layer4(self.layer3(self.layer2(self.layer1(out))))
+        return F.adaptive_avg_pool2d(out, 1).flatten(1)

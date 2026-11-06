@@ -28,11 +28,15 @@
 | `fedgh_cnn_5` | `image` |
 | `mobilenet_v2` | `image` |
 | `convmixer_256d8` | `image` |
+| `resnet18` | `image` |
 | `tabular_linear` | `numeric` |
 | `tabular_logreg` | `numeric` |
 | `tabular_mlp` | `numeric` |
 | `tabular_mlp_64` | `numeric` |
 | `tabular_residual_mlp` | `numeric` |
+| `tabular_flower_mlp` | `numeric` |
+| `tabular_dcn_v2` | `numeric` |
+| `tabular_tabnet` | `numeric` |
 | `phishing_byte_cnn` | `token_sequence` |
 | `temporal_gru` | `temporal` |
 | `temporal_cnn` | `temporal` |
@@ -49,7 +53,9 @@
 | `cifar_width_heterogeneous_10` | `cifar_cnn_37_74_148`, `cifar_cnn_43_86_172`, `cifar_cnn_49_98_196`, `cifar_cnn_55_110_220`, `cifar_cnn_61_122_244`, `cifar_cnn_67_134_268`, `cifar_cnn_73_146_292`, `cifar_cnn_79_158_316`, `cifar_cnn_85_170_340`, `cifar_cnn_91_182_364` |
 | `fedgh_heterogeneous_5` | `fedgh_cnn_1`, `fedgh_cnn_2`, `fedgh_cnn_3`, `fedgh_cnn_4`, `fedgh_cnn_5` |
 | `brats_heterogeneous_2` | `convmixer_256d8`, `mobilenet_v2` |
+| `brats_heterogeneous_3` | `fedavg_cnn`, `resnet18`, `mobilenet_v2` |
 | `tabular_heterogeneous_3` | `tabular_linear`, `tabular_mlp`, `tabular_residual_mlp` |
+| `paysim_heterogeneous_3` | `tabular_flower_mlp`, `tabular_dcn_v2`, `tabular_tabnet` |
 | `scrnaseq_heterogeneous_2` | `tabular_logreg`, `tabular_mlp_64` |
 | `temporal_heterogeneous_3` | `temporal_gru`, `temporal_cnn`, `temporal_lstm` |
 | `temporal_gru_tpc_attention` | `temporal_gru`, `temporal_tpc_light`, `temporal_attention` |

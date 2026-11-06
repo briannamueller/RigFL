@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import torch.nn as nn
 
-from rigfl.models.brats import ConvMixer256D8, MobileNetV2
+from rigfl.models.brats import ConvMixer256D8, MobileNetV2, ResNet18
 from rigfl.models.cifar import (
     CifarCNN37_74_148,
     CifarCNN43_86_172,
@@ -30,11 +30,14 @@ from rigfl.models.cifar import (
 from rigfl.models.mnist import FedAvgMNISTCNN, LeNet5
 from rigfl.models.phishing import PhishingByteCNN
 from rigfl.models.tabular import (
+    TabularDCNv2,
+    TabularFlowerMLP,
     TabularLinear,
     TabularLogisticRegression,
     TabularMLP,
     TabularMLP64,
     TabularResidualMLP,
+    TabularTabNet,
 )
 from rigfl.models.temporal import (
     TemporalAttention,
@@ -70,11 +73,15 @@ MODEL_ARCHITECTURE_REGISTRY: dict[str, tuple[str, type[nn.Module]]] = {
     "fedgh_cnn_5": ("image", FedGHCNN5),
     "mobilenet_v2": ("image", MobileNetV2),
     "convmixer_256d8": ("image", ConvMixer256D8),
+    "resnet18": ("image", ResNet18),
     "tabular_linear": ("numeric", TabularLinear),
     "tabular_logreg": ("numeric", TabularLogisticRegression),
     "tabular_mlp": ("numeric", TabularMLP),
     "tabular_mlp_64": ("numeric", TabularMLP64),
     "tabular_residual_mlp": ("numeric", TabularResidualMLP),
+    "tabular_flower_mlp": ("numeric", TabularFlowerMLP),
+    "tabular_dcn_v2": ("numeric", TabularDCNv2),
+    "tabular_tabnet": ("numeric", TabularTabNet),
     "phishing_byte_cnn": ("token_sequence", PhishingByteCNN),
     "temporal_gru": ("temporal", TemporalGRU),
     "temporal_cnn": ("temporal", TemporalCNN),
@@ -113,8 +120,14 @@ MODEL_FAMILIES = {
     "brats_heterogeneous_2": [
         "convmixer_256d8", "mobilenet_v2"
     ],
+    "brats_heterogeneous_3": [
+        "fedavg_cnn", "resnet18", "mobilenet_v2"
+    ],
     "tabular_heterogeneous_3": [
         "tabular_linear", "tabular_mlp", "tabular_residual_mlp"
+    ],
+    "paysim_heterogeneous_3": [
+        "tabular_flower_mlp", "tabular_dcn_v2", "tabular_tabnet"
     ],
     "scrnaseq_heterogeneous_2": [
         "tabular_logreg", "tabular_mlp_64"

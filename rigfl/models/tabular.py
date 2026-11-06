@@ -93,3 +93,75 @@ class TabularResidualMLP(nn.Module):
         hidden = F.relu(self.input(x))
         hidden = F.relu(hidden + self.block(hidden))
         return F.relu(self.output(hidden))
+
+
+class TabularFlowerMLP(nn.Module):
+    """MLP from Flower's PaySim fraud app (``@flwrlabs/fed-fin-fraud``) without
+    its output layer."""
+
+    def __init__(self, input_spec=None, dropout: float = 0.1):
+        super().__init__()
+        self.layers = nn.Sequential(
+            nn.Linear(_input_width(input_spec), 128),
+            nn.LayerNorm(128),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(128, 64),
+            nn.LayerNorm(64),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+        )
+        self.out_dim = 64
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.layers(x)
+
+
+class _CrossLayer(nn.Module):
+    """DCN-v2 cross layer: ``x0 * (W x + b) + x``."""
+
+    def __init__(self, width: int):
+        super().__init__()
+        self.linear = nn.Linear(width, width)
+
+    def forward(self, x0: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
+        return x0 * self.linear(x) + x
+
+
+class TabularDCNv2(nn.Module):
+    """DCN-v2 (Wang et al., 2021), stacked: two cross layers, then
+    ``TabularFlowerMLP`` as the deep network."""
+
+    def __init__(self, input_spec=None):
+        super().__init__()
+        width = _input_width(input_spec)
+        self.cross = nn.ModuleList(_CrossLayer(width) for _ in range(2))
+        self.deep = TabularFlowerMLP(input_spec)
+        self.out_dim = 64
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        hidden = x
+        for layer in self.cross:
+            hidden = layer(x, hidden)
+        return self.deep(hidden)
+
+
+class TabularTabNet(nn.Module):
+    """TabNet (Arik & Pfister, 2021) at the pytorch-tabnet defaults. Its final
+    mapping projects the 8-dim decision output to 64. The mask sparsity loss
+    is not added to training. Requires the ``tabnet`` extra."""
+
+    def __init__(self, input_spec=None):
+        super().__init__()
+        from pytorch_tabnet.tab_network import TabNetNoEmbeddings
+
+        self.tabnet = TabNetNoEmbeddings(_input_width(input_spec), 64)
+        # pytorch-tabnet keeps this as a plain tensor, which .to(device) skips
+        encoder = self.tabnet.encoder
+        group_matrix = encoder.group_attention_matrix
+        del encoder.group_attention_matrix
+        encoder.register_buffer("group_attention_matrix", group_matrix, persistent=False)
+        self.out_dim = 64
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.tabnet(x)[0]
