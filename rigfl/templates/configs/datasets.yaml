@@ -109,6 +109,21 @@ datasets:
       test_per_client: null
       val_frac: 0.2
 
+  # PaySim cancels detected fraud, so the balance columns reveal the label
+  paysim_fraud_no_balances:
+    backend: flower
+    source_dataset: flwrlabs/fed-fraud-paysim-banks
+    source_revision: a48633710ded3045aa9c80833498ab16de3560ca
+    data_transform: paysim_fraud_no_balances
+    partition:
+      scheme: natural_id
+      partition_by: BankID
+      partition_seed: 0
+      split_seed: 0
+      train_per_client: null
+      test_per_client: null
+      val_frac: 0.2
+
   phishing_urls:
     backend: flower
     source_dataset: flwrlabs/fed-phishing-urls

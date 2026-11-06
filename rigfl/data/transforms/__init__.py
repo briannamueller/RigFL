@@ -6,7 +6,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
-from rigfl.data.transforms.paysim import REQUIRED_COLUMNS, SOURCE_URL, prepare_paysim
+from rigfl.data.transforms.paysim import (
+    REQUIRED_COLUMNS,
+    SOURCE_URL,
+    prepare_paysim,
+    prepare_paysim_without_balances,
+)
 from rigfl.data.transforms.phishing import (
     MAX_LENGTH,
     PADDING_INDEX,
@@ -118,6 +123,17 @@ DATA_TRANSFORMS = {
         class_names=("not_fraud", "fraud"),
         required_columns=REQUIRED_COLUMNS,
         prepare=prepare_paysim,
+        source=SOURCE_URL,
+    ),
+    "paysim_fraud_no_balances": DataTransform(
+        version=1,
+        input_kind="numeric",
+        input_column="features",
+        target_column="isFraud",
+        task="classification",
+        class_names=("not_fraud", "fraud"),
+        required_columns=REQUIRED_COLUMNS,
+        prepare=prepare_paysim_without_balances,
         source=SOURCE_URL,
     ),
     "phishing_urls": DataTransform(

@@ -12,14 +12,14 @@ SOURCE_URL = (
     f"{SOURCE_COMMIT}/{SOURCE_PATH}"
 )
 
-NUMERIC_COLUMNS = (
-    "step",
-    "amount",
+# PaySim cancels detected fraud, so the balances after a transaction encode the label
+BALANCE_COLUMNS = (
     "oldbalanceOrg",
     "newbalanceOrig",
     "oldbalanceDest",
     "newbalanceDest",
 )
+NUMERIC_COLUMNS = ("step", "amount", *BALANCE_COLUMNS)
 TYPE_VALUES = ("CASH_IN", "CASH_OUT", "DEBIT", "PAYMENT", "TRANSFER")
 REQUIRED_COLUMNS = (*NUMERIC_COLUMNS, "type", "isFraud", "BankID")
 
@@ -32,11 +32,25 @@ def _float_array(values) -> np.ndarray:
     )
 
 
-def prepare_paysim(dataset, training_split: str):
+def _balance_features(numeric) -> np.ndarray:
+    origin_delta = numeric["oldbalanceOrg"] - numeric["newbalanceOrig"]
+    destination_delta = numeric["newbalanceDest"] - numeric["oldbalanceDest"]
+    return np.column_stack(
+        [
+            origin_delta,
+            destination_delta,
+            origin_delta - numeric["amount"],
+            numeric["amount"] - destination_delta,
+        ]
+    )
+
+
+def prepare_paysim(dataset, training_split: str, include_balances: bool = True):
+    numeric_columns = NUMERIC_COLUMNS if include_balances else ("step", "amount")
     training = dataset[training_split]
     means = {}
     stds = {}
-    for column in NUMERIC_COLUMNS:
+    for column in numeric_columns:
         values = _float_array(training[column])
         means[column] = float(values.mean())
         std = float(values.std())
@@ -45,26 +59,21 @@ def prepare_paysim(dataset, training_split: str):
     observed_types = {str(value).strip() for value in training.unique("type")}
     type_values = sorted(set(TYPE_VALUES).union(observed_types))
     type_to_index = {value: index for index, value in enumerate(type_values)}
-    input_dim = len(NUMERIC_COLUMNS) + 4 + len(type_values)
+    num_engineered = 4 if include_balances else 0
+    input_dim = len(numeric_columns) + num_engineered + len(type_values)
 
     def encode(batch):
-        numeric = {column: _float_array(batch[column]) for column in NUMERIC_COLUMNS}
+        numeric = {column: _float_array(batch[column]) for column in numeric_columns}
         standardized = np.column_stack(
             [
                 (numeric[column] - means[column]) / stds[column]
-                for column in NUMERIC_COLUMNS
+                for column in numeric_columns
             ]
         )
-        origin_delta = numeric["oldbalanceOrg"] - numeric["newbalanceOrig"]
-        destination_delta = numeric["newbalanceDest"] - numeric["oldbalanceDest"]
-        engineered = np.column_stack(
-            [
-                origin_delta,
-                destination_delta,
-                origin_delta - numeric["amount"],
-                numeric["amount"] - destination_delta,
-            ]
-        )
+        if include_balances:
+            engineered = _balance_features(numeric)
+        else:
+            engineered = np.empty((len(standardized), 0))
         encoded_types = np.zeros(
             (len(batch["type"]), len(type_values)), dtype=np.float32
         )
@@ -103,3 +112,7 @@ def prepare_paysim(dataset, training_split: str):
         "input_dim": input_dim,
     }
     return transformed, parameters
+
+
+def prepare_paysim_without_balances(dataset, training_split: str):
+    return prepare_paysim(dataset, training_split, include_balances=False)

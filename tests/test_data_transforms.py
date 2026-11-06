@@ -53,6 +53,25 @@ def test_paysim_uses_training_statistics_and_flower_feature_definition():
     np.testing.assert_allclose(features[0, :6], np.zeros(6))
 
 
+def test_paysim_without_balances_ignores_balance_columns():
+    shifted = _paysim_rows(2.0)
+    for column in ("oldbalanceOrg", "newbalanceOrig", "oldbalanceDest", "newbalanceDest"):
+        shifted[column] = [value * 100 + 7 for value in shifted[column]]
+    prepare = get_data_transform("paysim_fraud_no_balances").prepare
+
+    original, parameters = prepare(
+        DatasetDict({"train": Dataset.from_dict(_paysim_rows(2.0))}), "train"
+    )
+    changed, _ = prepare(DatasetDict({"train": Dataset.from_dict(shifted)}), "train")
+
+    # step, amount, then one column per transaction type
+    assert parameters["input_dim"] == 2 + 5
+    np.testing.assert_array_equal(
+        np.asarray(original["train"]["features"]),
+        np.asarray(changed["train"]["features"]),
+    )
+
+
 def test_phishing_urls_are_normalized_and_byte_encoded():
     inputs = encode_urls(["A%20B", "https://example.com"])
 
