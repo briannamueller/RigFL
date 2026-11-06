@@ -268,6 +268,29 @@ def test_experiment_uses_alias_to_resolve_partition(monkeypatch, tmp_path):
     )
 
 
+def test_experiment_overrides_validation_settings(monkeypatch, tmp_path):
+    config = _config(tmp_path / "datasets.yaml")
+    _generate(monkeypatch, config, tmp_path / "data")
+    base = ExperimentConfig(
+        dataset=DATASET, dataset_config=str(config), data_dir=str(tmp_path / "data")
+    )
+    default, _ = resolve_experiment_data(base)
+    overridden, _ = resolve_experiment_data(
+        base.model_copy(update={"validation_fraction": 0.3, "stratify_validation": True})
+    )
+    assert (overridden.validation_fraction, overridden.stratify_validation) == (0.3, True)
+    assert overridden.partition_id == default.partition_id
+
+    # restating the dataset's own value names the same run
+    same, _ = resolve_experiment_data(
+        base.model_copy(update={"validation_fraction": default.validation_fraction})
+    )
+    config_dump = LocalConfig().model_dump()
+    assert _fingerprint("local", same, config_dump) == _fingerprint(
+        "local", default, config_dump
+    )
+
+
 def test_experiment_requires_explicit_flower_partition_generation(
     monkeypatch, tmp_path
 ):

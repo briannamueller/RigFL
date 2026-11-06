@@ -20,6 +20,13 @@ training data at run time, so changing `split_seed` or `partition.val_frac`
 (`client_split.validation_fraction` for merged source splits) doesn't require
 regenerating the partition.
 
+The validation split is random by default. Set `stratify_validation: true` on a
+dataset entry (any backend) to give each class its share of the validation
+split. An experiment can override `stratify_validation` and
+`validation_fraction`, as it can `split_seed`. When groups are held out whole,
+each group is assigned the class most of its samples have, and groups are
+stratified by that class.
+
 ### Add a Hugging Face dataset
 
 Add a named entry to `configs/datasets.yaml`. For a classification dataset

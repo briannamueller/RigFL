@@ -88,9 +88,18 @@ def _collate(batch):
 
 
 def _train_val_indices(n: int, groups, val_frac: float, *,
-                       generator: torch.Generator | None = None
+                       generator: torch.Generator | None = None,
+                       labels=None,
                        ) -> tuple[list[int], list[int]]:
-    """Split indices into (train, val); whole groups go to val when ``groups`` is given."""
+    """Split indices into (train, val); whole groups go to val when ``groups`` is given.
+
+    With ``labels``, each class (or, with groups, each group's majority class)
+    contributes ``val_frac`` of its samples to validation.
+    """
+    if labels is not None:
+        return _stratified_train_val_indices(
+            np.asarray(labels), groups, val_frac, generator
+        )
     if groups is None:
         perm = torch.randperm(n, generator=generator).tolist()
         # Reserve at least one validation sample without emptying the train split.
@@ -112,6 +121,47 @@ def _train_val_indices(n: int, groups, val_frac: float, *,
     val_idx = [i for i, g in enumerate(groups) if g in val_groups]
     train_idx = [i for i, g in enumerate(groups) if g not in val_groups]
     return train_idx, val_idx
+
+
+def _stratified_train_val_indices(labels: np.ndarray, groups, val_frac: float,
+                                  generator: torch.Generator | None
+                                  ) -> tuple[list[int], list[int]]:
+    n = len(labels)
+    if groups is None:
+        units = np.arange(n)
+        unit_of = units
+        unit_sizes = np.ones(n, dtype=int)
+        unit_labels = labels
+    else:
+        # a group's stratum is its most common label
+        unit_names, unit_of = np.unique(np.asarray(list(groups)), return_inverse=True)
+        units = np.arange(len(unit_names))
+        unit_sizes = np.bincount(unit_of, minlength=len(units))
+        unit_labels = np.array([
+            np.bincount(labels[unit_of == u]).argmax() for u in units
+        ])
+    if len(units) < 2:
+        return list(range(n)), []
+
+    val_units = []
+    for label in np.unique(unit_labels):
+        members = units[unit_labels == label]
+        members = members[torch.randperm(len(members), generator=generator).numpy()]
+        target = round(unit_sizes[members].sum() * val_frac)
+        seen = 0
+        for unit in members:
+            if seen >= target:
+                break
+            val_units.append(unit)
+            seen += unit_sizes[unit]
+    # keep at least one unit on each side
+    if not val_units:
+        val_units = [units[np.argmax(unit_sizes)]]
+    if len(val_units) == len(units):
+        val_units = val_units[:-1]
+
+    in_val = np.isin(unit_of, val_units)
+    return np.flatnonzero(~in_val).tolist(), np.flatnonzero(in_val).tolist()
 
 
 def _stream_generator(seed: int, stream: int) -> torch.Generator:
@@ -151,7 +201,8 @@ def build_clients(source: Source, num_clients: int, num_classes: int,
                   val_frac: float = 0.2, batch: int = 32,
                   adapter: Callable[[int, int], nn.Module] | None = None,
                   seed: int = 0, split_seed: int = 0,
-                  build_models: bool = True) -> list[Client]:
+                  build_models: bool = True,
+                  stratify_validation: bool = False) -> list[Client]:
     """Turn a data source + a pool of backbone *factories* into ``Client``s.
 
     ``backbones`` are factories so each client gets a fresh instance.
@@ -167,6 +218,7 @@ def build_clients(source: Source, num_clients: int, num_classes: int,
         train_idx, val_idx = _train_val_indices(
             len(y_tr), g_tr, val_frac,
             generator=_stream_generator(split_seed, 0),
+            labels=y_tr if stratify_validation else None,
         )
         x_te, y_te, g_te = source(cid, "test")
         clients.append(_make_client(

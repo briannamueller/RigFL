@@ -30,6 +30,12 @@ def test_run_identity_tracks_partition_but_not_its_storage_location():
     second = resolved_experiment(partition_id="same", split_seed=4)
     assert _fingerprint("local", first, {}) != _fingerprint("local", second, {})
 
+    stratified = resolved_experiment(partition_id="same", split_seed=3,
+                                     stratify_validation=True)
+    assert _fingerprint("local", first, {}) != _fingerprint("local", stratified, {})
+    # left out when off
+    assert "stratify_validation" not in run_identity("local", first, {})["experiment"]
+
 
 def test_environment_flags_do_not_change_identity():
     a = resolved_experiment()

@@ -349,6 +349,13 @@ class FlowerDatasetSettings(BaseModel):
         default_factory=DirichletSettings,
         description="Client partitioning strategy and limits.",
     )
+    stratify_validation: bool = Field(
+        False,
+        description=(
+            "Draw the validation split so each class keeps its training share; "
+            "with groups, groups are stratified by their most common label."
+        ),
+    )
 
     @field_validator("data_transform")
     @classmethod
@@ -393,6 +400,13 @@ class BioSiloDatasetSettings(BaseModel):
     split_seed: int = Field(
         0, ge=0, description="Seed used to create client validation splits."
     )
+    stratify_validation: bool = Field(
+        False,
+        description=(
+            "Draw the validation split so each class keeps its training share; "
+            "with groups, groups are stratified by their most common label."
+        ),
+    )
 
     @field_validator("source_dataset")
     @classmethod
@@ -427,6 +441,13 @@ class PrebuiltDatasetSettings(BaseModel):
     )
     split_seed: int = Field(
         0, ge=0, description="Seed used to create client validation splits."
+    )
+    stratify_validation: bool = Field(
+        False,
+        description=(
+            "Draw the validation split so each class keeps its training share; "
+            "with groups, groups are stratified by their most common label."
+        ),
     )
 
 

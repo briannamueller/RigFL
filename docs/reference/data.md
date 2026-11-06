@@ -15,6 +15,7 @@
 | `task` | string | `auto` | `auto`, `classification` | Use source metadata or explicitly treat the target as class labels. |
 | `data_transform` | string | `auto` | non-empty | Registered transform applied to source examples. |
 | `partition` | partition settings | `dirichlet` | — | Client partitioning strategy and limits. |
+| `stratify_validation` | boolean | `false` | — | Draw the validation split so each class keeps its training share; with groups, groups are stratified by their most common label. |
 
 ### Named source splits
 
@@ -182,5 +183,6 @@ Set at least one of `num_shards_per_partition` or `shard_size`.
 | `parameters` | mapping | `{}` | — | Parameters passed to the BioSilo dataset. |
 | `validation_fraction` | number | `0.2` | > 0; < 1 | Fraction of client training data reserved for validation. |
 | `split_seed` | integer | `0` | ≥ 0 | Seed used to create client validation splits. |
+| `stratify_validation` | boolean | `false` | — | Draw the validation split so each class keeps its training share; with groups, groups are stratified by their most common label. |
 
 `parameters` cannot set `dataset`, `params`, `root`, `overwrite`, or `version`; RigFL supplies those arguments.

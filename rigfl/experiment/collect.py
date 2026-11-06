@@ -104,6 +104,8 @@ def condition_fields(rec: dict) -> dict:
     """
     exp = rec.get("config", {}).get("experiment", {})
     fields = {k: hashable(exp.get(k)) for k in _EXPERIMENT}
+    # records without the field used a random split
+    fields["stratify_validation"] = bool(exp.get("stratify_validation"))
     fields["data_configuration"] = result_data_configuration_id(rec)
     if "early_stopping" in exp and exp["early_stopping"] is None:
         fields["early_stopping.enabled"] = None

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rigfl.experiment.config import ExperimentConfig, ResolvedExperimentConfig
+from rigfl.experiment.config import ResolvedExperimentConfig
 from rigfl.experiment.registry import (
     resolve_algorithm_config,
     resolve_algorithm_models,
@@ -17,11 +17,6 @@ STARTER_DATASETS = str(STARTER_CONFIGS / "datasets.yaml")
 
 def resolved_experiment(**overrides) -> ResolvedExperimentConfig:
     """Build a resolved image experiment without loading a partition artifact."""
-    experiment = {
-        key: value
-        for key, value in overrides.items()
-        if key in ExperimentConfig.model_fields
-    }
     resolved = {
         "data_backend": "flower",
         "partition_id": "test-partition",
@@ -37,9 +32,8 @@ def resolved_experiment(**overrides) -> ResolvedExperimentConfig:
         key: value
         for key, value in overrides.items()
         if key in ResolvedExperimentConfig.model_fields
-        and key not in ExperimentConfig.model_fields
     })
-    return ResolvedExperimentConfig(**experiment, **resolved)
+    return ResolvedExperimentConfig(**resolved)
 
 
 def run_resolved(name, exp, config, device, data) -> dict:

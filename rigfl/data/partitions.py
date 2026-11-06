@@ -57,6 +57,7 @@ _DEFERRED_SPLIT_FIELDS = (
 def stored_settings(settings: FlowerDatasetSettings, **dump_options) -> dict:
     """Settings that determine what a partition stores."""
     dumped = settings.model_dump(mode="json", **dump_options)
+    dumped.pop("stratify_validation", None)
     partition = dumped.get("partition")
     if (
         isinstance(partition, dict)
@@ -258,6 +259,7 @@ def build_partition_clients(
     adapter=None,
     backbones=None,
     build_models: bool = True,
+    stratify_validation: bool = False,
 ) -> list[Client]:
     """Construct federated clients from one previously generated partition.
 
@@ -288,6 +290,7 @@ def build_partition_clients(
                 None,
                 validation_fraction,
                 generator=_stream_generator(split_seed, 0),
+                labels=y_train if stratify_validation else None,
             )
         clients.append(_make_client(
             cid,

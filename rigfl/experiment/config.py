@@ -144,6 +144,13 @@ class ExperimentConfig(BaseModel):
     split_seed: int | None = Field(
         None, ge=0, description="Override for the client validation-split seed."
     )
+    validation_fraction: float | None = Field(
+        None, gt=0, lt=1,
+        description="Override for the dataset's client validation fraction.",
+    )
+    stratify_validation: bool | None = Field(
+        None, description="Override for the dataset's `stratify_validation`."
+    )
     shared_dim: int = Field(
         512,
         ge=1,
@@ -429,6 +436,7 @@ class ResolvedExperimentConfig(ExperimentConfig):
     num_clients: int = Field(ge=1)
     num_classes: int = Field(ge=2)
     validation_fraction: float = Field(gt=0, lt=1)
+    stratify_validation: bool = False
     input_kind: str
     input_spec: dict[str, Any]
     resolved_models: list[str] = Field(min_length=1)

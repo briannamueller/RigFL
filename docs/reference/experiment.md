@@ -13,6 +13,8 @@ These options configure individual runs, sweeps, and tuning studies.
 | `training_seed` | integer | `0` | ≥ 0 | Seed for training and model initialization. |
 | `partition_seed` | integer \| null | `null` | ≥ 0 | Override for the dataset partition seed. |
 | `split_seed` | integer \| null | `null` | ≥ 0 | Override for the client validation-split seed. |
+| `validation_fraction` | number \| null | `null` | > 0; < 1 | Override for the dataset's client validation fraction. |
+| `stratify_validation` | boolean \| null | `null` | — | Override for the dataset's `stratify_validation`. |
 | `shared_dim` | integer | `512` | ≥ 1 | Representation width used by algorithms that exchange representations (FedProto, FedGH, pFedMoE, FedTGP); ignored by all others. |
 | `model_arch` | string | `fedavg_cnn` | — | Architecture name given to every client, or a model-family name assigning the family's architectures to clients. Algorithms that require identical client architectures accept only an architecture name. |
 | `batch` | integer | `32` | ≥ 1 | Client training batch size. |

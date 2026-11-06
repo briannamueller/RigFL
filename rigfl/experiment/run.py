@@ -117,6 +117,10 @@ class ResolvedData:
     handle: Any = None
 
 
+def _override(value, dataset_value):
+    return dataset_value if value is None else value
+
+
 def resolve_experiment_data(
     exp: ExperimentConfig,
 ) -> tuple[ResolvedExperimentConfig, ResolvedData]:
@@ -124,8 +128,9 @@ def resolve_experiment_data(
     experiment_input = {
         name: getattr(exp, name) for name in ExperimentConfig.model_fields
     }
-    experiment_input.pop("partition_seed")
-    experiment_input.pop("split_seed")
+    for name in ("partition_seed", "split_seed", "validation_fraction",
+                 "stratify_validation"):
+        experiment_input.pop(name)
     settings = with_seed_overrides(
         dataset_settings(exp.dataset, exp.dataset_config),
         exp.partition_seed,
@@ -152,10 +157,14 @@ def resolve_experiment_data(
             partition_scheme=settings.partition.scheme,
             num_clients=artifact.manifest["num_clients"],
             num_classes=target_spec["num_classes"],
-            validation_fraction=(
+            stratify_validation=_override(
+                exp.stratify_validation, settings.stratify_validation
+            ),
+            validation_fraction=_override(
+                exp.validation_fraction,
                 settings.client_split.validation_fraction
                 if settings.client_split is not None
-                else settings.partition.val_frac
+                else settings.partition.val_frac,
             ),
             input_kind=input_kind,
             input_spec=input_spec,
@@ -178,7 +187,10 @@ def resolve_experiment_data(
             partition_scheme=partition.get("scheme"),
             num_clients=manifest["num_clients"],
             num_classes=manifest["target_spec"]["num_classes"],
-            validation_fraction=settings.val_frac,
+            stratify_validation=_override(
+                exp.stratify_validation, settings.stratify_validation
+            ),
+            validation_fraction=_override(exp.validation_fraction, settings.val_frac),
             input_kind=input_kind,
             input_spec={"input_kind": input_kind, **manifest_input_spec},
             resolved_models=resolve_models(exp.model_arch, input_kind=input_kind),
@@ -215,7 +227,12 @@ def resolve_experiment_data(
             partition_scheme=None,
             num_clients=handle.num_clients,
             num_classes=handle.num_classes,
-            validation_fraction=settings.validation_fraction,
+            stratify_validation=_override(
+                exp.stratify_validation, settings.stratify_validation
+            ),
+            validation_fraction=_override(
+                exp.validation_fraction, settings.validation_fraction
+            ),
             input_kind=input_kind,
             input_spec=input_spec,
             resolved_models=resolve_models(exp.model_arch, input_kind=input_kind),
@@ -248,6 +265,7 @@ def run_one(
             seed=exp.training_seed,
             split_seed=exp.split_seed,
             validation_fraction=exp.validation_fraction,
+            stratify_validation=exp.stratify_validation,
             adapter=adapter,
             backbones=backbones,
             build_models=spec.requires_client_model,
@@ -261,6 +279,7 @@ def run_one(
             backbones,
             exp.shared_dim,
             val_frac=exp.validation_fraction,
+            stratify_validation=exp.stratify_validation,
             batch=exp.batch,
             adapter=adapter,
             seed=exp.training_seed,

@@ -109,3 +109,24 @@ def test_small_clients_still_get_a_validation_split():
     # grouped: one whole group still goes to validation
     train, val = _train_val_indices(4, groups=[0, 0, 1, 1], val_frac=0.1)
     assert len(train) == 2 and len(val) == 2
+
+
+def test_stratified_split_keeps_each_class_share():
+    labels = [0] * 90 + [1] * 10
+    train, val = _train_val_indices(100, None, 0.2, labels=labels)
+
+    assert sorted(train + val) == list(range(100))
+    assert sum(labels[i] for i in val) == 2
+    assert len(val) == 20
+
+
+def test_stratified_group_split_keeps_groups_whole_and_shares_by_label():
+    # 20 single-label groups of 5: 16 negative, 4 positive
+    groups = [i // 5 for i in range(100)]
+    labels = [int(g >= 16) for g in groups]
+    train, val = _train_val_indices(100, groups, 0.25, labels=labels)
+
+    assert {groups[i] for i in train}.isdisjoint({groups[i] for i in val})
+    assert sorted(train + val) == list(range(100))
+    assert sum(labels[i] for i in val) == 5          # one of the four positive groups
+    assert len(val) == 25

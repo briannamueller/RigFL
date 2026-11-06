@@ -237,6 +237,9 @@ def run_identity(
     for key in ("partition_seed", "split_seed"):
         if experiment.get(key) is None:
             experiment.pop(key, None)
+    # left out when off, so unstratified runs keep the same identity
+    if not experiment.get("stratify_validation"):
+        experiment.pop("stratify_validation", None)
     # resolved_models carries the architectures actually assigned
     experiment.pop("model_arch", None)
     experiment["early_stopping"] = normalize_early_stopping(
