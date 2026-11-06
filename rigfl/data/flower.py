@@ -484,24 +484,43 @@ def _split_client_partition(
     *,
     test_seed: int,
 ):
-    stratify_by = target_column if settings.stratify else None
+    if settings.stratify:
+        return _stratified_client_split(
+            partition, settings.test_fraction, target_column, test_seed
+        )
     try:
         train_test = partition.train_test_split(
             test_size=settings.test_fraction,
             seed=test_seed,
-            stratify_by_column=stratify_by,
         )
     except ValueError as exc:
-        suffix = (
-            " Set client_split.stratify to false to split without stratification."
-            if settings.stratify
-            else ""
-        )
         raise ValueError(
             "Could not divide a client partition into the requested train and test "
-            f"fractions.{suffix}"
+            "fractions."
         ) from exc
     return {"train": train_test["train"], "test": train_test["test"]}
+
+
+def _stratified_client_split(partition, test_fraction: float, target_column: str,
+                             seed: int):
+    """Send ``test_fraction`` of each class to test; a class too small to split stays in train."""
+    labels = np.asarray(partition[target_column])
+    rng = np.random.default_rng(seed)
+    test = []
+    for label in np.unique(labels):
+        members = rng.permutation(np.flatnonzero(labels == label))
+        test.extend(members[: round(len(members) * test_fraction)].tolist())
+    if not test or len(test) == len(labels):
+        raise ValueError(
+            "Could not divide a client partition into the requested train and test "
+            "fractions."
+        )
+    in_test = np.zeros(len(labels), dtype=bool)
+    in_test[test] = True
+    return {
+        "train": partition.select(np.flatnonzero(~in_test).tolist()),
+        "test": partition.select(np.flatnonzero(in_test).tolist()),
+    }
 
 
 def _convert_partition(partition, resolved: ResolvedFlowerSource):

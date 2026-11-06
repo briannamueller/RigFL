@@ -85,6 +85,19 @@ def test_generation_rejects_automatically_detected_regression(monkeypatch, tmp_p
         )
 
 
+def test_stratified_client_split_keeps_singleton_classes_in_train():
+    dataset = Dataset.from_dict({
+        "sample_id": list(range(41)),
+        "label": [0] * 20 + [1] * 20 + [2],
+    })
+    settings = SimpleNamespace(validation_fraction=0.1, test_fraction=0.25, stratify=True)
+
+    splits = flower._split_client_partition(dataset, settings, "label", test_seed=0)
+
+    assert sorted(splits["test"]["label"]) == [0] * 5 + [1] * 5
+    assert 2 in splits["train"]["label"]
+
+
 def test_merged_partition_is_split_into_requested_client_fractions():
     features = Features({
         "sample_id": Value("int64"),
