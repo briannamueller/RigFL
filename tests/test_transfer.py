@@ -93,6 +93,25 @@ def test_gain_summary_separates_frequency_magnitude_and_burden():
     assert summary["negative_transfer_magnitude"]["ci_low"] is None
 
 
+def test_performance_margin_makes_small_gains_neutral():
+    algorithm = [_record("fedavg", 0, [[0.74], [0.78], [0.725], [0.77]])]
+    local = [_record("local", 0, [[0.70], [0.80], [0.72], [0.77]])]
+    summary = negative_transfer_summary(
+        algorithm, local, "accuracy", performance_margin=0.01, **_SEL
+    )
+
+    assert _estimate(summary, "benefit_rate") == 0.25
+    assert _estimate(summary, "negative_transfer_rate") == 0.25
+    assert _estimate(summary, "negative_transfer_magnitude") == pytest.approx(0.02)
+    assert _estimate(summary, "negative_transfer_burden") == pytest.approx(0.005)
+    assert summary["performance_margin"] == 0.01
+
+    with pytest.raises(ValueError, match="performance_margin"):
+        negative_transfer_summary(
+            algorithm, local, "accuracy", performance_margin=-0.01, **_SEL
+        )
+
+
 def test_no_harm_has_zero_rate_and_burden_but_undefined_magnitude():
     summary = negative_transfer_summary(
         [_record("fedavg", 0, [[0.8], [0.7]])],

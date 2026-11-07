@@ -271,6 +271,7 @@ def _by_validation(labels: list[str], rows: dict[str, dict]) -> list[str]:
 
 def _rows_by_algorithm(by_algorithm: dict[str, list[dict]], metric: str, *, view: str,
                     aggregation: str,
+                    performance_margin: float = 0.0,
                     include_resources: bool = False,
                     best_only: bool = False) -> dict[str, dict]:
     """One row per algorithm configuration and experiment condition.
@@ -355,6 +356,7 @@ def _rows_by_algorithm(by_algorithm: dict[str, list[dict]], metric: str, *, view
                 metric,
                 view=view,
                 aggregation=aggregation,
+                performance_margin=performance_margin,
                 include_uncertainty=independent_replicates(records_for[label]),
             )
             comparison["algorithm"] = name
@@ -508,6 +510,7 @@ def main(argv: list[str] | None = None, *, prog: str | None = None) -> None:
         metric,
         view=selection_view,
         aggregation=aggregation,
+        performance_margin=settings["performance_margin"],
         include_resources=args.resources,
         best_only=args.best,
     )
@@ -539,7 +542,10 @@ def main(argv: list[str] | None = None, *, prog: str | None = None) -> None:
     transfer_table = format_negative_transfer_table(rows)
     missing_local = _missing_local_note(rows, filtered)
     if transfer_table or missing_local:
-        print("\n===== CLIENT-LEVEL GAIN ANALYSIS =====\n")
+        print(
+            "\n===== CLIENT-LEVEL GAIN ANALYSIS "
+            f"(performance_margin={settings['performance_margin']:g}) =====\n"
+        )
         print("\n\n".join(part for part in (transfer_table, missing_local) if part))
     flip_table = format_flip_table(rows)
     if flip_table:
@@ -726,6 +732,7 @@ def _transfer_csv_rows(rows: dict, filter_name: str) -> list[dict]:
             "available": True,
             "baseline": "local",
             "metric": summary["metric"],
+            "performance_margin": summary["performance_margin"],
             "tail_fraction": summary["tail_fraction"],
             "pair_count": summary["pair_count"],
             "replicate_count": summary["replicate_count"],

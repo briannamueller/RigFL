@@ -386,9 +386,16 @@ def negative_transfer_summary(
     *,
     view: str = "shared",
     aggregation: str = "uniform",
+    performance_margin: float = 0.0,
     include_uncertainty: bool = True,
 ) -> dict:
-    """Summarize benefit and harm relative to Local across matched client runs."""
+    """Summarize benefit and harm relative to Local across matched client runs.
+
+    A client counts as a benefit when its gain exceeds ``performance_margin`` and
+    as negative transfer when its gain is below ``-performance_margin``.
+    """
+    if not math.isfinite(performance_margin) or performance_margin < 0:
+        raise ValueError("performance_margin must be finite and nonnegative")
     paired = paired_client_gains(
         algorithm_records,
         local_records,
@@ -400,6 +407,7 @@ def negative_transfer_summary(
     effects, uncertainty = _local_relative_effects(
         pairs,
         aggregation=aggregation,
+        performance_margin=performance_margin,
         include_uncertainty=include_uncertainty,
     )
     replicate_count = effects["mean_gain"]["n"]
@@ -408,6 +416,7 @@ def negative_transfer_summary(
         "available": True,
         "baseline": "local",
         **paired,
+        "performance_margin": performance_margin,
         "tail_fraction": TAIL_FRACTION,
         "pair_count": len(pairs),
         "replicate_count": replicate_count,
@@ -429,6 +438,7 @@ def _local_relative_effects(
     pairs: list[dict],
     *,
     aggregation: str,
+    performance_margin: float,
     include_uncertainty: bool,
 ) -> tuple[dict, dict]:
     """Compute client-level gain quantities within, then across, replicates."""
@@ -445,8 +455,10 @@ def _local_relative_effects(
     affected_replicate_count = 0
     for key in sorted(by_replicate, key=repr):
         gains = [pair["gain"] for pair in by_replicate[key]]
-        harms = [-gain for gain in gains if gain < 0]
-        benefit_rates.append(sum(gain > 0 for gain in gains) / len(gains))
+        harms = [-gain for gain in gains if gain < -performance_margin]
+        benefit_rates.append(
+            sum(gain > performance_margin for gain in gains) / len(gains)
+        )
         harm_rates.append(len(harms) / len(gains))
         harm_burdens.append(sum(harms) / len(gains))
         tail_count = max(1, math.ceil(TAIL_FRACTION * len(gains)))

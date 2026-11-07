@@ -36,7 +36,8 @@ def load_reporting_config(path: str | Path) -> dict:
         raise ReportingConfigError("reporting configuration must be a mapping")
     unknown = sorted(
         set(loaded)
-        - {"version", "metric", "round_selection", "client_weighting", "filters"}
+        - {"version", "metric", "round_selection", "client_weighting",
+           "performance_margin", "filters"}
     )
     if unknown:
         raise ReportingConfigError(
@@ -132,12 +133,25 @@ def _null_experiment_setting(record: dict, path: str) -> bool:
 
 
 def reporting_settings(config: dict) -> dict:
-    """Return the metric, round selection, and client weighting used by ``rigfl report``."""
+    """Return the reporting protocol settings used by ``rigfl report``."""
     resolved = {
         "metric": config.get("metric", "accuracy"),
         "round_selection": config.get("round_selection", "shared"),
         "client_weighting": config.get("client_weighting", "uniform"),
+        "performance_margin": config.get("performance_margin", 0.0),
     }
+    margin = resolved["performance_margin"]
+    if (
+        isinstance(margin, bool)
+        or not isinstance(margin, (int, float))
+        or not math.isfinite(margin)
+        or margin < 0
+    ):
+        raise ReportingConfigError(
+            f"performance_margin={margin!r} is invalid; "
+            "it must be a finite number of at least 0"
+        )
+    resolved["performance_margin"] = float(margin)
     allowed = {
         "round_selection": {"shared", "client-specific"},
         "client_weighting": {"uniform", "sample_count"},

@@ -19,6 +19,7 @@ By default, test performance is reported at the training round with the highest 
 | `metric` | The validation metric used to select the reporting round and the corresponding test metric reported. | `accuracy` (default), `balanced_accuracy`, `macro_f1`, `auroc`, `auprc` |
 | `round_selection` | Whether to select one reporting round based on aggregate validation performance across clients or a separate round for each client based on their local validation performance.| `shared` (default), `client-specific` |
 | `client_weighting` | How client scores are averaged, for round selection and for the reported validation and test values. | `uniform` (default), `sample_count` |
+| `performance_margin` | Smallest difference from Local, in metric units, counted as a benefit or as negative transfer in the [client-level gain analysis](#client-level-gain-analysis). For accuracy, `0.01` is one percentage point. | number ≥ 0 (default `0`) |
 
 When validation values tie, RigFL selects the earliest round.
 
@@ -46,7 +47,8 @@ method's best validation configuration is compared with Local's best validation
 configuration; the report lists which configurations were used.
 
 A client's gain is its federated result minus its Local result, so a positive
-gain favors the federated algorithm. A zero gain is neutral.
+gain favors the federated algorithm. Gains within `performance_margin` of zero
+are neutral; with the default margin of 0, only a zero gain is.
 
 The analysis reports:
 
@@ -54,10 +56,11 @@ The analysis reports:
   across replicates.
 - **Pooled client-difference SD:** descriptive variation among the client-level
   gains within replicates. It is not uncertainty in the overall mean gain.
-- **Benefit rate:** the fraction of clients with a positive gain, calculated
-  within each replicate and then summarized across replicates.
-- **Negative-transfer rate (NTR):** the fraction of clients with a negative
-  gain, calculated within each replicate and then summarized across replicates.
+- **Benefit rate:** the fraction of clients whose gain is above the margin,
+  calculated within each replicate and then summarized across replicates.
+- **Negative-transfer rate (NTR):** the fraction of clients whose gain is below
+  minus the margin, calculated within each replicate and then summarized across
+  replicates. NTM and NTB count only these clients.
 - **Negative-transfer magnitude (NTM):** the average loss among harmed clients.
   It is conditional on harm and is reported with harmed-client and
   affected-replicate counts rather than an ordinary all-replicate confidence
