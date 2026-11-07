@@ -33,3 +33,24 @@ def test_saved_grid_selects_only_its_completed_runs(tmp_path):
     }
 
     assert records_for_grid([matching, other], grid) == [matching]
+
+
+def test_saved_grid_ignores_environment_only_settings(tmp_path):
+    task = {
+        "kind": "rigfl.sweep_task",
+        "schema_version": 1,
+        "algorithm": "local",
+        "experiment": {"dataset": "cifar10", "training_seed": 1, "quiet": False},
+        "algorithm_config": {"lr": 0.01},
+    }
+    grid = tmp_path / "grid.jsonl"
+    grid.write_text(json.dumps(task) + "\n")
+    record = {
+        "algorithm": "local",
+        "config": {
+            "experiment": {"dataset": "cifar10", "training_seed": 1, "quiet": True},
+            "algorithm": {"lr": 0.01},
+        },
+    }
+
+    assert records_for_grid([record], grid) == [record]
