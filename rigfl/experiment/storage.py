@@ -6,6 +6,8 @@ import json
 from collections.abc import Mapping
 from pathlib import Path
 
+from rigfl.experiment.identity import ENVIRONMENT_ONLY_EXPERIMENT_FIELDS
+
 RUNS_DIRECTORY = "runs"
 SNAPSHOT_FILE = "snapshot.json"
 SNAPSHOT_KIND = "rigfl.sweep_snapshot"
@@ -56,10 +58,12 @@ def record_matches_task(record: dict, task: dict) -> bool:
         return False
     config = record.get("config", {})
     experiment = config.get("experiment", {})
-    # a setting recorded as null doesn't apply to the algorithm
+    # a setting recorded as null doesn't apply to the algorithm, and
+    # environment-only settings (quiet, device, ...) don't change the run
     expected = {
         key: value for key, value in task.get("experiment", {}).items()
-        if not (key in experiment and experiment[key] is None)
+        if key not in ENVIRONMENT_ONLY_EXPERIMENT_FIELDS
+        and not (key in experiment and experiment[key] is None)
     }
     return _contains(experiment, expected) and (
         _contains(config.get("algorithm", {}), task.get("algorithm_config", {}))
