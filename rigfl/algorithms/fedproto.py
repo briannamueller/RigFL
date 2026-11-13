@@ -19,7 +19,8 @@ import torch
 import torch.nn.functional as F
 from pydantic import Field
 
-from rigfl.core.config import AlgorithmConfig
+from rigfl.core.config import ClientOptimizerConfig
+from rigfl.core.optim import client_optimizer
 from rigfl.core.interfaces import Algorithm
 from rigfl.core.losses import classification_loss
 from rigfl.prediction import Predictions
@@ -72,7 +73,7 @@ def resolve_num_classes(declared, model, global_protos) -> int:
     return int(max(global_protos)) + 1
 
 
-class FedProtoConfig(AlgorithmConfig):
+class FedProtoConfig(ClientOptimizerConfig):
     local_epochs: int = Field(1, ge=1, description="Client training epochs per round.")
     lr: float = Field(0.01, gt=0, description="Client optimizer learning rate.")
     lamda: float = Field(0.1, ge=0, description="Weight of the prototype-alignment loss.")
@@ -87,7 +88,7 @@ class FedProto(Algorithm):
         device = self.device
         model.to(device)
         model.train()
-        optimizer = torch.optim.SGD(model.parameters(), lr=self.config.lr)
+        optimizer = client_optimizer(model.parameters(), self.config, self.config.lr)
 
         for _ in range(self.config.local_epochs):
             for x, y in loader:

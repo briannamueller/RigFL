@@ -16,14 +16,15 @@ import torch
 import torch.nn.functional as F
 from pydantic import Field
 
-from rigfl.core.config import AlgorithmConfig
+from rigfl.core.config import ClientOptimizerConfig
+from rigfl.core.optim import client_optimizer
 from rigfl.core.interfaces import Algorithm
 from rigfl.core.losses import classification_loss
 from rigfl.core.model import ClientModel, assemble_model
 from rigfl.prediction import Predictions
 
 
-class FMLConfig(AlgorithmConfig):
+class FMLConfig(ClientOptimizerConfig):
     local_epochs: int = Field(1, ge=1, description="Client training epochs per round.")
     lr: float = Field(0.01, gt=0, description="Client optimizer learning rate.")
     alpha: float = Field(0.5, ge=0, le=1, description="Private-model classification weight.")
@@ -64,8 +65,8 @@ class FML(Algorithm):
         model.to(device)
         model.train()
         meme.train()
-        opt = torch.optim.SGD(model.parameters(), lr=self.config.lr)
-        opt_m = torch.optim.SGD(meme.parameters(), lr=self.config.lr)
+        opt = client_optimizer(model.parameters(), self.config, self.config.lr)
+        opt_m = client_optimizer(meme.parameters(), self.config, self.config.lr)
 
         for _ in range(self.config.local_epochs):
             for x, y in loader:

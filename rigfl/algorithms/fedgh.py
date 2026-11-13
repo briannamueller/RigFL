@@ -17,7 +17,8 @@ import torch.nn.functional as F
 from pydantic import Field
 
 from rigfl.algorithms.fedproto import local_prototypes
-from rigfl.core.config import AlgorithmConfig
+from rigfl.core.config import ClientOptimizerConfig
+from rigfl.core.optim import client_optimizer
 from rigfl.core.interfaces import Algorithm
 from rigfl.core.losses import classification_loss
 from rigfl.prediction import Predictions
@@ -25,7 +26,7 @@ from rigfl.prediction import Predictions
 Prototypes = dict[int, torch.Tensor]
 
 
-class FedGHConfig(AlgorithmConfig):
+class FedGHConfig(ClientOptimizerConfig):
     local_epochs: int = Field(1, ge=1, description="Client training epochs per round.")
     lr: float = Field(0.01, gt=0, description="Client optimizer learning rate.")
     server_epochs: int = Field(1, ge=1, description="Server header-training epochs per round.")
@@ -51,7 +52,7 @@ class FedGH(Algorithm):
         model.head.load_state_dict(global_head.state_dict())
         model.to(device)
         model.train()
-        optimizer = torch.optim.SGD(model.parameters(), lr=self.config.lr)
+        optimizer = client_optimizer(model.parameters(), self.config, self.config.lr)
 
         for _ in range(self.config.local_epochs):
             for x, y in loader:

@@ -22,7 +22,8 @@ from rigfl.algorithms.fedavg import (
     clone_state_dict,
     validate_state_structure,
 )
-from rigfl.core.config import AlgorithmConfig
+from rigfl.core.config import ClientOptimizerConfig
+from rigfl.core.optim import client_optimizer
 from rigfl.core.interfaces import Algorithm
 from rigfl.core.losses import classification_loss
 from rigfl.prediction import Predictions
@@ -30,13 +31,13 @@ from rigfl.prediction import Predictions
 State = dict[str, torch.Tensor]
 
 
-class APPLEConfig(AlgorithmConfig):
+class APPLEConfig(ClientOptimizerConfig):
     local_epochs: int = Field(5, ge=1, description="Client training epochs per round.")
     core_lr: float = Field(0.01, gt=0, description="Learning rate for core models.")
     relationship_lr: float = Field(
         0.001, gt=0, description="Learning rate for directed-relationship vectors."
     )
-    momentum: float = Field(0.9, ge=0, description="SGD momentum for local core training.")
+    momentum: float = Field(0.9, ge=0, description="SGD momentum; not used by Adam.")
     lr_decay: float = Field(
         1.0, gt=0, le=1, description="Per-round multiplier for both learning rates."
     )
@@ -185,13 +186,13 @@ class APPLE(Algorithm):
             client.state["apple_relationships"] = relationships
 
         round_decay = self.config.lr_decay ** self.round_idx
-        optimizer = torch.optim.SGD(
+        optimizer = client_optimizer(
             [
                 {"params": model.parameters(), "lr": self.config.core_lr * round_decay},
                 {"params": [relationships],
                  "lr": self.config.relationship_lr * round_decay},
             ],
-            momentum=self.config.momentum,
+            self.config, self.config.core_lr * round_decay,
         )
         p0 = self.p0.to(self.device)
         regularization = self._regularization_strength()

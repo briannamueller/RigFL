@@ -8,10 +8,10 @@ import torch
 from pydantic import Field
 
 from rigfl.algorithms.fedavg import FedAvg
-from rigfl.core.config import AlgorithmConfig
+from rigfl.core.config import ClientOptimizerConfig
 
 
-class FedProxConfig(AlgorithmConfig):
+class FedProxConfig(ClientOptimizerConfig):
     local_epochs: int = Field(1, ge=1, description="Client training epochs per round.")
     lr: float = Field(0.01, gt=0, description="Client optimizer learning rate.")
     mu: float = Field(0.01, ge=0, description="Weight of the proximal penalty.")

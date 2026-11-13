@@ -24,6 +24,9 @@
 
 | Setting | Type | Default | Allowed | Description |
 |---|---|---|---|---|
+| `optimizer` | string | `sgd` | `sgd`, `adam` | Optimizer for client-model training. |
+| `momentum` | number | `0.0` | ≥ 0 | SGD momentum; not used by Adam. |
+| `weight_decay` | number | `0.0` | ≥ 0 | Weight decay for client-model training. |
 | `local_epochs` | integer | `1` | ≥ 1 | Client training epochs per round. |
 | `lr` | number | `0.01` | > 0 | Client optimizer learning rate. |
 
@@ -31,6 +34,9 @@
 
 | Setting | Type | Default | Allowed | Description |
 |---|---|---|---|---|
+| `optimizer` | string | `sgd` | `sgd`, `adam` | Optimizer for client-model training. |
+| `momentum` | number | `0.0` | ≥ 0 | SGD momentum; not used by Adam. |
+| `weight_decay` | number | `0.0` | ≥ 0 | Weight decay for client-model training. |
 | `local_epochs` | integer | `1` | ≥ 1 | Client training epochs per round. |
 | `lr` | number | `0.01` | > 0 | Client optimizer learning rate. |
 | `lamda` | number | `0.1` | ≥ 0 | Weight of the prototype-alignment loss. |
@@ -39,6 +45,9 @@
 
 | Setting | Type | Default | Allowed | Description |
 |---|---|---|---|---|
+| `optimizer` | string | `sgd` | `sgd`, `adam` | Optimizer for client-model training. |
+| `momentum` | number | `0.0` | ≥ 0 | SGD momentum; not used by Adam. |
+| `weight_decay` | number | `0.0` | ≥ 0 | Weight decay for client-model training. |
 | `local_epochs` | integer | `1` | ≥ 1 | Client training epochs per round. |
 | `lr` | number | `0.01` | > 0 | Client optimizer learning rate. |
 | `server_epochs` | integer | `1` | ≥ 1 | Server header-training epochs per round. |
@@ -48,6 +57,9 @@
 
 | Setting | Type | Default | Allowed | Description |
 |---|---|---|---|---|
+| `optimizer` | string | `sgd` | `sgd`, `adam` | Optimizer for client-model training. |
+| `momentum` | number | `0.0` | ≥ 0 | SGD momentum; not used by Adam. |
+| `weight_decay` | number | `0.0` | ≥ 0 | Weight decay for client-model training. |
 | `local_epochs` | integer | `1` | ≥ 1 | Client training epochs per round. |
 | `lr` | number | `0.01` | > 0 | Client optimizer learning rate. |
 | `alpha` | number | `0.5` | ≥ 0; ≤ 1 | Private-model classification weight. |
@@ -58,6 +70,9 @@
 
 | Setting | Type | Default | Allowed | Description |
 |---|---|---|---|---|
+| `optimizer` | string | `sgd` | `sgd`, `adam` | Optimizer for client-model training. |
+| `momentum` | number | `0.0` | ≥ 0 | SGD momentum; not used by Adam. |
+| `weight_decay` | number | `0.0` | ≥ 0 | Weight decay for client-model training. |
 | `local_epochs` | integer | `1` | ≥ 1 | Client training epochs per round. |
 | `lr` | number | `0.01` | > 0 | Client optimizer learning rate. |
 | `lamda` | number | `0.1` | ≥ 0 | Weight of the client prototype loss. |
@@ -69,6 +84,9 @@
 
 | Setting | Type | Default | Allowed | Description |
 |---|---|---|---|---|
+| `optimizer` | string | `sgd` | `sgd`, `adam` | Optimizer for client-model training. |
+| `momentum` | number | `0.0` | ≥ 0 | SGD momentum; not used by Adam. |
+| `weight_decay` | number | `0.0` | ≥ 0 | Weight decay for client-model training. |
 | `local_epochs` | integer | `1` | ≥ 1 | Client training epochs per round. |
 | `lr` | number | `0.01` | > 0 | Client optimizer learning rate. |
 
@@ -76,6 +94,9 @@
 
 | Setting | Type | Default | Allowed | Description |
 |---|---|---|---|---|
+| `optimizer` | string | `sgd` | `sgd`, `adam` | Optimizer for client-model training. |
+| `momentum` | number | `0.0` | ≥ 0 | SGD momentum; not used by Adam. |
+| `weight_decay` | number | `0.0` | ≥ 0 | Weight decay for client-model training. |
 | `local_epochs` | integer | `1` | ≥ 1 | Client training epochs per round. |
 | `lr` | number | `0.01` | > 0 | Client optimizer learning rate. |
 | `mu` | number | `0.01` | ≥ 0 | Weight of the proximal penalty. |
@@ -84,6 +105,9 @@
 
 | Setting | Type | Default | Allowed | Description |
 |---|---|---|---|---|
+| `optimizer` | string | `sgd` | `sgd`, `adam` | Optimizer for client-model training. |
+| `momentum` | number | `0.0` | ≥ 0 | SGD momentum; not used by Adam. |
+| `weight_decay` | number | `0.0` | ≥ 0 | Weight decay for client-model training. |
 | `local_epochs` | integer | `5` | ≥ 1 | Client training epochs per round. |
 | `lr` | number | `0.1` | > 0 | Client optimizer learning rate. |
 | `tau` | number | `0.5` | ≥ 0; ≤ 1 | Fraction of parameters selected as critical within each tensor. |
@@ -93,6 +117,9 @@
 
 | Setting | Type | Default | Allowed | Description |
 |---|---|---|---|---|
+| `optimizer` | string | `sgd` | `sgd`, `adam` | Optimizer for client-model training. |
+| `momentum` | number | `0.0` | ≥ 0 | SGD momentum; not used by Adam. |
+| `weight_decay` | number | `0.0` | ≥ 0 | Weight decay for client-model training. |
 | `local_epochs` | integer | `5` | ≥ 1 | Client training epochs per round. |
 | `lr` | number | `0.01` | > 0 | Client optimizer learning rate. |
 | `aggregation_lr` | number | `0.01` | > 0 | Server learning rate for client aggregation-weight vectors. |
@@ -102,6 +129,9 @@
 
 | Setting | Type | Default | Allowed | Description |
 |---|---|---|---|---|
+| `optimizer` | string | `sgd` | `sgd`, `adam` | Optimizer for client-model training. |
+| `momentum` | number | `0.0` | ≥ 0 | SGD momentum; not used by Adam. |
+| `weight_decay` | number | `0.0` | ≥ 0 | Weight decay for client-model training. |
 | `local_epochs` | integer | `5` | ≥ 1 | Client ensemble-training epochs per round. |
 | `lr` | number | `0.01` | > 0 | Private- and shared-model learning rate. |
 | `adaptation_fraction` | number | `0.05` | > 0; < 1 | Fraction of client training samples reserved to learn the ensemble weight. |
@@ -114,6 +144,9 @@
 
 | Setting | Type | Default | Allowed | Description |
 |---|---|---|---|---|
+| `optimizer` | string | `sgd` | `sgd`, `adam` | Optimizer for client-model training. |
+| `momentum` | number | `0.0` | ≥ 0 | SGD momentum; not used by Adam. |
+| `weight_decay` | number | `0.0` | ≥ 0 | Weight decay for client-model training. |
 | `local_epochs` | integer | `1` | ≥ 1 | Client training epochs per round. |
 | `lr` | number | `0.01` | > 0 | Client optimizer learning rate. |
 | `self_weight` | number | `0.5` | ≥ 0; ≤ 1 | Weight of the client's own model in its personalized cloud. |
@@ -124,10 +157,12 @@
 
 | Setting | Type | Default | Allowed | Description |
 |---|---|---|---|---|
+| `optimizer` | string | `sgd` | `sgd`, `adam` | Optimizer for client-model training. |
+| `momentum` | number | `0.9` | ≥ 0 | SGD momentum; not used by Adam. |
+| `weight_decay` | number | `0.0` | ≥ 0 | Weight decay for client-model training. |
 | `local_epochs` | integer | `5` | ≥ 1 | Client training epochs per round. |
 | `core_lr` | number | `0.01` | > 0 | Learning rate for core models. |
 | `relationship_lr` | number | `0.001` | > 0 | Learning rate for directed-relationship vectors. |
-| `momentum` | number | `0.9` | ≥ 0 | SGD momentum for local core training. |
 | `lr_decay` | number | `1.0` | > 0; ≤ 1 | Per-round multiplier for both learning rates. |
 | `mu` | number | `0.1` | ≥ 0 | Weight of the directed-relationship proximal term. |
 | `regularization_fraction` | number | `0.1` | > 0; ≤ 1 | Fraction of rounds during which relationship regularization decays. |
@@ -137,12 +172,13 @@
 
 | Setting | Type | Default | Allowed | Description |
 |---|---|---|---|---|
+| `optimizer` | string | `sgd` | `sgd`, `adam` | Optimizer for client-model training. |
+| `momentum` | number | `0.5` | ≥ 0 | SGD momentum; not used by Adam. |
+| `weight_decay` | number | `0.0005` | ≥ 0 | Weight decay for client-model training. |
 | `feature_epochs` | integer | `1` | ≥ 1 | Feature-extractor training epochs per round. |
 | `feature_lr` | number | `0.01` | > 0 | Feature-extractor optimizer learning rate. |
 | `head_lr` | number | `0.1` | > 0 | Classifier learning rate for its one local epoch. |
 | `lamda` | number | `1.0` | ≥ 0 | Weight of global feature-centroid alignment. |
-| `momentum` | number | `0.5` | ≥ 0 | Momentum for local SGD. |
-| `weight_decay` | number | `0.0005` | ≥ 0 | Weight decay for local SGD. |
 | `qp_weight_threshold` | number | `0.001` | ≥ 0 | Classifier weights at or below this value are set to zero. |
 | `qp_eigen_threshold` | number | `0.01` | > 0 | Eigenvalue threshold used when repairing a non-PSD QP matrix. |
 | `qp_max_iterations` | integer | `5000` | ≥ 1 | Maximum projected-gradient iterations per classifier QP. |
@@ -152,6 +188,9 @@
 
 | Setting | Type | Default | Allowed | Description |
 |---|---|---|---|---|
+| `optimizer` | string | `sgd` | `sgd`, `adam` | Optimizer for client-model training. |
+| `momentum` | number | `0.0` | ≥ 0 | SGD momentum; not used by Adam. |
+| `weight_decay` | number | `0.0` | ≥ 0 | Weight decay for client-model training. |
 | `local_epochs` | integer | `1` | ≥ 1 | Client training epochs per round. |
 | `lr` | number | `0.01` | > 0 | Private-model learning rate. |
 | `proxy_lr` | number \| null | `null` | > 0 | Proxy-extractor learning rate; defaults to lr. |
@@ -163,6 +202,9 @@
 
 | Setting | Type | Default | Allowed | Description |
 |---|---|---|---|---|
+| `optimizer` | string | `sgd` | `sgd`, `adam` | Optimizer for client-model training. |
+| `momentum` | number | `0.0` | ≥ 0 | SGD momentum; not used by Adam. |
+| `weight_decay` | number | `0.0` | ≥ 0 | Weight decay for client-model training. |
 | `local_epochs` | integer | `1` | ≥ 1 | Client training epochs per round. |
 | `lr` | number | `0.01` | > 0 | Client optimizer learning rate. |
 | `member_metric` | string \| null | `null` | — | Validation metric that picks each client's member checkpoint; defaults to the early-stopping metric. Training still stops on the early-stopping metric, so setting this to the reporting metric makes the members the models Local reports. |

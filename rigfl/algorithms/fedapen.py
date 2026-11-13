@@ -19,7 +19,8 @@ from rigfl.algorithms.fedavg import (
     clone_state_dict,
     weighted_average_states,
 )
-from rigfl.core.config import AlgorithmConfig
+from rigfl.core.config import ClientOptimizerConfig
+from rigfl.core.optim import client_optimizer
 from rigfl.core.interfaces import Algorithm
 from rigfl.core.losses import (
     classification_loss,
@@ -30,7 +31,7 @@ from rigfl.data.builder import _train_val_indices
 from rigfl.prediction import Predictions
 
 
-class FedAPENConfig(AlgorithmConfig):
+class FedAPENConfig(ClientOptimizerConfig):
     local_epochs: int = Field(5, ge=1, description="Client ensemble-training epochs per round.")
     lr: float = Field(0.01, gt=0, description="Private- and shared-model learning rate.")
     adaptation_fraction: float = Field(
@@ -236,8 +237,10 @@ class FedAPEN(Algorithm):
             class_weights=client.class_weights,
         )
         fixed_weight = private_weight.detach()
-        private_optimizer = torch.optim.SGD(private_model.parameters(), lr=self.config.lr)
-        shared_optimizer = torch.optim.SGD(shared_model.parameters(), lr=self.config.lr)
+        private_optimizer = client_optimizer(
+            private_model.parameters(), self.config, self.config.lr)
+        shared_optimizer = client_optimizer(
+            shared_model.parameters(), self.config, self.config.lr)
 
         for _ in range(self.config.local_epochs):
             for x, y in training_loader:

@@ -19,13 +19,14 @@ from rigfl.algorithms.fedavg import (
     weighted_average_states,
 )
 from rigfl.core.adapters import LearnedProjection
-from rigfl.core.config import AlgorithmConfig
+from rigfl.core.config import ClientOptimizerConfig
+from rigfl.core.optim import client_optimizer
 from rigfl.core.interfaces import Algorithm
 from rigfl.core.losses import classification_loss
 from rigfl.prediction import Predictions
 
 
-class PFedMoEConfig(AlgorithmConfig):
+class PFedMoEConfig(ClientOptimizerConfig):
     local_epochs: int = Field(1, ge=1, description="Client training epochs per round.")
     lr: float = Field(0.01, gt=0, description="Private-model learning rate.")
     proxy_lr: float | None = Field(
@@ -147,12 +148,13 @@ class PFedMoE(Algorithm):
         private_model.train()
         proxy.train()
         gate.train()
-        optimizer = torch.optim.SGD(
+        optimizer = client_optimizer(
             [
                 {"params": private_model.parameters(), "lr": self.config.lr},
                 {"params": proxy.parameters(), "lr": self.config.proxy_lr},
                 {"params": gate.parameters(), "lr": self.config.gate_lr},
-            ]
+            ],
+            self.config, self.config.lr,
         )
         for _ in range(self.config.local_epochs):
             for x, y in client.train_loader:
