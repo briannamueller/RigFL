@@ -33,6 +33,7 @@
 | `tabular_logreg` | `numeric` |
 | `tabular_mlp` | `numeric` |
 | `tabular_mlp_64` | `numeric` |
+| `tabular_glu_64` | `numeric` |
 | `tabular_residual_mlp` | `numeric` |
 | `tabular_flower_mlp` | `numeric` |
 | `tabular_dcn_v2` | `numeric` |
@@ -57,6 +58,7 @@
 | `tabular_heterogeneous_3` | `tabular_linear`, `tabular_mlp`, `tabular_residual_mlp` |
 | `paysim_heterogeneous_3` | `tabular_flower_mlp`, `tabular_dcn_v2`, `tabular_tabnet` |
 | `scrnaseq_heterogeneous_2` | `tabular_logreg`, `tabular_mlp_64` |
+| `scrnaseq_heterogeneous_glu` | `tabular_glu_64`, `tabular_mlp_64` |
 | `temporal_heterogeneous_3` | `temporal_gru`, `temporal_cnn`, `temporal_lstm` |
 | `temporal_gru_tpc_attention` | `temporal_gru`, `temporal_tpc_light`, `temporal_attention` |
 
