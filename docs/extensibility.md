@@ -38,10 +38,11 @@ class.
 from pydantic import Field
 
 from rigfl.core import Algorithm, Predictions
-from rigfl.core.config import AlgorithmConfig
+from rigfl.core.config import ClientOptimizerConfig
+from rigfl.core.optim import client_optimizer
 
 
-class NewAlgorithmConfig(AlgorithmConfig):
+class NewAlgorithmConfig(ClientOptimizerConfig):
     local_epochs: int = Field(1, ge=1, description="Client training epochs per round.")
     lr: float = Field(0.01, gt=0, description="Client optimizer learning rate.")
     # ...additional arguments
@@ -68,6 +69,12 @@ a dictionary that can carry any additional client-specific information that must
 persist across rounds.
 
 Access the arguments defined in the algorithm's configuration class through `self.config`, such as `self.config.lr`.
+
+`ClientOptimizerConfig` adds the shared `optimizer` (`sgd` or `adam`),
+`momentum` and `weight_decay` settings. Build client-model optimizers with
+`client_optimizer(model.parameters(), self.config, self.config.lr)` so they
+follow those settings; an algorithm without client training can subclass
+`AlgorithmConfig` directly.
 
 Register both classes in `rigfl/experiment/registry.py`:
 

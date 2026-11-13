@@ -20,7 +20,8 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from rigfl.algorithms.fedproto import local_prototypes, prototype_prediction
-from rigfl.core.config import AlgorithmConfig
+from rigfl.core.config import ClientOptimizerConfig
+from rigfl.core.optim import client_optimizer
 from rigfl.core.interfaces import Algorithm
 from rigfl.core.losses import classification_loss
 from rigfl.eval.resources import payload_bytes
@@ -43,7 +44,7 @@ class TrainableGlobalPrototypes(nn.Module):
         return self.mlp(self.embed(class_ids))
 
 
-class FedTGPConfig(AlgorithmConfig):
+class FedTGPConfig(ClientOptimizerConfig):
     local_epochs: int = Field(1, ge=1, description="Client training epochs per round.")
     lr: float = Field(0.01, gt=0, description="Client optimizer learning rate.")
     lamda: float = Field(0.1, ge=0, description="Weight of the client prototype loss.")
@@ -88,7 +89,7 @@ class FedTGP(Algorithm):
         global_protos = shared["protos"]
         model.to(device)
         model.train()
-        optimizer = torch.optim.SGD(model.parameters(), lr=self.config.lr)
+        optimizer = client_optimizer(model.parameters(), self.config, self.config.lr)
 
         for _ in range(self.config.local_epochs):
             for x, y in loader:

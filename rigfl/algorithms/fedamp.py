@@ -20,7 +20,8 @@ from rigfl.algorithms.fedavg import (
     clone_state_dict,
     validate_state_structure,
 )
-from rigfl.core.config import AlgorithmConfig
+from rigfl.core.config import ClientOptimizerConfig
+from rigfl.core.optim import client_optimizer
 from rigfl.core.interfaces import Algorithm
 from rigfl.core.losses import classification_loss
 from rigfl.eval.resources import payload_bytes
@@ -29,7 +30,7 @@ from rigfl.prediction import Predictions
 State = dict[str, torch.Tensor]
 
 
-class FedAMPConfig(AlgorithmConfig):
+class FedAMPConfig(ClientOptimizerConfig):
     local_epochs: int = Field(1, ge=1, description="Client training epochs per round.")
     lr: float = Field(0.01, gt=0, description="Client optimizer learning rate.")
     self_weight: float = Field(
@@ -163,7 +164,7 @@ class FedAMP(Algorithm):
             name: cloud_state[name].detach().to(self.device)
             for name in self.parameter_names
         }
-        optimizer = torch.optim.SGD(model.parameters(), lr=self.config.lr)
+        optimizer = client_optimizer(model.parameters(), self.config, self.config.lr)
         proximal_scale = 1.0 / (2.0 * self.config.beta)
         for _ in range(self.config.local_epochs):
             for x, y in client.train_loader:

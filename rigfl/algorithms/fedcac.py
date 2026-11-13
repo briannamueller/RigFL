@@ -15,7 +15,8 @@ import torch
 from pydantic import Field
 
 from rigfl.algorithms.fedavg import clone_state_dict, validate_state_structure
-from rigfl.core.config import AlgorithmConfig
+from rigfl.core.config import ClientOptimizerConfig
+from rigfl.core.optim import client_optimizer
 from rigfl.core.interfaces import Algorithm
 from rigfl.core.losses import classification_loss
 from rigfl.eval.resources import payload_bytes
@@ -25,7 +26,7 @@ State = dict[str, torch.Tensor]
 Mask = dict[str, torch.Tensor]
 
 
-class FedCACConfig(AlgorithmConfig):
+class FedCACConfig(ClientOptimizerConfig):
     local_epochs: int = Field(5, ge=1, description="Client training epochs per round.")
     lr: float = Field(0.1, gt=0, description="Client optimizer learning rate.")
     tau: float = Field(
@@ -205,7 +206,7 @@ class FedCAC(Algorithm):
         model.load_state_dict(initial)
         model.to(self.device)
         model.train()
-        optimizer = torch.optim.SGD(model.parameters(), lr=self.config.lr)
+        optimizer = client_optimizer(model.parameters(), self.config, self.config.lr)
         for _ in range(self.config.local_epochs):
             for x, y in client.train_loader:
                 x, y = x.to(self.device), y.to(self.device)

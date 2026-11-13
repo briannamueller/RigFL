@@ -5,13 +5,14 @@ from __future__ import annotations
 import torch
 from pydantic import Field
 
-from rigfl.core.config import AlgorithmConfig
+from rigfl.core.config import ClientOptimizerConfig
+from rigfl.core.optim import client_optimizer
 from rigfl.core.interfaces import Algorithm
 from rigfl.core.losses import classification_loss
 from rigfl.prediction import Predictions
 
 
-class LocalConfig(AlgorithmConfig):
+class LocalConfig(ClientOptimizerConfig):
     local_epochs: int = Field(1, ge=1, description="Client training epochs per round.")
     lr: float = Field(0.01, gt=0, description="Client optimizer learning rate.")
 
@@ -25,7 +26,7 @@ class Local(Algorithm):
 
     def make_optimizer(self, model):
         """Create the optimizer used throughout one client's independent training."""
-        return torch.optim.SGD(model.parameters(), lr=self.config.lr)
+        return client_optimizer(model.parameters(), self.config, self.config.lr)
 
     def train_one_round(self, client, optimizer) -> None:
         """Advance one client's model by the configured number of local epochs."""

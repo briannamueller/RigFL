@@ -24,7 +24,8 @@ from rigfl.algorithms.fedavg import (
     validate_state_structure,
     weighted_average_states,
 )
-from rigfl.core.config import AlgorithmConfig
+from rigfl.core.config import ClientOptimizerConfig
+from rigfl.core.optim import client_optimizer
 from rigfl.core.interfaces import Algorithm
 from rigfl.core.losses import classification_loss
 from rigfl.eval.resources import payload_bytes
@@ -34,7 +35,7 @@ State = dict[str, torch.Tensor]
 Prototypes = dict[int, torch.Tensor]
 
 
-class FedPACConfig(AlgorithmConfig):
+class FedPACConfig(ClientOptimizerConfig):
     feature_epochs: int = Field(
         1, ge=1, description="Feature-extractor training epochs per round."
     )
@@ -47,9 +48,9 @@ class FedPACConfig(AlgorithmConfig):
     lamda: float = Field(
         1.0, ge=0, description="Weight of global feature-centroid alignment."
     )
-    momentum: float = Field(0.5, ge=0, description="Momentum for local SGD.")
+    momentum: float = Field(0.5, ge=0, description="SGD momentum; not used by Adam.")
     weight_decay: float = Field(
-        0.0005, ge=0, description="Weight decay for local SGD."
+        0.0005, ge=0, description="Weight decay for client-model training."
     )
     qp_weight_threshold: float = Field(
         1e-3, ge=0,
@@ -290,10 +291,8 @@ class FedPAC(Algorithm):
         for parameter in model.head.parameters():
             parameter.requires_grad_(True)
         model.train()
-        head_optimizer = torch.optim.SGD(
-            model.head.parameters(), lr=self.config.head_lr,
-            momentum=self.config.momentum, weight_decay=self.config.weight_decay,
-        )
+        head_optimizer = client_optimizer(
+            model.head.parameters(), self.config, self.config.head_lr)
         for x, y in client.train_loader:
             x, y = x.to(self.device), y.to(self.device)
             loss = classification_loss(model(x), y, client.class_weights)
@@ -305,10 +304,8 @@ class FedPAC(Algorithm):
             parameter.requires_grad_(True)
         for parameter in model.head.parameters():
             parameter.requires_grad_(False)
-        feature_optimizer = torch.optim.SGD(
-            feature_parameters, lr=self.config.feature_lr,
-            momentum=self.config.momentum, weight_decay=self.config.weight_decay,
-        )
+        feature_optimizer = client_optimizer(
+            feature_parameters, self.config, self.config.feature_lr)
         for _ in range(self.config.feature_epochs):
             for x, y in client.train_loader:
                 x, y = x.to(self.device), y.to(self.device)
