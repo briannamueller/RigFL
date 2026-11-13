@@ -17,9 +17,9 @@ import torch
 from pydantic import Field
 
 from rigfl.core.config import ClientOptimizerConfig
-from rigfl.core.optim import client_optimizer
 from rigfl.core.interfaces import Algorithm
 from rigfl.core.losses import classification_loss
+from rigfl.core.optim import client_optimizer
 from rigfl.prediction import Predictions
 
 
