@@ -32,6 +32,7 @@ from rigfl.models.phishing import PhishingByteCNN
 from rigfl.models.tabular import (
     TabularDCNv2,
     TabularFlowerMLP,
+    TabularGLU64,
     TabularLinear,
     TabularLogisticRegression,
     TabularMLP,
@@ -78,6 +79,7 @@ MODEL_ARCHITECTURE_REGISTRY: dict[str, tuple[str, type[nn.Module]]] = {
     "tabular_logreg": ("numeric", TabularLogisticRegression),
     "tabular_mlp": ("numeric", TabularMLP),
     "tabular_mlp_64": ("numeric", TabularMLP64),
+    "tabular_glu_64": ("numeric", TabularGLU64),
     "tabular_residual_mlp": ("numeric", TabularResidualMLP),
     "tabular_flower_mlp": ("numeric", TabularFlowerMLP),
     "tabular_dcn_v2": ("numeric", TabularDCNv2),
@@ -131,6 +133,9 @@ MODEL_FAMILIES = {
     ],
     "scrnaseq_heterogeneous_2": [
         "tabular_logreg", "tabular_mlp_64"
+    ],
+    "scrnaseq_heterogeneous_glu": [
+        "tabular_glu_64", "tabular_mlp_64"
     ],
     "temporal_heterogeneous_3": [
         "temporal_gru", "temporal_cnn", "temporal_lstm"

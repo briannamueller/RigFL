@@ -62,6 +62,22 @@ class TabularMLP64(nn.Module):
         return self.layers(x)
 
 
+class TabularGLU64(nn.Module):
+    """One gated hidden layer: products of paired projections model gene interactions."""
+
+    def __init__(self, input_spec=None):
+        super().__init__()
+        width = _input_width(input_spec)
+        self.normalization = nn.BatchNorm1d(width)
+        self.gated = nn.Linear(width, 64)
+        self.output = nn.Linear(32, 64)
+        self.out_dim = 64
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        value, gate = self.gated(self.normalization(x)).chunk(2, dim=1)
+        return F.relu(self.output(value * torch.sigmoid(gate)))
+
+
 class TabularLogisticRegression(nn.Module):
     """Batch-normalized inputs for a directly attached linear head."""
 
