@@ -25,9 +25,9 @@ from rigfl.algorithms.fedavg import (
     weighted_average_states,
 )
 from rigfl.core.config import ClientOptimizerConfig
-from rigfl.core.optim import client_optimizer
 from rigfl.core.interfaces import Algorithm
 from rigfl.core.losses import classification_loss
+from rigfl.core.optim import client_optimizer
 from rigfl.eval.resources import payload_bytes
 from rigfl.prediction import Predictions
 

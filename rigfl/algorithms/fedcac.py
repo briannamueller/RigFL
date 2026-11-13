@@ -16,9 +16,9 @@ from pydantic import Field
 
 from rigfl.algorithms.fedavg import clone_state_dict, validate_state_structure
 from rigfl.core.config import ClientOptimizerConfig
-from rigfl.core.optim import client_optimizer
 from rigfl.core.interfaces import Algorithm
 from rigfl.core.losses import classification_loss
+from rigfl.core.optim import client_optimizer
 from rigfl.eval.resources import payload_bytes
 from rigfl.prediction import Predictions
 

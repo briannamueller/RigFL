@@ -21,9 +21,9 @@ from torch.utils.data import DataLoader
 
 from rigfl.algorithms.fedproto import local_prototypes, prototype_prediction
 from rigfl.core.config import ClientOptimizerConfig
-from rigfl.core.optim import client_optimizer
 from rigfl.core.interfaces import Algorithm
 from rigfl.core.losses import classification_loss
+from rigfl.core.optim import client_optimizer
 from rigfl.eval.resources import payload_bytes
 from rigfl.prediction import Predictions
 

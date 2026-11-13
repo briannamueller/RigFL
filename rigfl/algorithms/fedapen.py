@@ -20,13 +20,13 @@ from rigfl.algorithms.fedavg import (
     weighted_average_states,
 )
 from rigfl.core.config import ClientOptimizerConfig
-from rigfl.core.optim import client_optimizer
 from rigfl.core.interfaces import Algorithm
 from rigfl.core.losses import (
     classification_loss,
     distribution_classification_loss,
 )
 from rigfl.core.model import assemble_model
+from rigfl.core.optim import client_optimizer
 from rigfl.data.builder import _train_val_indices
 from rigfl.prediction import Predictions
 

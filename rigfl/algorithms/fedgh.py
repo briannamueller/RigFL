@@ -18,9 +18,9 @@ from pydantic import Field
 
 from rigfl.algorithms.fedproto import local_prototypes
 from rigfl.core.config import ClientOptimizerConfig
-from rigfl.core.optim import client_optimizer
 from rigfl.core.interfaces import Algorithm
 from rigfl.core.losses import classification_loss
+from rigfl.core.optim import client_optimizer
 from rigfl.prediction import Predictions
 
 Prototypes = dict[int, torch.Tensor]
